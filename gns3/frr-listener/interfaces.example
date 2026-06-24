@@ -1,0 +1,16 @@
+# Example FRR listener Linux addressing inside GNS3.
+# Edit to match your cabled interface and router neighbor.
+
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet static
+    address 10.0.99.10
+    netmask 255.255.255.252
+
+# Optional management interface.
+auto eth1
+iface eth1 inet static
+    address 172.16.100.20
+    netmask 255.255.255.0

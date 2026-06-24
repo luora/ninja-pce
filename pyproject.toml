@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ninja-pce"
+version = "0.4.0"
+description = "CSPF, topology reconciliation, and approved RSVP-TE config delivery"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "ninja-pce contributors" }]
+dependencies = [
+  "networkx>=3.2",
+  "PyYAML>=6.0",
+  "Jinja2>=3.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+southbound = ["netmiko>=4.3"]
+gns3 = ["netmiko>=4.3", "ncclient>=0.6.15", "rich>=13.0"]
+
+[project.scripts]
+ninja-pce = "ninja_pce.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ninja_pce = ["templates/*.j2"]

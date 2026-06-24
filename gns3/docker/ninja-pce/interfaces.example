@@ -1,0 +1,10 @@
+# Optional /etc/network/interfaces content for the ninja-pce Docker node in GNS3.
+# GNS3 can edit this per-node from right-click > Edit Config.
+
+auto eth0
+iface eth0 inet static
+    address 172.16.100.10
+    netmask 255.255.255.0
+    gateway 172.16.100.1
+
+# Add more interfaces if you attach the container to separate management/lab segments.

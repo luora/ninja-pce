@@ -1,0 +1,52 @@
+# Operator-maintained management inventory. Keep credentials in environment
+# variables or a secret manager; never put plaintext passwords in this file.
+devices:
+  - name: pe1
+    topology_node_id: PE1
+    host: 192.0.2.11
+    port: 22
+    device_type: cisco_xr
+    username: automation
+    password_env: NINJA_PCE_PE1_PASSWORD
+    tags: [headend]
+
+  - name: p1
+    topology_node_id: P1
+    host: 192.0.2.12
+    port: 22
+    device_type: cisco_xr
+    username: automation
+    password_env: NINJA_PCE_P1_PASSWORD
+
+  - name: p2
+    topology_node_id: P2
+    host: 192.0.2.13
+    port: 22
+    device_type: cisco_xr
+    username: automation
+    password_env: NINJA_PCE_P2_PASSWORD
+
+  - name: p3
+    topology_node_id: P3
+    host: 192.0.2.14
+    port: 22
+    device_type: cisco_xr
+    username: automation
+    password_env: NINJA_PCE_P3_PASSWORD
+
+  - name: p4
+    topology_node_id: P4
+    host: 192.0.2.15
+    port: 22
+    device_type: cisco_xr
+    username: automation
+    password_env: NINJA_PCE_P4_PASSWORD
+
+  - name: pe3
+    topology_node_id: PE3
+    host: 192.0.2.16
+    port: 22
+    device_type: juniper_junos
+    username: automation
+    password_env: NINJA_PCE_PE3_PASSWORD
+    tags: [tailend]

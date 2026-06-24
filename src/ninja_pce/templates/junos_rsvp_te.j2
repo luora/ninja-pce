@@ -1,0 +1,38 @@
+## ninja-pce Junos-style RSVP-TE dry-run output
+## Review syntax against your exact Junos release before applying.
+## Service: {{ demand.name }}
+## Selected path: {{ path_string }}
+## Bandwidth: {{ demand.bandwidth_mbps }} Mbps
+## Dry-run only: {{ output.dry_run }}
+
+## Candidate paths:
+{% for candidate in result.candidate_paths -%}
+## {{ candidate.rank }}. {{ " -> ".join(candidate.path_nodes) }} metric={{ candidate.total_metric }} bottleneck={{ candidate.bottleneck_available_bw_mbps }}Mbps residual={{ candidate.residual_after_reservation_mbps }}Mbps
+{% endfor %}
+{% for hop in result.explicit_hops -%}
+set protocols mpls path {{ output.explicit_path_name }} {{ hop.loopback }} {{ hop.hop_type }}
+{% endfor -%}
+set protocols mpls label-switched-path {{ output.junos_lsp_name }} to {{ dest_node.loopback }}
+set protocols mpls label-switched-path {{ output.junos_lsp_name }} bandwidth {{ bandwidth_junos }}
+set protocols mpls label-switched-path {{ output.junos_lsp_name }} primary {{ output.junos_primary_path_name }}
+set protocols mpls label-switched-path {{ output.junos_lsp_name }} primary {{ output.junos_primary_path_name }} explicit-path {{ output.explicit_path_name }}
+set protocols mpls label-switched-path {{ output.junos_lsp_name }} priority {{ demand.setup_priority }} {{ demand.hold_priority }}
+
+## Suggested pre-check commands
+run show mpls lsp ingress brief
+run show rsvp interface
+run show route table inet.3 {{ dest_node.loopback }}
+run show ospf route {{ dest_node.loopback }}
+
+## Suggested verification commands
+run show mpls lsp name {{ output.junos_lsp_name }} extensive
+run show mpls lsp ingress name {{ output.junos_lsp_name }}
+run show rsvp session name {{ output.junos_lsp_name }} extensive
+run show rsvp interface
+run show route table inet.3 {{ dest_node.loopback }}
+
+## Rollback reminder
+rollback 1
+## or manually:
+delete protocols mpls label-switched-path {{ output.junos_lsp_name }}
+delete protocols mpls path {{ output.explicit_path_name }}

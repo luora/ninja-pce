@@ -1,0 +1,37 @@
+!
+! FRR topology listener example for GNS3.
+! Edit router-id, interface addresses, areas, and BGP peer before use.
+!
+frr version 10
+frr defaults traditional
+hostname FRR-LISTENER
+service integrated-vtysh-config
+!
+interface eth0
+ description OSPF adjacency toward lab core router
+ ip ospf area 0.0.0.0
+ ip ospf network point-to-point
+exit
+!
+router ospf
+ ospf router-id 10.255.0.250
+ log-adjacency-changes detail
+ passive-interface default
+ no passive-interface eth0
+exit
+!
+! Optional BGP-LS session toward the ninja-pce or a BGP-LS collector.
+! Leave disabled until Phase 2 testing.
+!
+! router bgp 65000
+!  bgp router-id 10.255.0.250
+!  neighbor 172.16.100.10 remote-as 65000
+!  neighbor 172.16.100.10 description ninja-pce-bgpls-collector
+!  !
+!  address-family link-state link-state
+!   neighbor 172.16.100.10 activate
+!  exit-address-family
+! exit
+!
+line vty
+!

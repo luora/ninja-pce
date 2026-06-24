@@ -1,0 +1,39 @@
+# ninja-pce generic RSVP-TE dry-run output
+# Service: {{ demand.name }}
+# Source: {{ demand.source }} ({{ source_node.loopback }})
+# Destination: {{ demand.destination }} ({{ dest_node.loopback }})
+# Bandwidth: {{ demand.bandwidth_mbps | int if demand.bandwidth_mbps.is_integer() else demand.bandwidth_mbps }} Mbps
+# Selected path: {{ path_string }}
+# Total metric: {{ result.total_metric }}
+# Bottleneck available bandwidth before reservation: {{ result.bottleneck_available_bw_mbps }} Mbps
+# Residual bottleneck bandwidth after reservation: {{ result.residual_after_reservation_mbps }} Mbps
+# Dry-run only: {{ output.dry_run }}
+
+# Candidate paths considered
+{% for candidate in result.candidate_paths -%}
+# {{ candidate.rank }}. {{ " -> ".join(candidate.path_nodes) }} metric={{ candidate.total_metric }} bottleneck={{ candidate.bottleneck_available_bw_mbps }}Mbps residual={{ candidate.residual_after_reservation_mbps }}Mbps
+{% endfor %}
+explicit-path {{ output.explicit_path_name }}
+{% for hop in result.explicit_hops %}
+  hop {{ hop.index }} {{ hop.hop_type }} {{ hop.loopback }}  # {{ hop.node_id }} role={{ hop.role }} area={{ hop.area }}
+{% endfor %}
+!
+rsvp-te-lsp {{ output.tunnel_name }}
+  source {{ source_node.loopback }}
+  destination {{ dest_node.loopback }}
+  bandwidth {{ demand.bandwidth_mbps }} Mbps
+  setup-priority {{ demand.setup_priority }}
+  hold-priority {{ demand.hold_priority }}
+  explicit-path {{ output.explicit_path_name }}
+!
+
+# Link reservation preview
+{% for link in result.path_links -%}
+# {{ link.id }} {{ link.source }}->{{ link.target }} available_before={{ link.available_bw_mbps }}Mbps reserve={{ demand.bandwidth_mbps }}Mbps residual_after={{ link.available_bw_mbps - demand.bandwidth_mbps }}Mbps groups={{ link.admin_groups }}
+{% endfor %}
+# Verification checklist
+# - Confirm RSVP/MPLS enabled on every traversed interface.
+# - Confirm LSP is up and using expected ERO/RRO path.
+# - Confirm reserved bandwidth changed on each traversed link.
+# - Confirm service binding points to the intended tunnel/LSP.
+# - Confirm customer CIR is enforced separately on the PE QoS policy.

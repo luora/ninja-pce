@@ -1,0 +1,37 @@
+! ninja-pce IOS/IOS XE-style RSVP-TE dry-run output
+! Review syntax against your exact platform and release before applying.
+! Service: {{ demand.name }}
+! Selected path: {{ path_string }}
+! Bandwidth: {{ demand.bandwidth_mbps }} Mbps / {{ bandwidth_kbps }} kbps
+! Dry-run only: {{ output.dry_run }}
+!
+ip explicit-path name {{ output.explicit_path_name }} enable
+{% for hop in result.explicit_hops %}
+ next-address {{ hop.loopback }}
+{% endfor %}
+!
+interface Tunnel{{ output.tunnel_id }}
+ description ninja-pce {{ demand.name }} {{ demand.source }} to {{ demand.destination }}
+ ip unnumbered Loopback0
+ tunnel mode mpls traffic-eng
+ tunnel destination {{ dest_node.loopback }}
+ tunnel mpls traffic-eng bandwidth {{ bandwidth_kbps }}
+ tunnel mpls traffic-eng priority {{ demand.setup_priority }} {{ demand.hold_priority }}
+ tunnel mpls traffic-eng path-option 10 explicit name {{ output.explicit_path_name }}
+!
+
+! Suggested pre-check commands
+show mpls traffic-eng topology
+show mpls traffic-eng tunnels brief
+show ip rsvp interface
+show ip route {{ dest_node.loopback }}
+
+! Suggested verification commands
+show mpls traffic-eng tunnels Tunnel{{ output.tunnel_id }}
+show mpls traffic-eng tunnels Tunnel{{ output.tunnel_id }} detail
+show ip rsvp interface
+show ip rsvp reservation
+
+! Rollback reminder
+! no interface Tunnel{{ output.tunnel_id }}
+! no ip explicit-path name {{ output.explicit_path_name }}

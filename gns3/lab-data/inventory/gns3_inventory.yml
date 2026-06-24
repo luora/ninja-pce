@@ -1,0 +1,60 @@
+# Edit management_ip and platform values to match your GNS3 router images.
+# Preview is the default. A push requires ninja-pce --execute --approve and
+# the referenced password environment variable.
+
+devices:
+  PE1:
+    role: headend
+    platform: cisco_xr
+    management_ip: 172.16.100.101
+    username: admin
+    password_env: NINJA_PCE_PE1_PASSWORD
+    ssh_port: 22
+    loopback: 10.255.0.1
+    notes: RSVP-TE tunnel head-end for the demo.
+
+  PE3:
+    role: tailend
+    platform: juniper_junos
+    management_ip: 172.16.100.106
+    username: admin
+    password_env: NINJA_PCE_PE3_PASSWORD
+    ssh_port: 22
+    loopback: 10.255.0.6
+    notes: RSVP-TE tunnel tail-end for the demo.
+
+  P1:
+    role: core
+    platform: cisco_xr
+    management_ip: 172.16.100.102
+    username: admin
+    password_env: NINJA_PCE_P1_PASSWORD
+    ssh_port: 22
+    loopback: 10.255.0.2
+
+  P2:
+    role: core
+    platform: cisco_xr
+    management_ip: 172.16.100.105
+    username: admin
+    password_env: NINJA_PCE_P2_PASSWORD
+    ssh_port: 22
+    loopback: 10.255.0.5
+
+  P3:
+    role: core
+    platform: cisco_xr
+    management_ip: 172.16.100.103
+    username: admin
+    password_env: NINJA_PCE_P3_PASSWORD
+    ssh_port: 22
+    loopback: 10.255.0.3
+
+  P4:
+    role: core
+    platform: cisco_xr
+    management_ip: 172.16.100.104
+    username: admin
+    password_env: NINJA_PCE_P4_PASSWORD
+    ssh_port: 22
+    loopback: 10.255.0.4

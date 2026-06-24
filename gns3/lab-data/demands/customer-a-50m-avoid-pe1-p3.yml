@@ -1,0 +1,30 @@
+service:
+  name: CUSTOMER_A_PE1_PE3_50M_AVOID_PE1_P3
+  source: PE1
+  destination: PE3
+  bandwidth_mbps: 50
+  setup_priority: 7
+  hold_priority: 7
+  description: Same demand, but avoid the direct PE1-P3 link to demonstrate manual maintenance/failure constraints.
+
+  affinity:
+    exclude_admin_groups: []
+    include_any_admin_groups: []
+    include_all_admin_groups: []
+
+  path:
+    hop_type: strict
+    max_candidates: 3
+    avoid_links: [PE1-P3]
+
+  output:
+    dry_run: true
+    tunnel_id: 101
+    tunnel_name: TUN_CUSTOMER_A_PE1_PE3_AVOID_PE1_P3
+    explicit_path_name: EP_CUSTOMER_A_PE1_PE3_AVOID_PE1_P3
+    iosxr_interface: tunnel-te101
+    junos_lsp_name: lsp-customer-a-pe1-pe3-avoid-pe1-p3
+    junos_primary_path_name: primary-ninja-pce
+    write_plan: true
+    write_verification: true
+    formats: [generic, iosxr, junos]

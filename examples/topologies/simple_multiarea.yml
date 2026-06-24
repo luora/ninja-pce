@@ -1,0 +1,154 @@
+metadata:
+  name: simple-multiarea-rsvp-te-lab
+  description: >
+    Sample TED for ninja-pce. The shortest IGP path from PE1 to PE3
+    is PE1-P1-P2-PE3, but link P1-P2 has only 20 Mbps available.
+    A 50 Mbps demand should therefore use PE1-P3-P4-PE3 unless constraints
+    force a different feasible path.
+  units: Mbps
+  source_type: manual-yaml
+  future_sources:
+    - frr-bgp-ls
+    - exabgp-json
+    - parsed-router-cli
+
+nodes:
+  - id: PE1
+    loopback: 10.255.0.1
+    role: PE
+    area: 0.0.0.0
+    tags: [headend, iosxr]
+  - id: P1
+    loopback: 10.255.0.2
+    role: P
+    area: 0.0.0.0
+  - id: P3
+    loopback: 10.255.0.3
+    role: P
+    area: 0.0.0.1
+  - id: P4
+    loopback: 10.255.0.4
+    role: P
+    area: 0.0.0.1
+  - id: P2
+    loopback: 10.255.0.5
+    role: P
+    area: 0.0.0.0
+  - id: PE3
+    loopback: 10.255.0.6
+    role: PE
+    area: 0.0.0.1
+    tags: [tailend, junos]
+
+links:
+  - id: PE1-P1
+    from: PE1
+    to: P1
+    from_ip: 10.0.12.1
+    to_ip: 10.0.12.2
+    metric: 10
+    reservable_bw_mbps: 100
+    reserved_bw_mbps: 10
+    admin_groups: [BLUE]
+    srlg: [metro-a]
+    area: 0.0.0.0
+    protection: unprotected
+    bidirectional: true
+
+  - id: P1-P2
+    from: P1
+    to: P2
+    from_ip: 10.0.25.2
+    to_ip: 10.0.25.5
+    metric: 10
+    reservable_bw_mbps: 100
+    reserved_bw_mbps: 80
+    admin_groups: [BLUE]
+    srlg: [metro-a]
+    area: 0.0.0.0
+    protection: unprotected
+    bidirectional: true
+
+  - id: P2-PE3
+    from: P2
+    to: PE3
+    from_ip: 10.0.56.5
+    to_ip: 10.0.56.6
+    metric: 10
+    reservable_bw_mbps: 100
+    reserved_bw_mbps: 10
+    admin_groups: [BLUE]
+    srlg: [metro-b]
+    area: 0.0.0.1
+    protection: link-protected
+    bidirectional: true
+
+  - id: PE1-P3
+    from: PE1
+    to: P3
+    from_ip: 10.0.13.1
+    to_ip: 10.0.13.3
+    metric: 25
+    reservable_bw_mbps: 200
+    reserved_bw_mbps: 20
+    admin_groups: [GREEN]
+    srlg: [ring-east]
+    area: 0.0.0.1
+    protection: link-protected
+    bidirectional: true
+
+  - id: P3-P4
+    from: P3
+    to: P4
+    from_ip: 10.0.34.3
+    to_ip: 10.0.34.4
+    metric: 10
+    reservable_bw_mbps: 200
+    reserved_bw_mbps: 30
+    admin_groups: [GREEN]
+    srlg: [ring-east]
+    area: 0.0.0.1
+    protection: link-protected
+    bidirectional: true
+
+  - id: P4-PE3
+    from: P4
+    to: PE3
+    from_ip: 10.0.46.4
+    to_ip: 10.0.46.6
+    metric: 15
+    reservable_bw_mbps: 200
+    reserved_bw_mbps: 30
+    admin_groups: [GREEN]
+    srlg: [ring-east]
+    area: 0.0.0.1
+    protection: link-protected
+    bidirectional: true
+
+  - id: P1-P3
+    from: P1
+    to: P3
+    from_ip: 10.0.23.2
+    to_ip: 10.0.23.3
+    metric: 25
+    reservable_bw_mbps: 100
+    reserved_bw_mbps: 10
+    admin_groups: [YELLOW]
+    srlg: [inter-area-a]
+    area: 0.0.0.0
+    protection: unprotected
+    bidirectional: true
+
+  - id: P2-P4
+    from: P2
+    to: P4
+    from_ip: 10.0.54.5
+    to_ip: 10.0.54.4
+    metric: 15
+    reservable_bw_mbps: 100
+    reserved_bw_mbps: 20
+    admin_groups: [YELLOW]
+    srlg: [inter-area-b]
+    area: 0.0.0.1
+    protection: unprotected
+    bidirectional: true

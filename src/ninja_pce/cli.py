@@ -1,0 +1,489 @@
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import threading
+import time
+from dataclasses import replace
+from pathlib import Path
+
+from .cspf import CspfNoPath, compute_cspf
+from .daemon import HealthState, load_daemon_config, run_daemon_cycle, start_health_server
+from .inventory import device_for_node, validate_inventory
+from .loaders import InputError, load_demand, load_inventory, load_topology
+from .reconcile import file_fingerprint, reconcile_once
+from .render import write_outputs
+from .southbound import (
+    SouthboundError,
+    build_push_plan,
+    push_plan,
+    require_approved_execution,
+)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ninja-pce",
+        description="CSPF, topology reconciliation, and approved RSVP-TE config delivery.",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    compute = sub.add_parser("compute", help="Compute CSPF path and generate dry-run configs")
+    compute.add_argument("--topology", required=True, help="Topology YAML/JSON file")
+    compute.add_argument("--demand", required=True, help="Service demand YAML/JSON file")
+    compute.add_argument("--output-dir", default="build/outputs", help="Directory for generated outputs")
+    compute.add_argument("--show-pruned", action="store_true", help="Print pruned links and reasons")
+    compute.add_argument("--show-candidates", action="store_true", help="Print all candidate paths")
+
+    validate = sub.add_parser("validate", help="Validate input files without writing outputs")
+    validate.add_argument("--topology", required=True, help="Topology YAML/JSON file")
+    validate.add_argument("--demand", required=True, help="Service demand YAML/JSON file")
+    validate.add_argument("--inventory", help="Optional host/OS inventory YAML/JSON file")
+
+    inventory = sub.add_parser(
+        "inventory-validate",
+        help="Validate that every topology node has one supported inventory entry",
+    )
+    inventory.add_argument("--topology", required=True, help="Topology YAML/JSON file")
+    inventory.add_argument("--inventory", required=True, help="Host/OS inventory YAML/JSON file")
+
+    push = sub.add_parser(
+        "push",
+        help="Preview or explicitly approve a Netmiko configuration push",
+    )
+    _add_delivery_arguments(push)
+
+    reconcile = sub.add_parser(
+        "reconcile",
+        help="Recompute and deliver config only when topology-driven desired state changes",
+    )
+    _add_delivery_arguments(reconcile)
+    reconcile.add_argument(
+        "--state",
+        help="Reconciliation state JSON. Defaults under --output-dir",
+    )
+    reconcile.add_argument("--force", action="store_true", help="Reconcile even if inputs are unchanged")
+    reconcile.add_argument(
+        "--watch",
+        action="store_true",
+        help="Keep watching the topology file and reconcile after changes",
+    )
+    reconcile.add_argument(
+        "--poll-interval",
+        type=float,
+        default=1.0,
+        help="Watch polling interval in seconds. Default: 1",
+    )
+    reconcile.add_argument(
+        "--debounce",
+        type=float,
+        default=2.0,
+        help="Seconds a changed topology file must remain stable. Default: 2",
+    )
+
+    topo = sub.add_parser("topology-summary", help="Print a human-readable TED summary")
+    topo.add_argument("--topology", required=True, help="Topology YAML/JSON file")
+
+    lab = sub.add_parser("gns3-demo", help="Run the bundled GNS3 demo scenarios")
+    lab.add_argument("--lab-root", default="/lab", help="Lab data root. Default: /lab")
+    lab.add_argument("--output-dir", default="/outputs", help="Output root. Default: /outputs")
+    lab.add_argument("--show-pruned", action="store_true", help="Print pruned links and reasons")
+    lab.add_argument("--show-candidates", action="store_true", help="Print candidate paths")
+
+    daemon = sub.add_parser(
+        "daemon",
+        help="Run multi-demand topology reconciliation from a daemon config",
+    )
+    daemon.add_argument("--config", required=True, help="Daemon YAML/JSON config file")
+    daemon.add_argument("--once", action="store_true", help="Run one reconciliation cycle and exit")
+    daemon.add_argument(
+        "--poll-interval",
+        type=float,
+        help="Override config poll_interval in seconds",
+    )
+    daemon.add_argument("--health-host", help="Override health endpoint host")
+    daemon.add_argument("--health-port", type=int, help="Override health endpoint port")
+    daemon.add_argument("--no-health", action="store_true", help="Disable the health/metrics HTTP server")
+    return parser
+
+
+def _add_delivery_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--topology", required=True, help="Topology YAML/JSON file")
+    parser.add_argument("--demand", required=True, help="Service demand YAML/JSON file")
+    parser.add_argument("--inventory", required=True, help="Host/OS inventory YAML/JSON file")
+    parser.add_argument("--output-dir", default="build/outputs", help="Generated output directory")
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Connect with Netmiko and apply the config; otherwise preview only",
+    )
+    parser.add_argument(
+        "--approve",
+        action="store_true",
+        help="Explicitly approve execution; valid only with --execute",
+    )
+
+
+def cmd_compute(args: argparse.Namespace) -> int:
+    topology = load_topology(args.topology)
+    demand = load_demand(args.demand)
+    result = compute_cspf(topology, demand)
+    written = write_outputs(result, topology, args.output_dir)
+
+    print("ninja-pce CSPF result")
+    print("=====================")
+    print(f"Topology:      {topology.name}")
+    print(f"Service:       {demand.name}")
+    print(f"Bandwidth:     {demand.bandwidth_mbps:g} Mbps")
+    print(f"Path:          {' -> '.join(result.path_nodes)}")
+    print(f"Metric:        {result.total_metric}")
+    print(f"Bottleneck BW: {result.bottleneck_available_bw_mbps:g} Mbps")
+    print(f"Residual BW:   {result.residual_after_reservation_mbps:g} Mbps")
+    print(f"Candidates:    {len(result.candidate_paths)}")
+    print(f"Dry-run only:  {demand.output.dry_run}")
+    print()
+
+    if args.show_candidates:
+        print("Candidate paths:")
+        for candidate in result.candidate_paths:
+            print(
+                f"- #{candidate.rank}: {' -> '.join(candidate.path_nodes)} "
+                f"metric={candidate.total_metric} hops={candidate.hop_count} "
+                f"bottleneck={candidate.bottleneck_available_bw_mbps:g}Mbps "
+                f"residual={candidate.residual_after_reservation_mbps:g}Mbps"
+            )
+        print()
+
+    if result.warnings:
+        print("Warnings:")
+        for warning in result.warnings:
+            print(f"- {warning}")
+        print()
+
+    print("Generated files:")
+    for path in written:
+        print(f"- {Path(path)}")
+
+    if args.show_pruned and result.pruned_links:
+        print()
+        print("Pruned links:")
+        for item in result.pruned_links:
+            print(f"- {item['id']} {item['from']}->{item['to']}: {item['reason']}")
+
+    return 0
+
+
+def cmd_validate(args: argparse.Namespace) -> int:
+    topology = load_topology(args.topology)
+    demand = load_demand(args.demand)
+    if args.inventory:
+        inventory = load_inventory(args.inventory)
+        validate_inventory(inventory, topology, require_all_nodes=True)
+    result = compute_cspf(topology, demand)
+    print("Input validation passed")
+    print(f"Topology: {topology.name}")
+    print(f"Nodes:    {len(topology.nodes)}")
+    print(f"Links:    {len(topology.links)}")
+    print(f"Demand:   {demand.name}")
+    print(f"Path:     {' -> '.join(result.path_nodes)}")
+    print(f"Candidates available: {len(result.candidate_paths)}")
+    if args.inventory:
+        print(f"Inventory devices: {len(inventory.devices)}")
+    return 0
+
+
+def cmd_inventory_validate(args: argparse.Namespace) -> int:
+    topology = load_topology(args.topology)
+    inventory = load_inventory(args.inventory)
+    mapped = validate_inventory(inventory, topology, require_all_nodes=True)
+    print("Inventory validation passed")
+    print(f"Topology: {topology.name}")
+    print(f"Nodes:    {len(topology.nodes)}")
+    print(f"Devices:  {len(inventory.devices)}")
+    print(f"Mapped:   {', '.join(mapped)}")
+    return 0
+
+
+def _load_delivery(args: argparse.Namespace):
+    require_approved_execution(args.execute, args.approve)
+    topology = load_topology(args.topology)
+    demand = load_demand(args.demand)
+    inventory = load_inventory(args.inventory)
+    validate_inventory(inventory, topology, require_all_nodes=True)
+    result = compute_cspf(topology, demand)
+    device = device_for_node(inventory, demand.source)
+    plan = build_push_plan(result, topology, device)
+    return topology, demand, inventory, result, plan
+
+
+def cmd_push(args: argparse.Namespace) -> int:
+    topology, demand, _inventory, result, plan = _load_delivery(args)
+    written = write_outputs(result, topology, args.output_dir)
+
+    print("ninja-pce Netmiko delivery plan")
+    print("===============================")
+    print(f"Service:   {demand.name}")
+    print(f"Path:      {' -> '.join(result.path_nodes)}")
+    print(f"Device:    {plan.device.name} ({plan.device.host}:{plan.device.port})")
+    print(f"Platform:  {plan.device.device_type}")
+    print(f"Renderer:  {plan.output_format}")
+    print(f"Mode:      {'EXECUTE' if args.execute else 'PREVIEW ONLY'}")
+    print()
+    print("Configuration commands:")
+    for command in plan.commands:
+        print(f"  {command}")
+
+    if not args.execute:
+        print()
+        print("No connection made. Use --execute --approve after reviewing the generated files.")
+    else:
+        pushed = push_plan(plan)
+        print()
+        print(f"Applied {pushed.commands_sent} commands to {pushed.device}")
+        for command, output in pushed.postcheck_output:
+            print(f"\nPost-check: {command}\n{output}")
+        for error in pushed.verification_errors:
+            print(f"\nPost-check warning: {error}")
+
+    print()
+    print("Generated files:")
+    for path in written:
+        print(f"- {path}")
+    return 0
+
+
+def _state_path(args: argparse.Namespace) -> Path:
+    if args.state:
+        return Path(args.state)
+    demand_stem = Path(args.demand).stem
+    safe_stem = "".join(
+        character if character.isalnum() or character in {"-", "_"} else "_"
+        for character in demand_stem
+    )
+    return Path(args.output_dir) / f".ninja-pce-{safe_stem}-state.json"
+
+
+def _run_reconcile(args: argparse.Namespace, *, force: bool | None = None) -> int:
+    outcome = reconcile_once(
+        topology_path=args.topology,
+        demand_path=args.demand,
+        inventory_path=args.inventory,
+        output_dir=args.output_dir,
+        state_path=_state_path(args),
+        execute=args.execute,
+        approved=args.approve,
+        force=args.force if force is None else force,
+    )
+    print("ninja-pce reconciliation")
+    print("========================")
+    print(f"Action:            {outcome.action}")
+    print(f"Topology changed:  {outcome.topology_changed}")
+    print(f"Config changed:    {outcome.desired_config_changed}")
+    print(f"Path:              {' -> '.join(outcome.result.path_nodes)}")
+    print(f"Device:            {outcome.plan.device.name}")
+    print(f"State:             {outcome.state_path}")
+    if outcome.diff:
+        print()
+        print("Config diff:")
+        print(outcome.diff, end="" if outcome.diff.endswith("\n") else "\n")
+    if outcome.action == "preview":
+        print()
+        print("Preview only. Use --execute --approve to apply the pending desired config.")
+    if outcome.push_result:
+        print()
+        print(
+            f"Applied {outcome.push_result.commands_sent} commands to "
+            f"{outcome.push_result.device}"
+        )
+        for command, output in outcome.push_result.postcheck_output:
+            print(f"\nPost-check: {command}\n{output}")
+        for error in outcome.push_result.verification_errors:
+            print(f"\nPost-check warning: {error}")
+    return 0
+
+
+def cmd_reconcile(args: argparse.Namespace) -> int:
+    require_approved_execution(args.execute, args.approve)
+    if args.poll_interval <= 0:
+        raise InputError("--poll-interval must be positive")
+    if args.debounce < 0:
+        raise InputError("--debounce cannot be negative")
+
+    _run_reconcile(args)
+    if not args.watch:
+        return 0
+
+    watched = Path(args.topology)
+    last_raw_hash = file_fingerprint(watched)
+    pending_hash: str | None = None
+    changed_at = 0.0
+    print()
+    print(
+        f"Watching {watched} every {args.poll_interval:g}s "
+        f"with {args.debounce:g}s debounce. Press Ctrl-C to stop."
+    )
+    try:
+        while True:
+            time.sleep(args.poll_interval)
+            current_hash = file_fingerprint(watched)
+            if current_hash != last_raw_hash:
+                last_raw_hash = current_hash
+                pending_hash = current_hash
+                changed_at = time.monotonic()
+                continue
+            if pending_hash and time.monotonic() - changed_at >= args.debounce:
+                print()
+                print("Topology file stabilized; reconciling.")
+                _run_reconcile(args, force=False)
+                pending_hash = None
+    except KeyboardInterrupt:
+        print("\nStopped topology watch.")
+    return 0
+
+
+def cmd_topology_summary(args: argparse.Namespace) -> int:
+    topology = load_topology(args.topology)
+    print("ninja-pce TED summary")
+    print("=====================")
+    print(f"Topology: {topology.name}")
+    print(f"Nodes:    {len(topology.nodes)}")
+    print(f"Links:    {len(topology.links)}")
+    print()
+    print("Nodes:")
+    for node in topology.nodes.values():
+        print(f"- {node.id:6} loopback={node.loopback:15} role={node.role:3} area={node.area or '-'} tags={','.join(node.tags) or '-'}")
+    print()
+    print("Links:")
+    for link in topology.links:
+        print(
+            f"- {link.id:12} {link.source:4}->{link.target:4} "
+            f"metric={link.metric:<3} reservable={link.reservable_bw_mbps:g}Mbps "
+            f"reserved={link.reserved_bw_mbps:g}Mbps available={link.available_bw_mbps:g}Mbps "
+            f"groups={','.join(link.admin_groups) or '-'}"
+        )
+    return 0
+
+
+def cmd_gns3_demo(args: argparse.Namespace) -> int:
+    lab_root = Path(args.lab_root)
+    topology = lab_root / "topologies" / "gns3_multiarea.yml"
+    scenarios = [
+        ("base", lab_root / "demands" / "customer-a-50m.yml"),
+        ("avoid-pe1-p3", lab_root / "demands" / "customer-a-50m-avoid-pe1-p3.yml"),
+        ("customer-b-120m", lab_root / "demands" / "customer-b-120m.yml"),
+    ]
+    rc = 0
+    for label, demand in scenarios:
+        print()
+        print(f"=== GNS3 demo scenario: {label} ===")
+        ns = argparse.Namespace(
+            topology=str(topology),
+            demand=str(demand),
+            output_dir=str(Path(args.output_dir) / label),
+            show_pruned=args.show_pruned,
+            show_candidates=args.show_candidates,
+        )
+        try:
+            cmd_compute(ns)
+        except (InputError, CspfNoPath, ValueError) as exc:
+            rc = 1
+            print(f"Scenario {label} failed: {exc}", file=sys.stderr)
+    return rc
+
+
+def _print_daemon_cycle(cycle) -> None:
+    print("ninja-pce daemon cycle")
+    print("======================")
+    print(f"Status:          {cycle.status}")
+    print(f"Topology:        {cycle.topology_path}")
+    print(f"Topology fresh:  {cycle.topology_fresh}")
+    if cycle.topology_age_seconds is not None:
+        print(f"Topology age:    {cycle.topology_age_seconds:.1f}s")
+    if cycle.message:
+        print(f"Message:         {cycle.message}")
+    print(f"Demands:         {len(cycle.demand_results)}")
+    for result in cycle.demand_results:
+        label = result.demand_name or result.demand_path.name
+        path = " -> ".join(result.path_nodes) if result.path_nodes else "-"
+        print(
+            f"- {label}: action={result.action} auto={result.auto_approved} "
+            f"device={result.device or '-'} path={path}"
+        )
+        if result.policy_reasons:
+            print("  policy: " + "; ".join(result.policy_reasons))
+        if result.error:
+            print("  error: " + result.error)
+
+
+def cmd_daemon(args: argparse.Namespace) -> int:
+    config = load_daemon_config(args.config)
+    if args.poll_interval is not None:
+        config = replace(config, poll_interval=args.poll_interval)
+    if args.health_host or args.health_port is not None or args.no_health:
+        health = replace(
+            config.health,
+            host=args.health_host or config.health.host,
+            port=args.health_port if args.health_port is not None else config.health.port,
+            enabled=False if args.no_health else config.health.enabled,
+        )
+        config = replace(config, health=health)
+
+    health_state = HealthState()
+    server = None
+    if config.health.enabled and not args.once:
+        server = start_health_server(config.health, health_state)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        print(
+            f"Health endpoint listening on http://{config.health.host}:{config.health.port}/healthz"
+        )
+
+    try:
+        while True:
+            cycle = run_daemon_cycle(config)
+            health_state.record(cycle)
+            _print_daemon_cycle(cycle)
+            if args.once:
+                print()
+                print(json.dumps(cycle.to_dict(), indent=2, sort_keys=True))
+                return 0 if cycle.status == "ok" else 1
+            time.sleep(config.poll_interval)
+    except KeyboardInterrupt:
+        print("\nStopped daemon.")
+        return 0
+    finally:
+        if server is not None:
+            server.shutdown()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    try:
+        if args.command == "compute":
+            return cmd_compute(args)
+        if args.command == "validate":
+            return cmd_validate(args)
+        if args.command == "inventory-validate":
+            return cmd_inventory_validate(args)
+        if args.command == "push":
+            return cmd_push(args)
+        if args.command == "reconcile":
+            return cmd_reconcile(args)
+        if args.command == "topology-summary":
+            return cmd_topology_summary(args)
+        if args.command == "gns3-demo":
+            return cmd_gns3_demo(args)
+        if args.command == "daemon":
+            return cmd_daemon(args)
+        parser.error(f"Unknown command: {args.command}")
+        return 2
+    except (InputError, CspfNoPath, SouthboundError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

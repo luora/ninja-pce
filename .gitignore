@@ -1,0 +1,35 @@
+# Python environments and packaging
+.venv/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# Python/runtime caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# Generated outputs and logs
+examples/outputs/
+*.log
+
+# Editor and OS noise
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,14 @@
+# Optional local test outside GNS3.
+# From repository root:
+#   docker compose -f gns3/docker/ninja-pce/docker-compose.local.yml up --build
+services:
+  ninja-pce:
+    build:
+      context: ../../..
+      dockerfile: gns3/docker/ninja-pce/Dockerfile
+    image: ninja-pce:gns3
+    stdin_open: true
+    tty: true
+    volumes:
+      - ../../../gns3/lab-data:/lab
+      - ../../../build/gns3-outputs:/outputs

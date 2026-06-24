@@ -1,0 +1,20 @@
+topology_feed:
+  type: file
+  path: ../topologies/simple_multiarea.yml
+
+demands:
+  type: directory
+  path: ../demands
+
+inventory: ../inventory/network.yml
+output_dir: ../../build/daemon/outputs
+state_dir: ../../build/daemon/state
+poll_interval: 5
+
+approval_policy:
+  mode: manual
+
+health:
+  host: 127.0.0.1
+  port: 8080
+  enabled: true

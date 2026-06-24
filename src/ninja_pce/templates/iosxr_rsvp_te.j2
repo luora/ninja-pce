@@ -1,0 +1,43 @@
+! ninja-pce IOS XR-style RSVP-TE dry-run output
+! Review syntax against your exact IOS XR release before applying.
+! Service: {{ demand.name }}
+! Selected path: {{ path_string }}
+! Bandwidth: {{ demand.bandwidth_mbps }} Mbps / {{ bandwidth_kbps }} kbps
+! Dry-run only: {{ output.dry_run }}
+!
+! Candidate paths:
+{% for candidate in result.candidate_paths -%}
+! {{ candidate.rank }}. {{ " -> ".join(candidate.path_nodes) }} metric={{ candidate.total_metric }} bottleneck={{ candidate.bottleneck_available_bw_mbps }}Mbps residual={{ candidate.residual_after_reservation_mbps }}Mbps
+{% endfor %}
+!
+explicit-path name {{ output.explicit_path_name }}
+{% for hop in result.explicit_hops %}
+ index {{ hop.index * 10 }} next-address {{ hop.hop_type }} ipv4 unicast {{ hop.loopback }} ! {{ hop.node_id }}
+{% endfor %}
+!
+interface {{ output.iosxr_interface }}
+ description ninja-pce {{ demand.name }} {{ demand.source }} to {{ demand.destination }}
+ ipv4 unnumbered Loopback0
+ tunnel mode mpls traffic-eng
+ tunnel destination {{ dest_node.loopback }}
+ tunnel mpls traffic-eng bandwidth {{ bandwidth_kbps }}
+ tunnel mpls traffic-eng priority {{ demand.setup_priority }} {{ demand.hold_priority }}
+ tunnel mpls traffic-eng path-option 10 explicit name {{ output.explicit_path_name }}
+!
+
+! Suggested pre-check commands
+show mpls traffic-eng topology
+show mpls traffic-eng tunnels summary
+show rsvp interface
+show route {{ dest_node.loopback }}/32
+
+! Suggested verification commands
+show mpls traffic-eng tunnels {{ output.iosxr_interface }}
+show mpls traffic-eng tunnels {{ output.iosxr_interface }} detail
+show mpls traffic-eng topology path {{ source_node.loopback }} {{ dest_node.loopback }}
+show rsvp interface
+show rsvp session
+
+! Rollback reminder
+! no interface {{ output.iosxr_interface }}
+! no explicit-path name {{ output.explicit_path_name }}

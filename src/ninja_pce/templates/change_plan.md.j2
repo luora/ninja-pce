@@ -1,0 +1,79 @@
+# ninja-pce change plan: {{ demand.name }}
+
+## 1. Intent
+
+Create or adjust an RSVP-TE LSP from **{{ demand.source }}** to **{{ demand.destination }}** for a requested reservation of **{{ demand.bandwidth_mbps }} Mbps**.
+
+This is a dry-run plan. RSVP-TE is used here for LSP signaling and bandwidth reservation. Customer CIR enforcement remains a PE QoS/policer/shaper function, not a ninja-pce or RSVP function.
+
+## 2. Selected path
+
+```text
+{{ path_string }}
+```
+
+| Metric | Bottleneck before reservation | Bottleneck after reservation | Setup/Hold priority |
+|---:|---:|---:|---:|
+| {{ result.total_metric }} | {{ result.bottleneck_available_bw_mbps }} Mbps | {{ result.residual_after_reservation_mbps }} Mbps | {{ demand.setup_priority }}/{{ demand.hold_priority }} |
+
+## 3. Candidate paths
+
+| Rank | Path | Metric | Hops | Bottleneck before | Bottleneck after |
+|---:|---|---:|---:|---:|---:|
+{% for candidate in result.candidate_paths -%}
+| {{ candidate.rank }} | `{{ " -> ".join(candidate.path_nodes) }}` | {{ candidate.total_metric }} | {{ candidate.hop_count }} | {{ candidate.bottleneck_available_bw_mbps }} Mbps | {{ candidate.residual_after_reservation_mbps }} Mbps |
+{% endfor %}
+## 4. Link reservation preview
+
+| Link | Direction | Available before | Reservation | Available after | Admin groups |
+|---|---|---:|---:|---:|---|
+{% for link in result.path_links -%}
+| {{ link.id }} | {{ link.source }} → {{ link.target }} | {{ link.available_bw_mbps }} Mbps | {{ demand.bandwidth_mbps }} Mbps | {{ link.available_bw_mbps - demand.bandwidth_mbps }} Mbps | {{ link.admin_groups | join(", ") }} |
+{% endfor %}
+## 5. Constraints applied
+
+- Avoid nodes: {{ demand.constraints.avoid_nodes | join(", ") if demand.constraints.avoid_nodes else "none" }}
+- Avoid links: {{ demand.constraints.avoid_links | join(", ") if demand.constraints.avoid_links else "none" }}
+- Include nodes: {{ demand.constraints.include_nodes | join(", ") if demand.constraints.include_nodes else "none" }}
+- Exclude admin groups: {{ demand.affinity.exclude_admin_groups | join(", ") if demand.affinity.exclude_admin_groups else "none" }}
+- Include any admin groups: {{ demand.affinity.include_any_admin_groups | join(", ") if demand.affinity.include_any_admin_groups else "none" }}
+- Include all admin groups: {{ demand.affinity.include_all_admin_groups | join(", ") if demand.affinity.include_all_admin_groups else "none" }}
+
+## 6. Pre-checks
+
+1. Confirm source and destination loopbacks are reachable in the MPLS/TE routing context.
+2. Confirm MPLS and RSVP are enabled on all intended transit links.
+3. Confirm TE bandwidth values and existing reservations match the TED input.
+4. Confirm no maintenance window, fiber work, or known degradation exists on the selected path.
+5. Confirm service attachment/binding plan: VPLS, VPWS, L3VPN, autoroute, static route, or policy route.
+
+## 7. Change steps
+
+1. Apply explicit-path object on the tunnel head-end only.
+2. Apply or update the RSVP-TE tunnel/LSP object.
+3. Do not bind customer service traffic until the LSP is up and verified.
+4. Bind service to tunnel using the platform-specific method.
+5. Monitor RSVP, MPLS, interface utilization, and customer service counters.
+
+## 8. Post-checks
+
+1. LSP/tunnel is up.
+2. RRO/ERO matches the expected path.
+3. RSVP session is present and reservation bandwidth is visible.
+4. Service forwarding uses the intended LSP.
+5. Customer-facing QoS/CIR enforcement remains on the PE policy.
+
+## 9. Rollback
+
+1. Remove service binding from the new LSP/tunnel.
+2. Disable or remove the new LSP/tunnel.
+3. Remove explicit-path object if unused.
+4. Confirm traffic returned to the previous path or previous service state.
+
+{% if result.warnings %}
+## 10. Warnings
+
+{% for warning in result.warnings -%}
+- {{ warning }}
+{% endfor %}
+{% endif %}

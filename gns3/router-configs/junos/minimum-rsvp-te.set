@@ -1,0 +1,11 @@
+# Junos-style starter only. Edit interface names for your vMX/vJunos lab.
+set protocols mpls interface ge-0/0/0.0
+set protocols mpls interface ge-0/0/1.0
+set protocols rsvp interface ge-0/0/0.0 bandwidth 100m
+set protocols rsvp interface ge-0/0/1.0 bandwidth 200m
+set protocols ospf traffic-engineering
+set protocols ospf area 0.0.0.0 interface ge-0/0/0.0 interface-type p2p
+set protocols ospf area 0.0.0.1 interface ge-0/0/1.0 interface-type p2p
+
+# The generated LSP goes here:
+#   /outputs/base/TUN_CUSTOMER_A_PE1_PE3_junos.txt

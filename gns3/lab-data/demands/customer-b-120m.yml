@@ -1,0 +1,29 @@
+service:
+  name: CUSTOMER_B_PE1_PE3_120M
+  source: PE1
+  destination: PE3
+  bandwidth_mbps: 120
+  setup_priority: 7
+  hold_priority: 7
+  description: Larger demand that forces ninja-pce to select only the higher-capacity GREEN path.
+
+  affinity:
+    exclude_admin_groups: []
+    include_any_admin_groups: [GREEN]
+    include_all_admin_groups: []
+
+  path:
+    hop_type: strict
+    max_candidates: 2
+
+  output:
+    dry_run: true
+    tunnel_id: 120
+    tunnel_name: TUN_CUSTOMER_B_PE1_PE3_120M
+    explicit_path_name: EP_CUSTOMER_B_PE1_PE3_120M
+    iosxr_interface: tunnel-te120
+    junos_lsp_name: lsp-customer-b-pe1-pe3-120m
+    junos_primary_path_name: primary-ninja-pce
+    write_plan: true
+    write_verification: true
+    formats: [generic, iosxr, junos]
