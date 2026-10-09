@@ -1,0 +1,37 @@
+! ninja-pce IOS/IOS XE-style RSVP-TE dry-run output
+! Review syntax against your exact platform and release before applying.
+! Service: CUSTOMER_A_PE1_PE3_50M
+! Selected path: PE1 -> P3 -> P4 -> PE3
+! Bandwidth: 50.0 Mbps / 50000 kbps
+! Dry-run only: True
+!
+ip explicit-path name EP_CUSTOMER_A_PE1_PE3 enable
+ next-address strict 10.0.13.3
+ next-address strict 10.0.34.4
+ next-address strict 10.0.46.6
+!
+interface Tunnel100
+ description ninja-pce CUSTOMER_A_PE1_PE3_50M PE1 to PE3
+ ip unnumbered Loopback0
+ tunnel mode mpls traffic-eng
+ tunnel destination 10.255.0.6
+ tunnel mpls traffic-eng bandwidth 50000
+ tunnel mpls traffic-eng priority 7 7
+ tunnel mpls traffic-eng path-option 10 explicit name EP_CUSTOMER_A_PE1_PE3
+!
+
+! Suggested pre-check commands
+show mpls traffic-eng topology
+show mpls traffic-eng tunnels brief
+show ip rsvp interface
+show ip route 10.255.0.6
+
+! Suggested verification commands
+show mpls traffic-eng tunnels Tunnel100
+show mpls traffic-eng tunnels Tunnel100 detail
+show ip rsvp interface
+show ip rsvp reservation
+
+! Rollback reminder
+! Manual recovery: confirm ownership and pre-change snapshot before changes.
+! No automatic deletion of pre-existing tunnels or paths.

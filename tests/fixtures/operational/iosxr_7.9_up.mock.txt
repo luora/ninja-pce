@@ -1,0 +1,16 @@
+MOCK: synthetic IOS XR 7.9 dialect, not collected from GNS3.
+Name: tunnel-te100 Destination: 10.255.0.6
+ Status:
+   Admin: up Oper: up Path: valid Signalling: connected
+ Bandwidth: 50000 kbps (CT0) Priority: 7 7
+ Current LSP Info:
+   Instance: 2, Signaling Area: OSPF 100 area 0
+   Path Info:
+     Outgoing:
+       Explicit Route:
+         Strict, 10.0.13.3
+         Strict, 10.0.34.4
+         Strict, 10.0.46.6
+       Tspec: avg rate=50000 kbits, burst=1000 bytes, peak rate=50000 kbits
+   Resv Info:
+       Fspec: avg rate=50000 kbits, burst=1000 bytes, peak rate=50000 kbits

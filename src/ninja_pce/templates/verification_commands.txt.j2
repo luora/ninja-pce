@@ -11,9 +11,9 @@ show service binding for the affected VPLS/VPWS/L3VPN
 show interface utilization/errors on selected links
 
 # IOS XR-style checks
-show mpls traffic-eng tunnels {{ output.iosxr_interface }}
-show mpls traffic-eng tunnels {{ output.iosxr_interface }} detail
-show mpls traffic-eng topology path {{ source_node.loopback }} {{ dest_node.loopback }}
+show mpls traffic-eng tunnels {{ output.iosxr_interface | replace("tunnel-te", "") }}
+show mpls traffic-eng tunnels {{ output.iosxr_interface | replace("tunnel-te", "") }} detail
+show mpls traffic-eng tunnels topology path destination {{ dest_node.loopback }} explicit-path-name {{ output.explicit_path_name }}
 show rsvp interface
 show rsvp session
 show cef {{ dest_node.loopback }} detail
@@ -29,3 +29,10 @@ run show route table inet.3 {{ dest_node.loopback }}
 {% for link in result.path_links -%}
 # {{ link.source }} -> {{ link.target }} via {{ link.id }}: expected reservation {{ demand.bandwidth_mbps }} Mbps; residual {{ link.available_bw_mbps - demand.bandwidth_mbps }} Mbps
 {% endfor %}
+
+# Expected ERO (compare current active LSP, not historical/configured path)
+{% for hop in result.explicit_hops -%}
+# {{ hop.link_id }} {{ hop.hop_type }} {{ hop.address }} (router loopback {{ hop.loopback }})
+{% endfor %}
+# Unknown output, missing fields, or ERO mismatch fails verification.
+# Recovery requires pre-change snapshot, resource ownership, and manual review.

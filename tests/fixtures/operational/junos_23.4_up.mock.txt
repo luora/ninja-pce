@@ -1,0 +1,12 @@
+MOCK: synthetic Junos 23.4 dialect, not collected from GNS3.
+Ingress LSP: 1 sessions
+To: 10.255.0.6, From: 10.255.0.1
+ LSPstate: Up, ActiveRoute: 0
+ LSPname: lsp-customer-a-pe1-pe3
+ ActivePath: EP_CUSTOMER_A_PE1_PE3 (primary)
+ Primary EP_CUSTOMER_A_PE1_PE3 State: Up
+   Bandwidth: 50000000bps
+   Computed ERO (S [L] denotes strict [loose] hops):
+     10.0.13.3S 10.0.34.4S 10.0.46.6S
+   Received RRO (ProtectionFlag 1=Available 2=InUse 4=B/W 8=Node):
+     10.0.13.3 10.0.34.4 10.0.46.6

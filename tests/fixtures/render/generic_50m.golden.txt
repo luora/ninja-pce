@@ -1,0 +1,40 @@
+# ninja-pce generic RSVP-TE dry-run output
+# Service: CUSTOMER_A_PE1_PE3_50M
+# Source: PE1 (10.255.0.1)
+# Destination: PE3 (10.255.0.6)
+# Bandwidth: 50.0 Mbps
+# Selected path: PE1 -> P3 -> P4 -> PE3
+# Total metric: 50
+# Bottleneck available bandwidth before reservation: 170.0 Mbps
+# Residual bottleneck bandwidth after reservation: 120.0 Mbps
+# Dry-run only: True
+
+# Candidate paths considered
+# 1. PE1 -> P3 -> P4 -> PE3 metric=50 bottleneck=170.0Mbps residual=120.0Mbps
+# 2. PE1 -> P1 -> P3 -> P4 -> PE3 metric=60 bottleneck=90.0Mbps residual=40.0Mbps
+# 3. PE1 -> P3 -> P4 -> P2 -> PE3 metric=60 bottleneck=80.0Mbps residual=30.0Mbps
+# 4. PE1 -> P1 -> P3 -> P4 -> P2 -> PE3 metric=70 bottleneck=80.0Mbps residual=30.0Mbps
+explicit-path EP_CUSTOMER_A_PE1_PE3
+  hop 1 strict 10.0.13.3  # P3 role=P area=0.0.0.1
+  hop 2 strict 10.0.34.4  # P4 role=P area=0.0.0.1
+  hop 3 strict 10.0.46.6  # PE3 role=PE area=0.0.0.1
+!
+rsvp-te-lsp TUN_CUSTOMER_A_PE1_PE3
+  source 10.255.0.1
+  destination 10.255.0.6
+  bandwidth 50.0 Mbps
+  setup-priority 7
+  hold-priority 7
+  explicit-path EP_CUSTOMER_A_PE1_PE3
+!
+
+# Link reservation preview
+# PE1-P3 PE1->P3 available_before=180.0Mbps reserve=50.0Mbps residual_after=130.0Mbps groups=('GREEN',)
+# P3-P4 P3->P4 available_before=170.0Mbps reserve=50.0Mbps residual_after=120.0Mbps groups=('GREEN',)
+# P4-PE3 P4->PE3 available_before=170.0Mbps reserve=50.0Mbps residual_after=120.0Mbps groups=('GREEN',)
+# Verification checklist
+# - Confirm RSVP/MPLS enabled on every traversed interface.
+# - Confirm LSP is up and using expected ERO/RRO path.
+# - Confirm reserved bandwidth changed on each traversed link.
+# - Confirm service binding points to the intended tunnel/LSP.
+# - Confirm customer CIR is enforced separately on the PE QoS policy.

@@ -1,0 +1,12 @@
+MOCK: synthetic IOS XE 17.12 dialect, not collected from GNS3.
+Name: PE1_t100 (Tunnel100) Destination: 10.255.0.6
+ Status:
+   Admin: up Oper: up Path: valid Signalling: connected
+ Bandwidth: 50000 kbps (Global)
+ RSVP Signalling Info:
+   Src 10.255.0.1, Dst 10.255.0.6, Tun_Id 100, Tun_Instance 1
+ RSVP Path Info:
+   Explicit Route: 10.0.13.3 10.0.34.4 10.0.46.6
+   Tspec: ave rate=50000 kbits, burst=1000 bytes, peak rate=50000 kbits
+ RSVP Resv Info:
+   Fspec: ave rate=50000 kbits, burst=1000 bytes, peak rate=50000 kbits
