@@ -179,6 +179,7 @@ class HealthState:
             "demands_failed": 0,
             "demands_revalidated": 0,
             "demands_verification_failed": 0,
+            "demands_recovery_required": 0,
             "demands_backoff": 0,
             "demands_debounced": 0,
         }
@@ -196,8 +197,8 @@ class HealthState:
 
             for result in cycle.demand_results:
                 self._metrics["demands_total"] += 1
-                if result.action == "verification_failed":
-                    self._metrics["demands_verification_failed"] += 1
+                if result.action in {"verification_failed", "recovery_required"}:
+                    self._metrics[f"demands_{result.action}"] += 1
                     self._metrics["demands_failed"] += 1
                 elif result.error:
                     self._metrics["demands_failed"] += 1
@@ -706,6 +707,10 @@ def run_daemon_cycle(
                     auto_approved = final.action == "applied"
                     if final.action == "verification_failed":
                         error = "Operational LSP verification failed; reservation retained"
+                    elif final.action == "recovery_required":
+                        error = (
+                            final.push_result.recovery_note if final.push_result else None
+                        ) or "Interrupted delivery requires manual permanent commit confirmation"
                     else:
                         record["last_verified"] = now
                         record["attempts"] = 0
@@ -722,7 +727,7 @@ def run_daemon_cycle(
                 DemandRunResult(
                     demand_path=demand_path,
                     demand_name=preview.result.demand.name,
-                    action=final.action if error is None or final.action == "verification_failed" else "failed",
+                    action=final.action if error is None or final.action in {"verification_failed", "recovery_required"} else "failed",
                     auto_approved=auto_approved,
                     policy_reasons=() if decision.allowed else decision.reasons,
                     error=error,

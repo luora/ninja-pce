@@ -280,10 +280,24 @@ def reconcile_once(
 
                     execution_guard()
                     if not pending_apply or state.get("pending"):
+                        recovering_pending = bool(state.get("pending"))
                         push_result = verify_plan(
                             plan, environ=environ, connect_handler=connect_handler, verifier=verifier
                         )
+                        if recovering_pending and push_result.verified:
+                            note = (
+                                "LSP is currently UP, but the interrupted delivery's permanent commit outcome "
+                                "is unknown; a confirmed commit may still expire. Inspect and resolve the "
+                                "commit outcome manually before clearing pending state."
+                            )
+                            push_result = replace(
+                                push_result, status="APPLIED_UNVERIFIED",
+                                verification_errors=push_result.verification_errors + (note,),
+                                recovery_note=note,
+                            )
                         action = "revalidated" if push_result.verified else "verification_failed"
+                        if recovering_pending and push_result.status == "APPLIED_UNVERIFIED":
+                            action = "recovery_required"
                         if push_result.verified:
                             state["last_applied_config_hash"] = desired_hash
                             state["last_applied_config"] = plan.command_text
@@ -310,6 +324,9 @@ def reconcile_once(
                     ledger.transition(identity, push_result.status)
                     event["verification_status"] = push_result.status
                     event["verification_errors"] = list(push_result.verification_errors)
+                    if push_result.recovery_note:
+                        state["recovery_note"] = push_result.recovery_note
+                        event["recovery_note"] = push_result.recovery_note
             except Exception:
                 # Never release capacity after SSH loss, timeout, failed commit, or crash.
                 state["status"] = "ROLLBACK_REQUIRED"

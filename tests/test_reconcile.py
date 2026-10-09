@@ -212,9 +212,16 @@ def test_partial_write_restart_is_read_only_and_retains_resources(tmp_path):
     result = reconcile_once(**common, execute=True, approved=True,
                             environ={"NINJA_PCE_PE1_PASSWORD": "synthetic"},
                             connect_handler=lambda **kwargs: recovered)
-    assert result.action == "revalidated"
+    assert result.action == "recovery_required"
+    assert result.push_result.status == "APPLIED_UNVERIFIED"
+    assert not result.push_result.verified
+    assert "confirmed commit may still expire" in result.push_result.recovery_note
     assert recovered.writes == 0
-    assert "pending" not in load_state(tmp_path / "state.json")
+    recovered_state = load_state(tmp_path / "state.json")
+    assert recovered_state["pending"]
+    assert "last_verified" not in recovered_state
+    assert recovered_state["status"] == "APPLIED_UNVERIFIED"
+    assert ReservationLedger(tmp_path).entries["PE1:iosxr:tunnel-te100"]["status"] == "APPLIED_UNVERIFIED"
 
 
 def test_kill_switch_blocks_execute_before_network(tmp_path):

@@ -328,3 +328,42 @@ def test_health_reports_uninitialized_and_failed_cycles_as_unhealthy(tmp_path, m
     config.topology_feed.path.unlink()
     state.record(run_daemon_cycle(config))
     assert request() == 503
+
+
+def test_pending_up_after_restart_requires_manual_commit_recovery_and_degraded_health(tmp_path):
+    from ninja_pce.daemon import HealthState, demand_state_path
+    from ninja_pce.reconcile import reconcile_once
+    from ninja_pce.state import load_state
+    config = _single_config(tmp_path)
+    state_path = demand_state_path(config, DEMAND)
+    common = dict(topology_path=config.topology_feed.path, demand_path=DEMAND,
+                  inventory_path=config.inventory_path, state_path=state_path,
+                  output_dir=tmp_path / "prepare")
+    preview = reconcile_once(**common)
+    interrupted = FakeConnection()
+
+    def lose_connection(commands, **kwargs):
+        raise RuntimeError("Synthetic interruption during configuration")
+
+    interrupted.send_config_set = lose_connection
+    reconcile_once(**common, execute=True, approved=True, approved_plan_id=preview.plan_id,
+                   environ={"NINJA_PCE_PE1_PASSWORD": "synthetic"},
+                   connect_handler=lambda **kwargs: interrupted)
+    assert load_state(state_path)["pending"]
+    recovered = FakeConnection()
+    cycle = run_daemon_cycle(config, environ={"NINJA_PCE_PE1_PASSWORD": "synthetic"},
+                             connect_handler=lambda **kwargs: recovered)
+    result = cycle.demand_results[0]
+    assert cycle.status == "degraded"
+    assert result.action == "recovery_required"
+    assert "permanent commit outcome" in result.error
+    assert not result.auto_approved
+    assert not recovered.config_commands
+    state = load_state(state_path)
+    assert state["pending"]
+    assert state["status"] == "APPLIED_UNVERIFIED"
+    assert "last_verified" not in state
+    health = HealthState()
+    health.record(cycle)
+    assert health.snapshot()["metrics"]["demands_recovery_required"] == 1
+    assert health.snapshot()["last_cycle"]["status"] == "degraded"
