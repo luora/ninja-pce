@@ -1,5 +1,15 @@
 # ninja-pce
 
+> Reliability remediation: current behavior and migration rules are documented in
+> [input schema](docs/input_schema.md), [reconciliation safety](docs/reconciliation.md),
+> [platform support](docs/platform_support.md), and the [engineering audit](docs/engineering_audit.md).
+> These supersede the earlier implementation/status descriptions below. Parallel
+> links now retain directional IDs, CSPF proves its ranking or returns SEARCH_LIMIT,
+> strict EROs use numbered interface addresses, and CLI acceptance never implies
+> a verified LSP. Execution uses an exact reviewed plan and shared local reservations;
+> unsupported output and uncertain recovery fail closed. See the
+> [GNS3 validation runner](docs/gns3_validation.md) for honest offline/device results.
+
 `ninja-pce` is a practical external path computation and topology-reconciliation helper for RSVP-TE networks where the deployed routers may not support native PCEP, BGP-LS, or SR-TE controller workflows.
 
 It is intentionally **not** a full PCEP controller. It takes a topology/TED file, a service-demand file, and an operator-maintained host/OS inventory; computes feasible bandwidth-aware RSVP-TE paths; renders platform configuration; and can deliver an explicitly approved update with Netmiko.

@@ -3,7 +3,6 @@ from __future__ import annotations
 from .loaders import InputError
 from .models import Inventory, ManagedDevice, Topology
 
-
 DEVICE_TYPE_ALIASES = {
     "cisco_xr": "cisco_xr",
     "iosxr": "cisco_xr",

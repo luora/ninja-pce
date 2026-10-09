@@ -1,0 +1,204 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-09",
+  "date_timezone": "Africa/Nairobi",
+  "baseline_commit": "bf0b004507d4ffd4f8de72edf63fdcb578f66bdb",
+  "branch": "fix/te-cspf-reliability",
+  "baseline_pytest": {
+    "passed": 20,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 1.17
+  },
+  "final_pytest": {
+    "passed": 333,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 19.96
+  },
+  "coverage": {
+    "line_rate": 0.8276,
+    "lines_covered": 2132,
+    "lines_valid": 2576
+  },
+  "ruff": "PASS",
+  "mypy": {
+    "status": "PASS",
+    "source_files": 14
+  },
+  "pip_check": "PASS",
+  "shell_syntax": "PASS",
+  "python": "3.12.3",
+  "netmiko": "4.8.0",
+  "sdk_signatures_checked": true,
+  "property_cases": {
+    "exhaustive_directed_multigraph_oracle": 200,
+    "decimal_conversion": 100
+  },
+  "gns3": {
+    "offline": {
+      "scope": "offline",
+      "results": [
+        {
+          "id": "T01",
+          "status": "PASS",
+          "reason": "Offline computation/accounting assertion only; no router validation"
+        },
+        {
+          "id": "T02",
+          "status": "PASS",
+          "reason": "Offline computation/accounting assertion only; no router validation"
+        },
+        {
+          "id": "T03",
+          "status": "PASS",
+          "reason": "Offline computation/accounting assertion only; no router validation"
+        },
+        {
+          "id": "T04",
+          "status": "PASS",
+          "reason": "Offline computation/accounting assertion only; no router validation"
+        },
+        {
+          "id": "T05",
+          "status": "PASS",
+          "reason": "Offline computation/accounting assertion only; no router validation"
+        },
+        {
+          "id": "T06",
+          "status": "PASS",
+          "reason": "Offline computation/accounting assertion only; no router validation"
+        },
+        {
+          "id": "T07",
+          "status": "PASS",
+          "reason": "Offline computation/accounting assertion only; no router validation"
+        },
+        {
+          "id": "T08",
+          "status": "PASS",
+          "reason": "Offline computation/accounting assertion only; no router validation"
+        },
+        {
+          "id": "T09",
+          "status": "PASS",
+          "reason": "Offline computation/accounting assertion only; no router validation"
+        },
+        {
+          "id": "T10",
+          "status": "SKIP",
+          "reason": "Device operational behavior requires integration evidence; see mock pytest fixtures"
+        },
+        {
+          "id": "T11",
+          "status": "PASS",
+          "reason": "Offline computation/accounting assertion only; no router validation"
+        },
+        {
+          "id": "T12",
+          "status": "PASS",
+          "reason": "Offline computation/accounting assertion only; no router validation"
+        },
+        {
+          "id": "T13",
+          "status": "PASS",
+          "reason": "Offline computation/accounting assertion only; no router validation"
+        },
+        {
+          "id": "T14",
+          "status": "PASS",
+          "reason": "Offline computation/accounting assertion only; no router validation"
+        },
+        {
+          "id": "T15",
+          "status": "SKIP",
+          "reason": "Device operational behavior requires integration evidence; see mock pytest fixtures"
+        }
+      ]
+    },
+    "integration": {
+      "scope": "integration",
+      "results": [
+        {
+          "id": "T01",
+          "status": "SKIP",
+          "reason": "NOT EXECUTED: no device evidence supplied"
+        },
+        {
+          "id": "T02",
+          "status": "SKIP",
+          "reason": "NOT EXECUTED: no device evidence supplied"
+        },
+        {
+          "id": "T03",
+          "status": "SKIP",
+          "reason": "NOT EXECUTED: no device evidence supplied"
+        },
+        {
+          "id": "T04",
+          "status": "SKIP",
+          "reason": "NOT EXECUTED: no device evidence supplied"
+        },
+        {
+          "id": "T05",
+          "status": "SKIP",
+          "reason": "NOT EXECUTED: no device evidence supplied"
+        },
+        {
+          "id": "T06",
+          "status": "SKIP",
+          "reason": "NOT EXECUTED: no device evidence supplied"
+        },
+        {
+          "id": "T07",
+          "status": "SKIP",
+          "reason": "NOT EXECUTED: no device evidence supplied"
+        },
+        {
+          "id": "T08",
+          "status": "SKIP",
+          "reason": "NOT EXECUTED: no device evidence supplied"
+        },
+        {
+          "id": "T09",
+          "status": "SKIP",
+          "reason": "NOT EXECUTED: no device evidence supplied"
+        },
+        {
+          "id": "T10",
+          "status": "SKIP",
+          "reason": "NOT EXECUTED: no device evidence supplied"
+        },
+        {
+          "id": "T11",
+          "status": "SKIP",
+          "reason": "NOT EXECUTED: no device evidence supplied"
+        },
+        {
+          "id": "T12",
+          "status": "SKIP",
+          "reason": "NOT EXECUTED: no device evidence supplied"
+        },
+        {
+          "id": "T13",
+          "status": "SKIP",
+          "reason": "NOT EXECUTED: no device evidence supplied"
+        },
+        {
+          "id": "T14",
+          "status": "SKIP",
+          "reason": "NOT EXECUTED: no device evidence supplied"
+        },
+        {
+          "id": "T15",
+          "status": "SKIP",
+          "reason": "NOT EXECUTED: no device evidence supplied"
+        }
+      ]
+    }
+  },
+  "router_connections_during_remediation": 0,
+  "live_bgpls_or_pcep_implemented": false,
+  "remote_ci_executed": false,
+  "docker_image_build_executed": false
+}
