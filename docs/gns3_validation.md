@@ -13,25 +13,34 @@ the routers. It has 4 vCPUs, 3.8 GiB RAM and approximately 17 GiB free storage.
 Use a Python virtual environment on this node. Ninja-PCE does not need
 `/dev/kvm`; router emulation belongs to the GNS3 compute server, not this guest.
 
-The operator confirmed this cabling and interface assignment:
+The operator selected `ens3` for Internet and `ens4` for lab connectivity, then
+omitted the management switch because GNS3 Telnet consoles are available. Use
+this simpler layout for initial setup and manual qualification:
 
 | Ubuntu NIC | Reported MAC | GNS3 connection | Addressing |
 |---|---|---|---|
 | `ens3` | `02:00:00:00:00:10` | NAT node / existing Internet network | DHCP; default route and DNS |
-| `ens4` | `02:00:00:00:00:11` | Isolated router management switch | `172.16.100.10/24`; no gateway |
+| `ens4` | `02:00:00:00:00:11` | Unconnected during console-only work | No address required; optional direct PE1 link later |
 
-Connect router management ports to that management switch. Keep router core
-links separate. The NAT node provides outbound package/Git access; its DHCP
-subnet must differ from `172.16.100.0/24`. Use the NAT node on the appropriate
-GNS3 compute server; do not install a nested hypervisor in Ubuntu for this setup.
+Use GNS3 Telnet consoles for router configuration and manual show-command
+captures. These sessions reach appliance consoles through the GNS3 server;
+they do not need router management IPs or management cables. See the
+[GNS3 console fields](https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodesnodeid.html).
+Router-to-router core cables are still required. Current Ninja-PCE delivery and collection use
+SSH, so console access does not enable those adapters. The optional direct
+Ubuntu–PE1 link below provides a later SSH path without a management switch.
+
+The NAT node provides Ubuntu with outbound package/Git access. Use it on the
+appropriate GNS3 compute server; do not install a nested hypervisor in Ubuntu.
 See the [GNS3 NAT node documentation](https://docs.gns3.com/docs/using-gns3/advanced/the-nat-node).
 
 ### 1. Restore carrier, then configure Ubuntu addressing
 
-Both reported NICs have administrative `UP` but `NO-CARRIER`. Connect the
-virtual cables, check the appliance adapter/MAC mapping and start the connected
-nodes. Changing an IP address cannot repair an absent lower-layer link. Verify
-that both NICs acquire carrier before troubleshooting DHCP or SSH. See
+Both originally reported NICs have administrative `UP` but `NO-CARRIER`.
+Connect `ens3` to NAT, check its appliance adapter/MAC mapping and start the
+connected node. Changing an IP address cannot repair an absent lower-layer
+link. Verify `ens3` has carrier before troubleshooting DHCP. `ens4` can remain
+`NO-CARRIER` while intentionally unconnected for console-only work. See
 [Linux operational states](https://docs.kernel.org/networking/operstates.html).
 
 From the **Ubuntu GNS3 console**, inspect existing configuration:
@@ -75,16 +84,15 @@ network:
     ens3:
       dhcp4: true
     ens4:
+      optional: true
       dhcp4: false
       dhcp6: false
       accept-ra: false
-      addresses:
-        - 172.16.100.10/24
 ```
 
-Remove any old lab-side gateway/default route and DNS assignment from the
-owning configuration. Preserve required Internet-side IPv6 settings. Use console
-access to validate and trial the change:
+Remove any obsolete `ens4` address, gateway/default route and DNS assignment
+from the owning configuration. Preserve required Internet-side IPv6 settings.
+Use console access to validate and trial the change:
 
 ```bash
 sudo netplan generate
@@ -98,16 +106,14 @@ ip -br link
 ip -br address
 ip -4 route
 ip -6 route
-ip route get 172.16.100.101
 ip route get 1.1.1.1
 getent ahosts github.com
 ```
 
-Expected: the router-management route uses `ens4` with source
-`172.16.100.10`; the Internet route uses `ens3`. A router need not respond yet
-for `ip route get` to demonstrate route selection. Confirm the trial only when
-the checks succeed. After a timeout/cancellation, verify both live state and
-files reverted before rebooting; [Netplan documents rollback caveats](https://netplan.readthedocs.io/en/stable/netplan-try/).
+Expected: Ubuntu has a DHCP address and Internet route through `ens3`; no lab
+route or `ens4` carrier is required at this stage. Confirm the trial only when
+the Internet checks succeed. After a timeout/cancellation, verify both live state
+and files reverted before rebooting; [Netplan documents rollback caveats](https://netplan.readthedocs.io/en/stable/netplan-try/).
 Keep Ubuntu as a management endpoint. Do not bridge or forward traffic between
 `ens3` and `ens4` in this setup.
 
@@ -187,35 +193,49 @@ documents the release-family RSVP displays; the
 are relevant only after identifying that platform. Command presence alone is
 not image/license qualification.
 
-Once management addressing and SSH are configured for the isolated lab, verify
-PE1 at the proposed `172.16.100.101` from Ubuntu. Use the actual address if the
-lab already has a different management plan:
+Save console captures with UTC time, GNS3 project/node identity, and exact
+commands. Label this stage `qualification / UNQUALIFIED`; these captures do not
+produce integration PASS results.
+
+#### Optional later SSH access without a switch
+
+When an SSH-based controller test is needed, connect Ubuntu `ens4` directly to
+one spare PE1 interface. Assign `172.16.100.10/24` to Ubuntu and
+`172.16.100.101/24` to PE1 on that cable; neither needs a default gateway on this
+link. Add the Ubuntu address to the existing `ens4` Netplan definition and use
+the console trial procedure above. Keep the NAT subnet separate from
+`172.16.100.0/24`. Configure and qualify SSH on PE1 through its console, using
+the actual interface name and configured username. Then verify from Ubuntu:
 
 ```bash
 ping -c 3 172.16.100.101
 ssh admin@172.16.100.101
 ```
 
-Check the host key through the console and use the actual configured username.
-Save captures with UTC time, GNS3 project/node identity, and exact commands.
-Label this stage `qualification / UNQUALIFIED`; these captures do not produce
-integration PASS results.
+Check the SSH host key through the console. Only PE1 needs this additional cable
+for head-end delivery/collection. Access to other routers from Ubuntu would
+need a separately configured routed path, such as through PE1 to loopbacks;
+console access alone does not create that route. The current adapters do not
+support GNS3 Telnet consoles; setting a console port in the SSH inventory does
+not change the transport.
 
 ### 4. Preview a two-router smoke test
 
-One router is enough for identification and SSH checks. An end-to-end RSVP-TE
+One router is enough for identification and console checks. An end-to-end RSVP-TE
 test needs a second capable router. After identifying the image, clone it in
 the isolated GNS3 project if licensed and supported, then record actual ports:
 
-| Node | Management /24 | Loopback /32 | Direct core interface /29 |
+| Node | Optional SSH entry /24 | Loopback /32 | Direct core interface /29 |
 |---|---|---|---|
 | PE1 | 172.16.100.101 | 10.255.0.1 | 10.0.16.1 |
-| PE3 | 172.16.100.106 | 10.255.0.6 | 10.0.16.6 |
+| PE3 | Console access | 10.255.0.6 | 10.0.16.6 |
 
 Use the separate [IOS XE 16.9.7 candidate inputs](../gns3/lab-data/iosxe-16.9.7/).
 Their bandwidth/state values are **intended lab inputs, not observations**.
 The inventory uses Netmiko `cisco_ios` for both routers and does not change the
-existing mixed-platform six-router inventory. Validate and render offline:
+existing mixed-platform six-router inventory. Its host addresses are planned
+placeholders; validation does not connect to them. PE3's placeholder management
+IP need not be configured for console-only work. Validate and render offline:
 
 ```bash
 .venv/bin/ninja-pce validate \
@@ -254,34 +274,34 @@ inventory; it is not a one-router qualification collector. See
 Proceed to the six-router matrix after the two-router capability and parser
 qualification. The remaining sections describe that larger validation target.
 
-## Six-router physical and management plan
+## Six-router core and console plan
 
 The addressing and resource plan below can be reused with a qualified IOS XE
 image. The existing starter configurations and mixed-platform inventory were
 prepared for IOS XR 7.9.x and a Junos tail-end; they do not configure IOS XE.
 After qualifying the available image, create a separate six-router IOS XE
-inventory using `cisco_ios` and the actual management addresses. Do not reuse
-IOS XR command hierarchy on IOS XE. Consult [platform support](platform_support.md)
+inventory using `cisco_ios` and actual reachable SSH addresses when needed.
+Do not reuse IOS XR command hierarchy on IOS XE. Consult [platform support](platform_support.md)
 for the current release gates and primary sources. Use an isolated GNS3 project
 and preserve its previous configuration. FRR is an optional collector experiment,
 not an RSVP-TE replacement.
 
-Connect all management interfaces to an isolated Ethernet switch. Management
-subnet: `172.16.100.0/24`, Linux/Docker Ninja `172.16.100.10`. In the confirmed
-Ubuntu layout the lab NIC has no gateway; Internet routing uses `ens3`.
-Inventory currently maps the following routers; it is preserved unchanged.
+Use GNS3 Telnet consoles for all six routers; omit the management switch and
+its six router cables. Ubuntu obtains Internet access through `ens3`; `ens4`
+can stay unconnected until the optional direct PE1 SSH link is needed.
+Existing inventory addresses remain planned metadata and are preserved.
 Router interface names depend on appliance NIC order; record the actual mapping
 before configuring. The table assigns deterministic logical port slots, not
 invented appliance interface names.
 
-| Router | Loopback /32 | Management | Core slots in ascending table order |
-|---|---|---|---|
-| PE1 | 10.255.0.1 | 172.16.100.101 | PE1-P1, PE1-P3, optional parallel |
-| P1 | 10.255.0.2 | 172.16.100.102 | PE1-P1, P1-P2, P1-P3 |
-| P3 | 10.255.0.3 | 172.16.100.103 | PE1-P3, P3-P4, P1-P3, optional parallel |
-| P4 | 10.255.0.4 | 172.16.100.104 | P3-P4, P4-PE3, P2-P4 |
-| P2 | 10.255.0.5 | 172.16.100.105 | P1-P2, P2-PE3, P2-P4 |
-| PE3 | 10.255.0.6 | 172.16.100.106 | P2-PE3, P4-PE3 |
+| Router | Loopback /32 | Core slots in ascending table order |
+|---|---|---|
+| PE1 | 10.255.0.1 | PE1-P1, PE1-P3, optional parallel |
+| P1 | 10.255.0.2 | PE1-P1, P1-P2, P1-P3 |
+| P3 | 10.255.0.3 | PE1-P3, P3-P4, P1-P3, optional parallel |
+| P4 | 10.255.0.4 | P3-P4, P4-PE3, P2-P4 |
+| P2 | 10.255.0.5 | P1-P2, P2-PE3, P2-P4 |
+| PE3 | 10.255.0.6 | P2-PE3, P4-PE3 |
 
 ### Core cabling sketch
 
@@ -310,29 +330,24 @@ flowchart LR
     PE1 ---|"Optional parallel: 10.0.113.0/29"| P3
 ```
 
-### Management and Internet cabling sketch
+### Controller connectivity without a management switch
 
-Every router has a dedicated management connection to the same switch. Ubuntu
-is a management endpoint with two NICs; it does not forward between them.
+The initial console-only layout needs only Ubuntu's NAT cable in addition to
+the core links. The optional second cable below is for future SSH access to
+PE1. GNS3 console sessions do not consume router NICs or appear as lab cables.
 
 ```mermaid
 flowchart TB
     NAT["GNS3 NAT / Internet"]
     PCE["Ubuntu: Ninja-PCE"]
-    SW["Management switch<br/>172.16.100.0/24"]
     NAT ---|"ens3: DHCP"| PCE
-    PCE ---|"ens4: 172.16.100.10/24"| SW
-    SW --- PE1["PE1<br/>172.16.100.101"]
-    SW --- P1["P1<br/>172.16.100.102"]
-    SW --- P3["P3<br/>172.16.100.103"]
-    SW --- P4["P4<br/>172.16.100.104"]
-    SW --- P2["P2<br/>172.16.100.105"]
-    SW --- PE3["PE3<br/>172.16.100.106"]
+    PCE ---|"Optional ens4: 172.16.100.10/24"| PE1["PE1 SSH<br/>172.16.100.101/24"]
 ```
 
-Allow one management NIC in addition to the core ports: PE1 and PE3 need three
-NICs each, and P1/P2/P3/P4 need four each. With the optional parallel link, PE1
-needs four and P3 needs five. Record real appliance port names before cabling.
+For core-only cabling, PE1 and PE3 need two NICs each, and P1/P2/P3/P4 need three
+each. With the optional parallel link, PE1 needs three and P3 needs four. The
+optional Ubuntu–PE1 cable needs one more PE1 NIC. Console sessions need no extra
+NIC. Record real appliance port names before cabling.
 
 All core subnets use `/29`; do not copy `/30` onto subnets where endpoints .3,
 .4 or .5 would be broadcast or belong to a different subnet.
@@ -358,12 +373,14 @@ counter in YAML. Preserve forward IDs; reverse resources use `:reverse`.
 
 ## Configuration sequence
 
-1. Create the six router appliances and Linux/Docker management node, cable
-   management and core links, record actual interface names, and save a GNS3
-   project snapshot. Use the Ubuntu virtual environment above; alternatively,
+1. Create the six router appliances and Linux/Docker controller node, cable
+   core links and Ubuntu Internet access, record actual interface names, and save
+   a GNS3 project snapshot. Use the Ubuntu virtual environment above; alternatively,
    build the Docker node with `bash gns3/scripts/build_ninja_pce_image.sh`.
-2. Assign management/SSH access and loopbacks from the table. Supply secrets
-   via the selected inventory's password environment references.
+2. Assign loopbacks and core addresses through GNS3 Telnet consoles. Dedicated
+   router management IPs are not required. Configure the optional direct PE1
+   SSH path only when controller connectivity is needed; its credentials use
+   the selected inventory's password environment references.
 3. Initially use OSPF process100, area0 for all core interfaces and loopbacks,
    router-id from the loopback, point-to-point core network type, and TE router-id
    Loopback0. The generator normalizes all areas to0 for this qualification.
@@ -381,8 +398,11 @@ counter in YAML. Preserve forward IDs; reverse resources use `:reverse`.
    TED. Only a collector with verified source ownership may label a snapshot
    `authoritative: true`, `complete: true`, with UTC `timestamp` and `source`.
 6. Preview the case's computed directional IDs and rendered ERO, review the plan
-   ID and pre-change configuration. For a new isolated LSP only, use explicit
-   `--execute --approve --approved-plan-id ID`. Existing tunnel/path replacement
+   ID and pre-change configuration. In the console-only phase, review and apply
+   an isolated lab LSP manually through its console. Automated delivery requires
+   qualified SSH access and a supported release; for a new isolated LSP only,
+   use explicit `--execute --approve --approved-plan-id ID`. IOS XE 16.9.7 remains
+   blocked as described above. Existing tunnel/path replacement
    is refused until ownership-aware recovery is qualified. Never bind customer
    traffic as part of these tests.
 7. After each case collect evidence, restore the lab snapshot, and confirm
@@ -431,9 +451,15 @@ path with P3 absent and the20M P1-P2 bottleneck.
 
 ## Collect and compare actual evidence
 
-For supported path cases the collector is read-only and invokes only validated
-show commands. Run explicitly against the isolated lab, after establishing the
-manifest's condition. The command below uses the original XR/Junos inventory;
+During console-only qualification, retain manual raw captures with the lab,
+device, command and UTC time. Offline checks remain available. `collect.py`
+requires SSH access to the head-end and does not connect to GNS3 Telnet console
+ports. Manual console logs are qualification material; they do not automatically
+satisfy the integration evidence schema or yield a PASS.
+
+For supported path cases with SSH connectivity, the collector is read-only and
+invokes only validated show commands. Run explicitly against the isolated lab,
+after establishing the manifest's condition. The command below uses the original XR/Junos inventory;
 for a future qualified six-router IOS XE lab, replace `--inventory` with its
 separate complete IOS XE inventory. This command is not run during remediation:
 
