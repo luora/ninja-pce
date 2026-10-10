@@ -14,6 +14,7 @@ from pathlib import Path
 from .cspf import CspfNoPath, CspfSearchLimit, compute_cspf
 from .daemon import HealthState, load_daemon_config, run_daemon_cycle, start_health_server
 from .inventory import device_for_node, validate_inventory
+from .live import add_live_commands, collect_bgpls, listen_pcep
 from .loaders import InputError, load_demand, load_inventory, load_topology
 from .reconcile import file_fingerprint, reconcile_once
 from .render import write_outputs
@@ -107,6 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
     daemon.add_argument("--health-host", help="Override health endpoint host")
     daemon.add_argument("--health-port", type=int, help="Override health endpoint port")
     daemon.add_argument("--no-health", action="store_true", help="Disable the health/metrics HTTP server")
+    add_live_commands(sub)
     return parser
 
 
@@ -515,6 +517,10 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_gns3_demo(args)
         if args.command == "daemon":
             return cmd_daemon(args)
+        if args.command == "bgpls-collect":
+            return collect_bgpls(args)
+        if args.command == "pcep-listen":
+            return listen_pcep(args)
         parser.error(f"Unknown command: {args.command}")
         return 2
     except CspfSearchLimit as exc:

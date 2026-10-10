@@ -2,9 +2,14 @@
 
 ## Present boundary
 
-This branch is a file-backed external TE computation and reconciliation engine.
-It neither speaks PCEP nor receives BGP-LS. CLI acceptance is distinct from RSVP
-operational verification. All protocol extensions below are future work.
+The computation/reconciliation engine now has a read-only live BGP-LS adapter
+and a passive stateful PCEP listener. GoBGP receives BGP-LS; `bgpls.py` reads its
+binary RIB through a restricted local gRPC schema and normalizes directional
+TE attributes. `pcep.py` establishes sessions and observes LSP reports without
+PCReq computation, PCUpd or PCInitiate. `live.py` exposes both through the CLI.
+See [live lab setup](live_protocol_setup.md) for deployment and measured results.
+CLI acceptance remains distinct from RSVP operational verification; delegated
+control, protocol path replies and PCE-initiated LSPs remain future work.
 
 The existing modules have separable responsibilities: loaders supply immutable
 TED snapshots; CSPF selects directional edge paths; a reservation ledger accounts
@@ -41,12 +46,15 @@ a transactional shared store, fencing epochs and a single authoritative writer
 per resource. A router or independent controller may consume bandwidth between
 snapshots; final RSVP admission remains the router's responsibility.
 
-## Future PCEP subsystem
+## PCEP subsystem and remaining extensions
 
-Start with a real PCC/PCE session implementation and explicit capability matrix:
-framing, OPEN/KEEPALIVE timers, request/error correlation and unknown-object
-handling. Baseline protocol behavior comes from [RFC 5440](https://www.rfc-editor.org/info/rfc5440/).
-Read-only PCRpt synchronization must complete before enabling stateful updates.
+The passive listener implements bounded framing, OPEN/KEEPALIVE timers, CLOSE,
+errors, IP peer allowlists and read-only PCRpt synchronization. It advertises
+the stateful capability with the update/initiation flags clear. These are
+implementation and test claims, not complete protocol conformance certification.
+Baseline protocol behavior comes from [RFC 5440](https://www.rfc-editor.org/info/rfc5440/).
+Read-only PCRpt synchronization must complete before enabling stateful updates;
+the current listener never enables updates.
 Delegation/revocation and synchronization belong to the session/state owner;
 computation does not confer control authority. [RFC 8231](https://www.rfc-editor.org/info/rfc8231/)
 defines these stateful capabilities. PCE-initiated creation/removal is a separate

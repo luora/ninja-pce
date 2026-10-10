@@ -1,4 +1,4 @@
-"""Structural boundaries for future adapters; no network protocol implementations."""
+"""Structural boundaries shared by file-fed and live controller adapters."""
 from __future__ import annotations
 
 from typing import Any, Protocol

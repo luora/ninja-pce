@@ -4,8 +4,9 @@ The intended controller learns live TE topology, maintains a directional TED,
 computes constrained paths, and controls and verifies RSVP-TE LSPs. P1 is the
 selected topology-consumer entry point; PE1 remains the tunnel head-end. The
 current code implements file-fed CSPF, shared reservation accounting,
-reconciliation and CLI delivery/verification. Live BGP-LS and PCEP are subsequent
-implementation stages; this setup does not enable those protocols.
+reconciliation and CLI delivery/verification. The branch now also provides live
+BGP-LS ingestion and a passive PCEP listener. This initial network procedure
+does not start them; continue with [live protocol setup](live_protocol_setup.md).
 
 ## Observed Ubuntu state, 2026-10-10
 
