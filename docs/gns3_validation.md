@@ -283,10 +283,61 @@ invented appliance interface names.
 | P2 | 10.255.0.5 | 172.16.100.105 | P1-P2, P2-PE3, P2-P4 |
 | PE3 | 10.255.0.6 | 172.16.100.106 | P2-PE3, P4-PE3 |
 
+### Core cabling sketch
+
+Router labels show loopback addresses. Each line is a separate physical core
+link; subnet labels apply to both endpoints. There are eight baseline cables
+and an optional ninth PE1–P3 cable for the parallel-link scenario. The direct
+PE1–PE3 cable from the two-router smoke test is not part of this topology.
+
+```mermaid
+flowchart LR
+    PE1["PE1<br/>Lo: 10.255.0.1/32"]
+    P1["P1<br/>Lo: 10.255.0.2/32"]
+    P2["P2<br/>Lo: 10.255.0.5/32"]
+    P3["P3<br/>Lo: 10.255.0.3/32"]
+    P4["P4<br/>Lo: 10.255.0.4/32"]
+    PE3["PE3<br/>Lo: 10.255.0.6/32"]
+
+    PE1 ---|"10.0.12.0/29"| P1
+    P1 ---|"10.0.25.0/29"| P2
+    P2 ---|"10.0.56.0/29"| PE3
+    PE1 ---|"10.0.13.0/29"| P3
+    P3 ---|"10.0.34.0/29"| P4
+    P4 ---|"10.0.46.0/29"| PE3
+    P1 ---|"10.0.23.0/29"| P3
+    P2 ---|"10.0.54.0/29"| P4
+    PE1 ---|"Optional parallel: 10.0.113.0/29"| P3
+```
+
+### Management and Internet cabling sketch
+
+Every router has a dedicated management connection to the same switch. Ubuntu
+is a management endpoint with two NICs; it does not forward between them.
+
+```mermaid
+flowchart TB
+    NAT["GNS3 NAT / Internet"]
+    PCE["Ubuntu: Ninja-PCE"]
+    SW["Management switch<br/>172.16.100.0/24"]
+    NAT ---|"ens3: DHCP"| PCE
+    PCE ---|"ens4: 172.16.100.10/24"| SW
+    SW --- PE1["PE1<br/>172.16.100.101"]
+    SW --- P1["P1<br/>172.16.100.102"]
+    SW --- P3["P3<br/>172.16.100.103"]
+    SW --- P4["P4<br/>172.16.100.104"]
+    SW --- P2["P2<br/>172.16.100.105"]
+    SW --- PE3["PE3<br/>172.16.100.106"]
+```
+
+Allow one management NIC in addition to the core ports: PE1 and PE3 need three
+NICs each, and P1/P2/P3/P4 need four each. With the optional parallel link, PE1
+needs four and P3 needs five. Record real appliance port names before cabling.
+
 All core subnets use `/29`; do not copy `/30` onto subnets where endpoints .3,
 .4 or .5 would be broadcast or belong to a different subnet.
 
-| Resource | Local IP | Remote IP | TE metric | Reservable Mbit/s | Observed reserved Mbit/s |
+| Resource | Local IP | Remote IP | TE metric | Reservable Mbit/s | Scenario reserved Mbit/s |
 |---|---|---|---:|---:|---:|
 | PE1-P1 | 10.0.12.1 | 10.0.12.2 | 10 | 100 | 10 |
 | P1-P2 | 10.0.25.2 | 10.0.25.5 | 10 | 100 | 80 |
