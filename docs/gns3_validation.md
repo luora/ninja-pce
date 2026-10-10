@@ -363,10 +363,13 @@ flowchart TB
     PCE ---|"ens4: 172.16.100.10/24"| P1["P1 GbE3<br/>172.16.100.102/24"]
 ```
 
-For core-only cabling, PE1 and PE3 need two NICs each, and P1/P2/P3/P4 need three
-each. With the optional parallel link, PE1 needs three and P3 needs four. The
-Ubuntu–P1 cable needs one more P1 NIC, bringing P1 to four NICs total. Console
-sessions need no extra NIC. Record real appliance port names before cabling.
+For core-only cabling, PE1 and PE3 have two occupied Ethernet ports each, and
+P1/P2/P3/P4 have three each. The controller cable occupies P1's fourth port;
+the optional parallel link occupies another port on PE1 and P3. These are
+occupied-port counts, not adapter provisioning counts: preserve four Ethernet
+adapters per router for the screenshot-matched Gi1–Gi4 configuration files.
+For example, PE3 uses Gi2 and Gi4 even though only two ports are occupied.
+Console sessions need no extra NIC. Record real appliance port names before cabling.
 
 All core subnets use `/29`; do not copy `/30` onto subnets where endpoints .3,
 .4 or .5 would be broadcast or belong to a different subnet.
@@ -391,6 +394,12 @@ match it. Do not claim RSVP admission validation from a manually set reserved
 counter in YAML. Preserve forward IDs; reverse resources use `:reverse`.
 
 ## Configuration sequence
+
+The screenshot-matched [IOS XE base configurations](../gns3/router-configs/ios-xe/16.9.7-six-router/README.md)
+provide one console-paste file per router, with hostnames, peer/port descriptions,
+loopbacks and link addressing. Confirm the `GbE` → `GigabitEthernet` mapping
+before applying. These files establish the addressing baseline; OSPF and RSVP-TE
+below are subsequent configuration stages.
 
 1. Create the six router appliances and Linux/Docker controller node, cable
    core links, Ubuntu Internet access and the direct Ubuntu–P1 link. Record
