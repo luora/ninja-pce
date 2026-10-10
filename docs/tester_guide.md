@@ -21,6 +21,8 @@ Unpublished commits were sanitized before publication, so their public commit
 IDs differ from the original local qualification IDs mentioned in historical
 results. Use `git rev-parse HEAD` when reporting tests of the published branch.
 The original local raw evidence remains outside the published repository.
+Existing lab checkouts with the original unpublished history should use a new
+clone when updating, preserving their local configuration and evidence first.
 
 ## Install and record your version
 
@@ -40,7 +42,8 @@ Python 3.10 and 3.12 are the CI targets; replace `python3.12` with `python3.10`
 to test that version. Linux is the recommended starting environment. The
 measured baseline was **583 passing tests, 85% coverage on Ubuntu/Python
 3.12**; the final affected run passed 196 tests. Ruff and mypy passed for 19
-source files. **Remote CI is pending**; local results do not establish it.
+source files. Check the [branch's GitHub Actions runs](https://github.com/luora/ninja-pce/actions?query=branch%3Afix%2Fte-cspf-reliability)
+for current remote validation status; the baseline above describes the local run.
 Dependency ranges are not a lockfile, so retain `pip freeze` with failures.
 
 ## Offline CLI checks
