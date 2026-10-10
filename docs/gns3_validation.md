@@ -8,6 +8,13 @@ test. No router connection has been attempted by the remediation tools.
 
 ## Start here: the available IOS XE router and Ubuntu node
 
+The operator has now supplied Ubuntu 24.04.4 console output showing working
+Internet access on `ens3` and an unconfigured `ens4`. Use the exact
+[initial controller setup](initial_controller_setup.md) for that observed
+configuration; it adds an `ens4`-only Netplan file and preserves the existing
+cloud-init DHCP definition. The earlier generic inspection/trial procedure
+below remains a reference for other images.
+
 The Ubuntu `pce-ninja` VM runs Ninja-PCE as a guest in the same GNS3 project as
 the routers. It has 4 vCPUs, 3.8 GiB RAM and approximately 17 GiB free storage.
 Use a Python virtual environment on this node. Ninja-PCE does not need
