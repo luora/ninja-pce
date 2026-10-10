@@ -6,11 +6,17 @@ six-router CSR1000v IOS XE 16.9.7 lab. This follows the earlier
 create a tunnel. The [machine-readable results](live_tunnel_validation_results.json)
 record the exact observed scope.
 
+The subsequent [PCE computation qualification](live_pcep_computation_validation.md)
+records computed primary paths through P1/P2 and then P3/P4 after reviewed-build
+deployment. The explicit path in this first-stage report remains configured
+as fallback.
+
 Ninja-PCE computed the current live path; the resulting configuration was
 applied through PE1's supplied lab console. PE1 signalled RSVP-TE, and the
 passive PCEP listener received its actual LSP state report. This is manual
-lab provisioning. PCEP PCReq computation replies, PCUpd, PCInitiate and
-reservation-ledger integration remain unimplemented. The existing IOS XE 16.9.7
+lab provisioning. At that stage, PCEP computation replies and PCUpd were
+unimplemented; PCInitiate and reservation-ledger integration remain future work.
+The existing IOS XE 16.9.7
 automated CLI delivery restriction remains in place.
 
 ## Configuration and path

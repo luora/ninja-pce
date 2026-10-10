@@ -3,13 +3,17 @@
 ## Present boundary
 
 The computation/reconciliation engine now has a read-only live BGP-LS adapter
-and a passive stateful PCEP listener. GoBGP receives BGP-LS; `bgpls.py` reads its
-binary RIB through a restricted local gRPC schema and normalizes directional
-TE attributes. `pcep.py` establishes sessions and observes LSP reports without
-PCReq computation, PCUpd or PCInitiate. `live.py` exposes both through the CLI.
-See [live lab setup](live_protocol_setup.md) for deployment and measured results.
-CLI acceptance remains distinct from RSVP operational verification; delegated
-control, protocol path replies and PCE-initiated LSPs remain future work.
+and a PCEP listener with explicitly enabled computation profiles. GoBGP receives
+BGP-LS; `bgpls.py` reads its binary RIB through a restricted local gRPC schema
+and normalizes directional
+TE attributes. `pcep.py` observes LSP reports by default. Opt-in responders
+answer a bounded IPv4 PCReq profile or provide an initial PCUpd for an authorized,
+delegated DOWN/empty-ERO RSVP path after synchronization. `live.py` exposes these
+profiles. See [computation scope](pcep_computation.md) and
+[live qualification](live_pcep_computation_validation.md).
+General active-LSP reoptimization, PCInitiate, durable delegated ownership and
+integration with the reservation ledger remain future work. Protocol acceptance
+remains distinct from independently verified RSVP forwarding.
 
 The existing modules have separable responsibilities: loaders supply immutable
 TED snapshots; CSPF selects directional edge paths; a reservation ledger accounts
@@ -50,11 +54,13 @@ snapshots; final RSVP admission remains the router's responsibility.
 
 The passive listener implements bounded framing, OPEN/KEEPALIVE timers, CLOSE,
 errors, IP peer allowlists and read-only PCRpt synchronization. It advertises
-the stateful capability with the update/initiation flags clear. These are
+the stateful capability with the update/initiation flags clear by default. These are
 implementation and test claims, not complete protocol conformance certification.
 Baseline protocol behavior comes from [RFC 5440](https://www.rfc-editor.org/info/rfc5440/).
 Read-only PCRpt synchronization must complete before enabling stateful updates;
-the current listener never enables updates.
+the initial delegated-path profile enables updates only for explicitly bound
+PCC/tunnel IDs, with both peers' U flags set. It sends no active-path rerouting
+or PCInitiate, and returns unsupported delegations to PCC local policy.
 Delegation/revocation and synchronization belong to the session/state owner;
 computation does not confer control authority. [RFC 8231](https://www.rfc-editor.org/info/rfc8231/)
 defines these stateful capabilities. PCE-initiated creation/removal is a separate
@@ -104,7 +110,9 @@ secrets, and audit state/approval revisions.
 3. Add a read-only BGP-LS collector with withdrawals, provenance, replay and stale
    tests. Compare its normalized snapshots against router TED state.
 4. Add stateless PCEP interoperability tests, then passive stateful synchronization.
-5. Enable delegated updates only after capability/security/restart tests.
+5. The isolated initial-delegation profile has capability, restart and bounded
+   worker tests plus live forwarding qualification. General delegated updates
+   still require durable ownership, authentication and recovery qualification.
 6. Enable initiated LSPs and closed-loop changes after ownership/fencing and
    multi-controller recovery tests prove safe operation.
 

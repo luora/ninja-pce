@@ -4,6 +4,11 @@ The initial observation stage below has now been followed by a
 [verified 50 Mbps RSVP-TE Tunnel100](live_tunnel_validation.md). That tunnel was
 configured on PE1 from the computed path; PCEP observes its state.
 
+The later [live PCE computation stage](live_pcep_computation_validation.md)
+qualifies Tunnel100's computed primary through an explicitly enabled initial
+delegated PCUpd profile. This document records the earlier passive stage;
+its capability statements describe that configuration.
+
 This stage uses the operator's six CSR1000v IOS XE 16.9.7 nodes and Ubuntu
 24.04 controller. Ubuntu ens3 retains its working Internet settings; ens4 is
 172.16.100.10/24

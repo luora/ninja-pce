@@ -14,6 +14,12 @@ PCEP reports ACTIVE and BGP-LS reflects the directional reservation. See the
 end to end. Earlier setup steps below are preparation references, not the
 latest observed controller state.
 
+**PCE-computed primary: PASS.** Tunnel100 consumed live PCUpd paths through
+P1/P2 and, after reviewed-build deployment, through P3/P4. It signals 50 Mbps
+with dynamic option 1 primary and explicit option 10 retained as fallback.
+See [the delegated computation qualification](live_pcep_computation_validation.md)
+for the actual exchange, forwarding evidence and remaining limits.
+
 ## Start here: the available IOS XE router and Ubuntu node
 
 The first Ubuntu 24.04.4 inspection showed working Internet access on `ens3`

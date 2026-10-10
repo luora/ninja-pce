@@ -1,0 +1,600 @@
+{
+  "applied_candidate": "gns3/router-configs/ios-xe/16.9.7-six-router/underlay/PE1-pce-tunnel100.cfg",
+  "artifacts": {
+    "P1-T100-transit.txt": {
+      "path": "build/live-lab-evidence/pce-compute/P1-T100-transit.txt",
+      "sha256": "e6f49c54d038f11abb1156c0ffb801b43e5e6bb0da0cef4bbf640277182f82f3"
+    },
+    "P1-reviewed-build.txt": {
+      "path": "build/live-lab-evidence/pce-compute/P1-reviewed-build.txt",
+      "sha256": "eae55c4e5753d3346f0c2ed577e8540a013cf7d37b029d4b7be3eaf9580caa78"
+    },
+    "P2-T100-transit.txt": {
+      "path": "build/live-lab-evidence/pce-compute/P2-T100-transit.txt",
+      "sha256": "03b7c2c41b180144cc3f3c63bd6b9c97f9022c65bc0d46495d050b1e22c652ec"
+    },
+    "P3-reviewed-build.txt": {
+      "path": "build/live-lab-evidence/pce-compute/P3-reviewed-build.txt",
+      "sha256": "a414715a24231b3c87f6e25fa7aafa30136424fdbc6dfc8f013ef230812027d0"
+    },
+    "P4-reviewed-build.txt": {
+      "path": "build/live-lab-evidence/pce-compute/P4-reviewed-build.txt",
+      "sha256": "e001a9b20ca042f4f20024097981d247014859dfaf28afe8ddcd9464085edc75"
+    },
+    "PE1-T100-primary-verified.txt": {
+      "path": "build/live-lab-evidence/pce-compute/PE1-T100-primary-verified.txt",
+      "sha256": "61abbce4461b1621b5347ea4aa8265786c16cd80d84c5541f3fb8e76cbd54f72"
+    },
+    "PE1-T101-cleanup.txt": {
+      "path": "build/live-lab-evidence/pce-compute/PE1-T101-cleanup.txt",
+      "sha256": "4de732dd605757bddfd1ba99b3a311d1e0d66f6d257e4f49df8048b3855aee2f"
+    },
+    "PE1-final-config.txt": {
+      "path": "build/live-lab-evidence/pce-compute/PE1-final-config.txt",
+      "sha256": "a0423ed39be4c04255600f58cf97d37e3a886eed2f5404c4596fee3fb6a96302"
+    },
+    "PE1-reviewed-build-final.txt": {
+      "path": "build/live-lab-evidence/pce-compute/PE1-reviewed-build-final.txt",
+      "sha256": "b7f1eb4e68f74ce6c0f09f6f91d332b8e5b1e23d84851701465b44eee309fbea"
+    },
+    "PE1-reviewed-build.txt": {
+      "path": "build/live-lab-evidence/pce-compute/PE1-reviewed-build.txt",
+      "sha256": "c0430ecf31089911a8edb6388c6d7efc8cc0471f76da8391a11ef7f7ef8296c2"
+    },
+    "PE3-T100-tail.txt": {
+      "path": "build/live-lab-evidence/pce-compute/PE3-T100-tail.txt",
+      "sha256": "93bbd1df786b94c2503e2fa992f9983ff40aca7be5c88cbeed55661679a080ab"
+    },
+    "bgpls-T100-primary.json": {
+      "path": "build/live-lab-evidence/pce-compute/bgpls-T100-primary.json",
+      "sha256": "78305ce5a6715c55077bcb5ef140fb7af8337555742c16ebd1ce053cde387468"
+    },
+    "bgpls-before-final.json": {
+      "path": "build/live-lab-evidence/pce-compute/bgpls-before-final.json",
+      "sha256": "0b5ac0abbd343da6244b8b40953511d87b0ceb3f115cce36ec7049b866fc27c8"
+    },
+    "bgpls-reviewed-build.json": {
+      "path": "build/live-lab-evidence/pce-compute/bgpls-reviewed-build.json",
+      "sha256": "e9b869e99420ff4702d5609099db62428c680c86b67d2600e64698d18e73416b"
+    },
+    "pcep-T100-primary.json": {
+      "path": "build/live-lab-evidence/pce-compute/pcep-T100-primary.json",
+      "sha256": "62f128286e2c704dba3447032cd4bc7aedd60c262a3ce12e1d175826ab4a6250"
+    },
+    "pcep-reviewed-build.json": {
+      "path": "build/live-lab-evidence/pce-compute/pcep-reviewed-build.json",
+      "sha256": "65812c3df5334a14d79737cac3e51767b9524334a246643c3219fd1c3765e861"
+    }
+  },
+  "capture_caveat": {
+    "description": "The historical controller summary aliases old make-before-break removal into latest_reported_state. Raw same-incarnation PCRpt and independent router/RSVP/OAM establish its active path. Reviewed implementation fixes incarnation/ownership aliasing, and final deployed qualification retains ACTIVE for LSP225 after LSP224 removal.",
+    "old_removed_incarnation": 223,
+    "raw_active_incarnation": 224,
+    "srp3_latest_reported_state_in_historical_capture": "DOWN",
+    "srp3_reported_state": "ACTIVE"
+  },
+  "controller_role": {
+    "active_path_rerouting": false,
+    "bgpls_exporter": "172.16.100.102",
+    "delivery": "Opt-in initial delegated PCUpd for an existing authorized tunnel",
+    "durable_delegation_ownership": false,
+    "path_computation": "Ninja-PCE using exact live BGP-LS capture",
+    "pcinitiate": false,
+    "pcupd": true,
+    "reservation_ledger_integration": false,
+    "rsvp_admission_and_signalling": "PE1 and RSVP routers"
+  },
+  "current_deployed_qualification": {
+    "P1_reservations_empty_and_allocation_zero": true,
+    "acknowledged_identifiers": {
+      "all_zero": false,
+      "endpoint": "10.255.0.6",
+      "extended_tunnel_id_hex": "0aff0001",
+      "lsp_id": 225,
+      "sender": "10.255.0.1",
+      "tunnel_id": 100,
+      "type": 18,
+      "value_hex": "0aff000100e100640aff00010aff0006"
+    },
+    "active_dynamic_path_option": 1,
+    "active_path_rerouting": false,
+    "admin": "up",
+    "bandwidth_bps": 50000000,
+    "basis_for_setup": true,
+    "bgpls_after": {
+      "all_other_edges_unreserved_bps_by_priority": [
+        100000000,
+        100000000,
+        100000000,
+        100000000,
+        100000000,
+        100000000,
+        100000000,
+        100000000
+      ],
+      "authoritative": false,
+      "captured_at_utc": "2026-10-10T20:19:39.085352+00:00",
+      "directed_links": 16,
+      "nodes": 6,
+      "reserved_forward_edges": [
+        {
+          "link_id": "bgpls-link-2ea7c3d6657298d0e01a447860920dca",
+          "source": "P4",
+          "target": "PE3",
+          "unreserved_bps_by_priority": [
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            50000000
+          ]
+        },
+        {
+          "link_id": "bgpls-link-6779f84c8aff93f719c1b60a6052df3b",
+          "source": "P3",
+          "target": "P4",
+          "unreserved_bps_by_priority": [
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            50000000
+          ]
+        },
+        {
+          "link_id": "bgpls-link-a70c5cd531f031e705c2448df1be7c5c",
+          "source": "PE1",
+          "target": "P3",
+          "unreserved_bps_by_priority": [
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            50000000
+          ]
+        }
+      ]
+    },
+    "capture_generated_at_utc": "2026-10-10T20:18:54.328167+00:00",
+    "destination": "10.255.0.6",
+    "fallback_explicit_path_option": 10,
+    "hold_priority": 7,
+    "interface": "Tunnel100",
+    "latest_reported_state": "ACTIVE",
+    "lsp_id": 225,
+    "mpls_oam": {
+      "packet_throughput_test": false,
+      "ping_sent": 5,
+      "ping_successful": 5,
+      "traceroute_hops": [
+        "10.0.13.3",
+        "10.0.34.4",
+        "10.0.46.6"
+      ]
+    },
+    "nodes": [
+      "PE1",
+      "P3",
+      "P4",
+      "PE3"
+    ],
+    "old_lsp224_removal_preserves_active_summary": true,
+    "oper": "up",
+    "path": "valid",
+    "pcc_sessions": {
+      "10.255.0.1": {
+        "fresh_at_capture": true,
+        "state": "ESTABLISHED",
+        "synchronized_at_capture": true
+      },
+      "172.16.100.102": {
+        "fresh_at_capture": true,
+        "state": "ESTABLISHED",
+        "synchronized_at_capture": true
+      }
+    },
+    "plsp_id": 524388,
+    "reported_state": "ACTIVE",
+    "rsvp_reservations": {
+      "P3:GigabitEthernet3": 50000000,
+      "P4:GigabitEthernet2": 50000000
+    },
+    "saved_to_startup": true,
+    "selection_context": "Fresh TED advertises existing50Mbps on P1/P2 route; no self-credit; P3/P4 has more free bandwidth.",
+    "session_id": "00000000-0000-4000-8000-000000000001",
+    "setup_priority": 7,
+    "signalling": "connected",
+    "source": "10.255.0.1",
+    "source_commit": "dbea66c5423cc3954205d74cd4a3c4982699d4c8",
+    "srp_id": 2,
+    "status": "PASS",
+    "strict_remote_hops": [
+      "10.0.13.3",
+      "10.0.34.4",
+      "10.0.46.6"
+    ],
+    "topology_digest_recorded": "fc9c05bf77d6326ae4eacf387b47890d898d5ef3b232720e80ad17011865b345",
+    "topology_timestamp_used": "2026-10-10T20:18:36.146957+00:00",
+    "total_te_metric": 30,
+    "trigger": "New PCC DOWN/empty-ERO initial delegation after listener restart and delegation return"
+  },
+  "date": "2026-10-10",
+  "expected": {
+    "bandwidth_bps": 50000000,
+    "destination": "10.255.0.6",
+    "directional_link_ids": [
+      "bgpls-link-e5e84bf629fb8dbedc0d27f8b45cc9ba",
+      "bgpls-link-f236c6993d24c8e9bd58d6ebfdb7390d",
+      "bgpls-link-de9490d87876a12654bbf88e016d7f82"
+    ],
+    "hold_priority": 7,
+    "nodes": [
+      "PE1",
+      "P1",
+      "P2",
+      "PE3"
+    ],
+    "setup_priority": 7,
+    "source": "10.255.0.1",
+    "strict_remote_hops": [
+      "10.0.12.2",
+      "10.0.25.5",
+      "10.0.56.6"
+    ],
+    "total_te_metric": 30,
+    "tunnel_id": 100
+  },
+  "final_source_validation": {
+    "deployment_checks": {
+      "active_services": [
+        "gobgpd",
+        "ninja-bgpls",
+        "ninja-pcep"
+      ],
+      "listener_stop_and_start_journal_utc": "2026-10-10T20:18:39+00:00",
+      "repository_and_installed_override_sha256": "9cacf5890b94b8afcbd431ef36b0263774fb950babd11afb0566db0f9cd850e0",
+      "ubuntu_checkout_clean": true
+    },
+    "final_checkout_deployed": true,
+    "local_regression": {
+      "coverage_percent_rounded": 85,
+      "final_affected_pytest_passed": 196,
+      "mypy": "PASS",
+      "pytest_passed": 583,
+      "ruff": "PASS",
+      "source_files_typechecked": 19
+    },
+    "source_commit": "dbea66c5423cc3954205d74cd4a3c4982699d4c8",
+    "status": "PASS"
+  },
+  "historical_observation_scope": "Top-level expected/observed describe historical SRP3 LSP224 P1/P2 proof; current_deployed_qualification records the later final state.",
+  "kind": "actual_gns3_initial_delegated_pcep_path_validation",
+  "limitations": [
+    "One initial path provision, not general active rerouting or broad RFC/vendor conformance.",
+    "Active reoptimization PCReq includes unsupported RP TLV/RRO/bandwidth-type2 semantics and remains rejected.",
+    "IOS repeats correlated SRP across DOWN and ACTIVE and may retain historical SRP across sessions; correlation is session scoped.",
+    "The initial DOWN/empty-ERO report uses nonzero RSVP LSP-ID224; actual vendor behavior is retained rather than claimed strictly conformant.",
+    "No RRO was present; intended ERO is corroborated independently by MPLS traceroute and RSVP state.",
+    "No authoritative reservation ownership ledger, preemption, PCInitiate or durable delegation recovery.",
+    "50Mbps is RSVP reservation, not measured traffic throughput; earlier CSR license output limited throughput to1000kbps.",
+    "IOS XE16.9.7 autonomous CLI delivery remains unqualified.",
+    "Raw lab artifacts are local ignored files; tracked historical wire/JSON fixtures support offline replay, not current freshness."
+  ],
+  "observed": {
+    "active_path_option": 1,
+    "active_path_option_type": "dynamic pce",
+    "admin": "up",
+    "autoroute": false,
+    "bandwidth_kbps": 50000,
+    "basis_for_setup": true,
+    "bgpls": {
+      "after_captured_at_utc": "2026-10-10T20:12:38.817300+00:00",
+      "authoritative": false,
+      "before_captured_at_utc": "2026-10-10T20:12:07.093159+00:00",
+      "changed_forward_edges": [
+        {
+          "after_unreserved_bps_by_priority": [
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000
+          ],
+          "before_unreserved_bps_by_priority": [
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            50000000
+          ],
+          "from_ip": "10.0.46.4",
+          "link_id": "bgpls-link-2ea7c3d6657298d0e01a447860920dca",
+          "source": "P4",
+          "target": "PE3",
+          "to_ip": "10.0.46.6"
+        },
+        {
+          "after_unreserved_bps_by_priority": [
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000
+          ],
+          "before_unreserved_bps_by_priority": [
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            50000000
+          ],
+          "from_ip": "10.0.34.3",
+          "link_id": "bgpls-link-6779f84c8aff93f719c1b60a6052df3b",
+          "source": "P3",
+          "target": "P4",
+          "to_ip": "10.0.34.4"
+        },
+        {
+          "after_unreserved_bps_by_priority": [
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000
+          ],
+          "before_unreserved_bps_by_priority": [
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            50000000
+          ],
+          "from_ip": "10.0.13.1",
+          "link_id": "bgpls-link-a70c5cd531f031e705c2448df1be7c5c",
+          "source": "PE1",
+          "target": "P3",
+          "to_ip": "10.0.13.3"
+        },
+        {
+          "after_unreserved_bps_by_priority": [
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            50000000
+          ],
+          "before_unreserved_bps_by_priority": [
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000
+          ],
+          "from_ip": "10.0.56.5",
+          "link_id": "bgpls-link-de9490d87876a12654bbf88e016d7f82",
+          "source": "P2",
+          "target": "PE3",
+          "to_ip": "10.0.56.6"
+        },
+        {
+          "after_unreserved_bps_by_priority": [
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            50000000
+          ],
+          "before_unreserved_bps_by_priority": [
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000
+          ],
+          "from_ip": "10.0.12.1",
+          "link_id": "bgpls-link-e5e84bf629fb8dbedc0d27f8b45cc9ba",
+          "source": "PE1",
+          "target": "P1",
+          "to_ip": "10.0.12.2"
+        },
+        {
+          "after_unreserved_bps_by_priority": [
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            50000000
+          ],
+          "before_unreserved_bps_by_priority": [
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000,
+            100000000
+          ],
+          "from_ip": "10.0.25.2",
+          "link_id": "bgpls-link-f236c6993d24c8e9bd58d6ebfdb7390d",
+          "source": "P1",
+          "target": "P2",
+          "to_ip": "10.0.25.5"
+        }
+      ],
+      "directed_links": 16,
+      "nodes": 6,
+      "other_edges_unchanged": true,
+      "priorities_0_through_6_unchanged": true,
+      "reverse_edges_unchanged": true
+    },
+    "fallback_explicit_path_name": "EP_CUSTOMER_A_PE1_PE3",
+    "fallback_explicit_path_option": 10,
+    "hold_priority": 7,
+    "interface": "Tunnel100",
+    "mpls_oam": {
+      "packet_throughput_test": false,
+      "ping_sent": 5,
+      "ping_successful": 5,
+      "traceroute_hops": [
+        "10.0.12.2",
+        "10.0.25.5",
+        "10.0.56.6"
+      ]
+    },
+    "oper": "up",
+    "path": "valid",
+    "path_weight": 30,
+    "pce_address": "172.16.100.10",
+    "pcep": {
+      "bandwidth_bps": 50000000,
+      "final_router_delegation": false,
+      "first_correlated_report": "DOWN",
+      "lsp_id": 224,
+      "peer": "10.255.0.1",
+      "plsp_id": 524388,
+      "plsp_id_hex": "0x80064",
+      "raw_exchange": [
+        {
+          "administrative_up": true,
+          "delegate": true,
+          "direction": "rx",
+          "ero": [],
+          "lsp_id": 224,
+          "message": "PCRpt",
+          "operational_state": "DOWN",
+          "srp_id": 0,
+          "timestamp_utc": "2026-10-10T20:12:09.803614+00:00"
+        },
+        {
+          "delegate": true,
+          "direction": "tx",
+          "ero": [
+            "10.0.12.2",
+            "10.0.25.5",
+            "10.0.56.6"
+          ],
+          "lsp_id": 224,
+          "message": "PCUpd",
+          "srp_id": 3,
+          "timestamp_utc": "2026-10-10T20:12:09.974315+00:00"
+        },
+        {
+          "administrative_up": true,
+          "delegate": true,
+          "direction": "rx",
+          "ero": [
+            "10.0.12.2",
+            "10.0.25.5",
+            "10.0.56.6"
+          ],
+          "lsp_id": 224,
+          "message": "PCRpt",
+          "operational_state": "DOWN",
+          "srp_id": 3,
+          "timestamp_utc": "2026-10-10T20:12:09.997983+00:00"
+        },
+        {
+          "administrative_up": true,
+          "delegate": true,
+          "direction": "rx",
+          "ero": [
+            "10.0.12.2",
+            "10.0.25.5",
+            "10.0.56.6"
+          ],
+          "lsp_id": 224,
+          "message": "PCRpt",
+          "operational_state": "ACTIVE",
+          "srp_id": 3,
+          "timestamp_utc": "2026-10-10T20:12:10.059688+00:00"
+        },
+        {
+          "administrative_up": true,
+          "delegate": true,
+          "direction": "rx",
+          "ero": [
+            "10.0.12.2",
+            "10.0.25.5",
+            "10.0.56.6"
+          ],
+          "lsp_id": 224,
+          "message": "PCRpt",
+          "operational_state": "ACTIVE",
+          "srp_id": 3,
+          "timestamp_utc": "2026-10-10T20:12:13.000138+00:00"
+        }
+      ],
+      "record_route_present": false,
+      "same_srp_repeated": true,
+      "session_id": "00000000-0000-4000-8000-000000000002",
+      "srp_id": 3,
+      "strict_ero": [
+        "10.0.12.2",
+        "10.0.25.5",
+        "10.0.56.6"
+      ],
+      "subsequent_correlated_report": "ACTIVE",
+      "symbolic_name": "Tunnel100_w",
+      "topology_digest_recorded_in_historical_capture": false,
+      "topology_timestamp_used": "2026-10-10T20:12:07.093159+00:00"
+    },
+    "peer_delegate_only": true,
+    "rsvp_reservations": {
+      "P1:GigabitEthernet2": 50000000,
+      "P2:GigabitEthernet4": 50000000,
+      "PE3:tail": 50000000
+    },
+    "saved_to_startup": true,
+    "setup_priority": 7,
+    "signalling": "connected",
+    "temporary_tunnel101_removed": true,
+    "tunnel_deleted_or_recreated": false
+  },
+  "reproduce_guide": "docs/pcep_computation.md",
+  "schema_version": 1,
+  "scope": "Two live initial delegated RSVP-TE path provisions to existing PE1 Tunnel100: historical SRP3 P1/P2 proof and final deployed-checkout SRP2 P3/P4 requalification. No general active rerouting or successful active-reoptimization PCReq claim.",
+  "status": "PASS"
+}

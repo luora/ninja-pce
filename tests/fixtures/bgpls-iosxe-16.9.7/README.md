@@ -20,7 +20,7 @@ evidence; they do not identify reservation ownership by themselves. See
 
 These are actual read-only GoBGP gRPC captures observed on 2026-10-10 from a
 six-router Cisco CSR1000v IOS XE 16.9.7 lab. P1 (`10.255.0.2`) exported OSPF
-BGP-LS to GoBGP 3.37.0 from peer `172.16.100.102`. The files were copied
+BGP-LS to GoBGP 3.37.0 from peer `172.16.100.102`. The three earlier files below were copied
 byte-for-byte from `build/live-lab-evidence/controller/` (healthy/withdrawn)
 and `build/live-lab-evidence/first-tunnel/` (reserved); no NLRI, path
 attribute, peer statistic, or timestamp was synthesized or rewritten.
