@@ -1,5 +1,23 @@
 # Historical IOS XE / GoBGP interoperability captures
 
+The later PCE computation stage adds two byte-for-byte captures from
+`build/live-lab-evidence/pce-compute/`. Both contain 45 RIB objects, six nodes,
+16 directed links and 23 excluded prefix NLRIs:
+
+| Fixture | UTC capture time, 2026-10-10 | SHA-256 |
+|---|---|---|
+| `bgpls-before-pce-compute-raw.json` | 20:12:07.093159 | `0b5ac0abbd343da6244b8b40953511d87b0ceb3f115cce36ec7049b866fc27c8` |
+| `bgpls-pce-computed-raw.json` | 20:12:38.817300 | `78305ce5a6715c55077bcb5ef140fb7af8337555742c16ebd1ce053cde387468` |
+
+The first is the exact snapshot named by the live SRP-ID 3 computation.
+Priority-7 unreserved bandwidth is 50 Mbps on PE1→P3→P4→PE3 and 100 Mbps
+elsewhere. In the second, it is 50 Mbps on PE1→P1→P2→PE3 and 100 Mbps
+elsewhere, including all reverse links and the old path. Priorities 0–6
+remain 100 Mbps. These aggregate observations corroborate independent RSVP
+evidence; they do not identify reservation ownership by themselves. See
+`tests/test_pcep_live_computation.py` and
+[the qualification report](../../../docs/live_pcep_computation_validation.md).
+
 These are actual read-only GoBGP gRPC captures observed on 2026-10-10 from a
 six-router Cisco CSR1000v IOS XE 16.9.7 lab. P1 (`10.255.0.2`) exported OSPF
 BGP-LS to GoBGP 3.37.0 from peer `172.16.100.102`. The files were copied

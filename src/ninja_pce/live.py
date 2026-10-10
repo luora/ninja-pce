@@ -1,8 +1,9 @@
-"""Operator commands for live topology observation and passive PCEP sessions."""
+"""Operator commands for live topology and opt-in lab PCEP computation."""
 from __future__ import annotations
 
 import argparse
 import asyncio
+import ipaddress
 import json
 import math
 import os
@@ -31,13 +32,24 @@ def add_live_commands(subparsers: Any) -> None:
     bgpls.add_argument("--max-age", type=float, default=30.0)
     bgpls.add_argument("--once", action="store_true", help="Poll once and exit")
 
-    pcep = subparsers.add_parser("pcep-listen", help="Run a passive lab PCEP listener; never sends LSP updates")
+    pcep = subparsers.add_parser("pcep-listen", help="Observe lab PCEP; enable computation with explicit options")
     pcep.add_argument("--listen-host", default="127.0.0.1", help="Bind address; select the lab NIC explicitly")
     pcep.add_argument("--port", type=int, default=4189)
     pcep.add_argument("--allow-peer", action="append", required=True, help="Allowed PCC source IP; repeatable")
     pcep.add_argument("--capture", required=True, help="Atomic session and LSP-report capture JSON")
     pcep.add_argument("--keepalive", type=int, default=30)
     pcep.add_argument("--deadtimer", type=int, default=120)
+    pcep.add_argument("--stateless-peer", action="append", default=[],
+                      help="Omit stateful capability for this allowed PCC; repeatable")
+    pcep.add_argument("--compute-bgpls-raw", help="Enable PCReq replies using this live raw BGP-LS capture")
+    pcep.add_argument("--compute-bgpls-status", help="Live collector checksummed health file")
+    pcep.add_argument("--compute-topology", help="Live normalized topology feed; must remain available")
+    pcep.add_argument("--compute-bgpls-peer", action="append", default=[], help="Required live BGP-LS exporter")
+    pcep.add_argument("--compute-node-map", help="Advertised router-ID to node-name JSON map")
+    pcep.add_argument("--compute-headend", action="append", default=[],
+                      help="Authorized PCC-IP=source-loopback; repeatable")
+    pcep.add_argument("--compute-delegated-tunnel", action="append", default=[],
+                      help="Opt in to initial delegated path provision for PCC-IP=tunnel-ID; repeatable")
 
 
 def _positive(value: float, label: str) -> None:
@@ -146,12 +158,57 @@ def collect_bgpls(args: argparse.Namespace) -> int:
 async def _serve_pcep(args: argparse.Namespace) -> int:
     from .pcep import PcepServer, PcepServerConfig
 
+    computation_args = [args.compute_bgpls_raw, args.compute_bgpls_status, args.compute_topology,
+                        args.compute_bgpls_peer, args.compute_node_map, args.compute_headend]
+    computer = None
+    if any(computation_args):
+        if not all(computation_args):
+            raise ValueError("Computation requires raw, status, topology, exporter, node map and headend options")
+        from .pcep_compute import PcepPathComputer
+
+        headends: dict[str, str] = {}
+        for binding in args.compute_headend:
+            if binding.count("=") != 1:
+                raise ValueError("Headend binding must be PCC-IP=source-loopback")
+            peer, source = (str(ipaddress.IPv4Address(value)) for value in binding.split("="))
+            if peer not in args.allow_peer or peer in headends:
+                raise ValueError("Headends must be distinct allowed PCCs")
+            headends[peer] = source
+        paths = [Path(value).resolve() for value in
+                 (args.capture, args.compute_bgpls_raw, args.compute_bgpls_status, args.compute_topology,
+                  args.compute_node_map)]
+        if len(set(paths)) != len(paths):
+            raise ValueError("PCEP capture, raw, status, topology and node-map paths must be distinct")
+        computer = PcepPathComputer(
+            raw_path=Path(args.compute_bgpls_raw), status_path=Path(args.compute_bgpls_status),
+            topology_path=Path(args.compute_topology), required_peers=tuple(args.compute_bgpls_peer),
+            node_names=_node_names(args.compute_node_map), headends=headends,
+        )
+    server_options: dict[str, Any] = {"capture_path": Path(args.capture)}
+    if computer is not None:
+        server_options["path_computer"] = computer
+    if args.compute_delegated_tunnel:
+        if computer is None:
+            raise ValueError("Delegated path provision requires all computation options")
+        from .pcep_delegation import DelegatedPathComputer
+
+        allowed_tunnels: dict[str, tuple[int, ...]] = {}
+        for binding in args.compute_delegated_tunnel:
+            if binding.count("=") != 1:
+                raise ValueError("Delegated tunnel binding must be PCC-IP=tunnel-ID")
+            address, tunnel = binding.split("=")
+            peer = str(ipaddress.IPv4Address(address))
+            if not tunnel.isascii() or not tunnel.isdecimal():
+                raise ValueError("Delegated tunnel ID must be decimal")
+            allowed_tunnels[peer] = (*allowed_tunnels.get(peer, ()), int(tunnel))
+        server_options["delegated_computer"] = DelegatedPathComputer(computer, allowed_tunnels)
     server = PcepServer(
         PcepServerConfig(
             listen_host=args.listen_host, port=args.port, allowed_peers=tuple(args.allow_peer),
             keepalive=args.keepalive, deadtimer=args.deadtimer,
+            stateless_peers=tuple(args.stateless_peer),
         ),
-        capture_path=Path(args.capture),
+        **server_options,
     )
     task = asyncio.current_task()
     loop = asyncio.get_running_loop()
@@ -159,7 +216,8 @@ async def _serve_pcep(args: argparse.Namespace) -> int:
         loop.add_signal_handler(signal.SIGTERM, task.cancel)
     try:
         await server.start()
-        print(json.dumps({"mode": "passive_stateful", "listeners": server.addresses}), flush=True)
+        print(json.dumps({"mode": "request_computation" if computer else "passive_stateful",
+                          "listeners": server.addresses}), flush=True)
         await server.serve_forever()
     except asyncio.CancelledError:
         return 0

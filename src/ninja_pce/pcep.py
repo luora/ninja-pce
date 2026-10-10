@@ -1,8 +1,10 @@
-"""Bounded, passive lab PCEP listener (RFC 5440 and RFC 8231).
+"""Bounded lab PCEP sessions (RFC 5440 and RFC 8231).
 
-This module observes RSVP LSP reports. It never sends PCUpd, PCInitiate,
-delegation confirmations, or computed paths. Captures are evidence, not a TED
-or reservation confirmation. Plain TCP provides no cryptographic peer identity.
+The default profile observes RSVP LSP reports. Explicitly configured responders
+can answer PCReq or provision an initial, authorized empty-ERO delegation using
+PCUpd. There is no PCInitiate or automatic rerouting of active LSPs. Captures
+are evidence, not a TED or reservation confirmation. Plain TCP provides no
+cryptographic peer identity.
 """
 from __future__ import annotations
 
@@ -16,16 +18,22 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .pcep_compute import PcepPathComputer
+    from .pcep_delegation import DelegatedPathComputer
 
 from .state import load_state, write_state
 
 OPEN, KEEPALIVE, PCREQ, PCREP, NOTIFICATION, ERROR, CLOSE = range(1, 8)
-PCRPT = 10
+PCRPT, PCUPD = 10, 11
 MESSAGE_NAMES = {
     OPEN: "OPEN", KEEPALIVE: "KEEPALIVE", PCREQ: "PCReq", PCREP: "PCRep",
     NOTIFICATION: "PCNtf", ERROR: "PCErr", CLOSE: "CLOSE", PCRPT: "PCRpt",
+    PCUPD: "PCUpd",
 }
 
 
@@ -46,11 +54,12 @@ class PcepObject:
     body: bytes
 
 
-def encode_object(object_class: int, body: bytes, object_type: int = 1) -> bytes:
+def encode_object(object_class: int, body: bytes, object_type: int = 1, *, flags: int = 0) -> bytes:
     length = len(body) + 4
-    if not 1 <= object_class <= 255 or not 1 <= object_type <= 15 or length % 4 or length > 65528:
+    if (not 1 <= object_class <= 255 or not 1 <= object_type <= 15 or
+            type(flags) is not int or not 0 <= flags <= 3 or length % 4 or length > 65528):
         raise ValueError("Invalid PCEP object encoding")
-    return struct.pack("!BBH", object_class, object_type << 4, length) + body
+    return struct.pack("!BBH", object_class, (object_type << 4) | flags, length) + body
 
 
 def encode_message(message_type: int, body: bytes = b"") -> bytes:
@@ -60,12 +69,15 @@ def encode_message(message_type: int, body: bytes = b"") -> bytes:
     return struct.pack("!BBH", 0x20, message_type, length) + body
 
 
-def encode_open(keepalive: int = 30, deadtimer: int = 120, sid: int = 0, *, stateful: bool = True) -> bytes:
+def encode_open(keepalive: int = 30, deadtimer: int = 120, sid: int = 0, *, stateful: bool = True,
+                updates: bool = False) -> bytes:
     for value in (keepalive, deadtimer, sid):
         if type(value) is not int or not 0 <= value <= 255:
             raise ValueError("OPEN fields must be unsigned octets")
-    # TLV 16, U=0: passive stateful only. All extension capability flags clear.
-    capability = struct.pack("!HHI", 16, 4, 0) if stateful else b""
+    if updates and not stateful:
+        raise ValueError("LSP updates require stateful capability")
+    # U is opt-in for the bounded initial-delegation adapter; I stays clear.
+    capability = struct.pack("!HHI", 16, 4, int(updates)) if stateful else b""
     return encode_message(OPEN, encode_object(1, bytes((0x20, keepalive, deadtimer, sid)) + capability))
 
 
@@ -203,25 +215,27 @@ def _lsp(obj: PcepObject) -> dict[str, Any]:
     return data
 
 
-def parse_reports(body: bytes) -> list[dict[str, Any]]:
+def parse_reports(body: bytes, *, allow_delegation: bool = False) -> list[dict[str, Any]]:
     """Parse an entire PCRpt atomically; do not partially publish bad messages."""
     objects = parse_objects(body)
     reports: list[dict[str, Any]] = []
     index = 0
     while index < len(objects):
         srp_id = 0
+        srp_tlvs: tuple[tuple[int, bytes], ...] = ()
         if objects[index].object_class == 33:
             srp = objects[index]
             if srp.object_type != 1 or len(srp.body) < 8:
                 raise PcepProtocolError("Invalid SRP object")
             # RFC 8786: unsupported SRP flags ignored on receipt.
             srp_id = int.from_bytes(srp.body[4:8], "big")
-            parse_tlvs(srp.body[8:])
+            srp_tlvs = parse_tlvs(srp.body[8:])
             index += 1
         if index >= len(objects) or objects[index].object_class != 32:
             raise PcepProtocolError("PCRpt missing LSP object", 6, 8)
         report = _lsp(objects[index])
         report["srp_id"] = srp_id
+        report["srp_tlvs"] = [{"type": kind, "value_hex": value.hex()} for kind, value in srp_tlvs]
         index += 1
         if index >= len(objects) or (objects[index].object_class, objects[index].object_type) != (7, 1):
             raise PcepProtocolError("PCRpt missing intended ERO", 6, 9)
@@ -246,7 +260,7 @@ def parse_reports(body: bytes) -> list[dict[str, Any]]:
             attributes.append(attribute)
             index += 1
         report["attributes"] = attributes
-        if report["delegate"]:
+        if report["delegate"] and not allow_delegation:
             raise PcepProtocolError("Delegation not negotiated: passive stateful only", 19, 1)
         if report["plsp_id"] == 0:
             if report["sync"] or report["removed"] or report["ero"]:
@@ -279,6 +293,10 @@ class PcepServerConfig:
     max_messages_per_minute: int = 600
     max_unknown_messages: int = 5
     observation_ttl: float = 120.0
+    stateless_peers: tuple[str, ...] = ()
+    computation_timeout: float = 5.0
+    max_computations: int = 4
+    update_ack_timeout: float = 60.0
 
     def __post_init__(self) -> None:
         ipaddress.ip_address(self.listen_host)
@@ -293,12 +311,16 @@ class PcepServerConfig:
         if len(set(normalized)) != len(normalized):
             raise ValueError("Duplicate allowed peers")
         object.__setattr__(self, "allowed_peers", tuple(normalized))
+        if (not isinstance(self.stateless_peers, tuple) or
+                not set(self.stateless_peers) <= set(self.allowed_peers)):
+            raise ValueError("Stateless peers must be a tuple contained in the allowlist")
         for field, low, high in (
             ("port", 0, 65535), ("keepalive", 0, 255), ("deadtimer", 0, 255),
             ("max_message_bytes", 20, 65532), ("max_sessions", 1, 256),
             ("max_reports_per_peer", 1, 4096), ("max_capture_events", 1, 1024),
             ("max_report_bytes_per_peer", 1024, 16_777_216), ("max_capture_bytes", 1024, 16_777_216),
             ("max_messages_per_minute", 1, 10000), ("max_unknown_messages", 1, 100),
+            ("max_computations", 1, 16),
         ):
             value = getattr(self, field)
             if type(value) is not int or not low <= value <= high:
@@ -309,7 +331,7 @@ class PcepServerConfig:
             raise ValueError("deadtimer must exceed keepalive")
         if not self.keepalive and self.deadtimer:
             raise ValueError("deadtimer must be0 when keepalive is disabled")
-        for field in ("handshake_timeout", "observation_ttl"):
+        for field in ("handshake_timeout", "observation_ttl", "computation_timeout", "update_ack_timeout"):
             value = getattr(self, field)
             if type(value) not in (float, int) or not math.isfinite(value) or not 0 < value <= 3600:
                 raise ValueError(f"Invalid {field}")
@@ -322,15 +344,34 @@ class _Connection:
     last_rx: float
     last_tx: float
     remote_deadtimer: int = 0
+    terminal: bool = False
+    send_lock: asyncio.Lock = dataclass_field(default_factory=asyncio.Lock)
+    computation: asyncio.Task[None] | None = None
+    request_body: bytes | None = None
+    srp_sequence: int = 0
+    delegation_attempts: set[str] = dataclass_field(default_factory=set)
+    owned_plsps: dict[int, tuple[Any, ...]] = dataclass_field(default_factory=dict)
 
 
 class PcepServer:
     """Async TCP server. A capture path stores a bounded checksummed JSON snapshot."""
 
-    def __init__(self, config: PcepServerConfig, *, capture_path: Path | None = None):
+    def __init__(self, config: PcepServerConfig, *, capture_path: Path | None = None,
+                 path_computer: PcepPathComputer | None = None,
+                 delegated_computer: DelegatedPathComputer | None = None):
         self.config = config
         self.capture_path = capture_path
+        self.path_computer = path_computer
+        self.delegated_computer = delegated_computer
+        if delegated_computer is not None and (
+                path_computer is None or not config.keepalive or
+                not set(delegated_computer.allowed_tunnels) <= set(config.allowed_peers) or
+                set(delegated_computer.allowed_tunnels) & set(config.stateless_peers)):
+            raise ValueError("Delegation requires computation and allowed stateful PCCs")
+        self._compute_slots = asyncio.Semaphore(config.max_computations)
+        self._workers: set[asyncio.Task[Any]] = set()
         self._server: asyncio.Server | None = None
+        self._serving_task: asyncio.Task[None] | None = None
         self._connections: dict[str, _Connection] = {}
         self._tasks: set[asyncio.Task[None]] = set()
         self._peers: dict[str, dict[str, Any]] = {}
@@ -371,8 +412,12 @@ class PcepServer:
         return {
             "kind": "passive_pcep_capture", "run_id": self._run_id, "generated_at": now,
             "listener_running": self._server is not None and self._server.is_serving(),
-            "mode": "passive_stateful", "authoritative": False, "complete": False,
-            "capabilities": {"stateful": True, "lsp_update": False, "lsp_initiation": False},
+            "mode": "request_computation" if self.path_computer else "passive_stateful",
+            "authoritative": False, "complete": False,
+            "capabilities": {"stateful": bool(set(self.config.allowed_peers) - set(self.config.stateless_peers)),
+                             "lsp_update": self.delegated_computer is not None, "lsp_initiation": False,
+                             "path_computation": self.path_computer is not None},
+            "stateless_peers": list(self.config.stateless_peers),
             "capture_error": self._capture_error, "rejected_connections": self._rejected,
             "peers": peers, "events": list(self._events),
         }
@@ -412,29 +457,223 @@ class PcepServer:
         if self._server is None:
             await self.start()
         assert self._server is not None
-        await self._server.serve_forever()
+        if self._serving_task is None:
+            self._serving_task = asyncio.create_task(self._server.serve_forever())
+        # Python 3.12 Server.serve_forever handles cancellation by waiting for
+        # active transports to close. Let our finally/close close them first.
+        await asyncio.shield(self._serving_task)
 
     async def close(self) -> None:
         self._closing = True
-        if self._server is not None:
-            self._server.close()
-            await self._server.wait_closed()
-            self._server = None
+        server, self._server = self._server, None
+        if server is not None:
+            server.close()
         for peer, connection in tuple(self._connections.items()):
             try:
                 await self._send(peer, connection, encode_close())
-            except (ConnectionError, OSError):
+            except (ConnectionError, OSError, asyncio.TimeoutError):
                 pass
-            connection.writer.close()
+            finally:
+                connection.terminal = True
+                if connection.computation is not None:
+                    connection.computation.cancel()
+                connection.writer.close()
         if self._tasks:
             await asyncio.gather(*tuple(self._tasks), return_exceptions=True)
+        if server is not None:
+            await server.wait_closed()
+        if self._serving_task is not None:
+            await asyncio.gather(self._serving_task, return_exceptions=True)
+            self._serving_task = None
         self._persist()
 
     async def _send(self, peer: str, connection: _Connection, raw: bytes) -> None:
-        connection.writer.write(raw)
-        await asyncio.wait_for(connection.writer.drain(), timeout=self.config.handshake_timeout)
-        connection.last_tx = time.monotonic()
-        self._event(peer, "tx", raw)
+        async with connection.send_lock:
+            if connection.terminal:
+                return
+            connection.writer.write(raw)
+            await asyncio.wait_for(connection.writer.drain(), timeout=self.config.handshake_timeout)
+            connection.last_tx = time.monotonic()
+            self._event(peer, "tx", raw)
+
+    async def _compute(self, peer: str, connection: _Connection, body: bytes) -> None:
+        from .pcep_compute import request_error
+
+        computer = self.path_computer
+        assert computer is not None
+        if self._compute_slots.locked():
+            reply = request_error(body, reason="computation_capacity_exceeded")
+        else:
+            await self._compute_slots.acquire()
+
+            def run() -> Any:
+                result = computer(peer, body)
+                # Check the same immutable capture is still fresh and available.
+                # Disk parsing stays off the session reader/keepalive event loop.
+                if not computer.validate_reply(result):
+                    return request_error(body, reason="topology_changed_or_unavailable")
+                return result
+
+            worker = asyncio.create_task(asyncio.to_thread(run))
+            self._workers.add(worker)
+
+            def finished(task: asyncio.Task[Any]) -> None:
+                self._workers.discard(task)
+                self._compute_slots.release()
+                if not task.cancelled():
+                    task.exception()  # Consume late exceptions after timeout/disconnect.
+
+            worker.add_done_callback(finished)
+            try:
+                reply = await asyncio.wait_for(asyncio.shield(worker), self.config.computation_timeout)
+            except asyncio.TimeoutError:
+                reply = request_error(body, reason="computation_timeout")
+            except (ValueError, OSError, RuntimeError) as exc:
+                reply = request_error(body, reason=f"computation_unavailable:{exc}")
+        if (connection.terminal or self._closing or
+                self._connections.get(peer) is not connection):
+            return
+        connection.state["last_computation"] = {"timestamp": time.time(), "outcomes": list(reply.outcomes),
+                                                "topology_digest": reply.topology_digest}
+        for raw in reply.messages:
+            await self._send(peer, connection, raw)
+
+    def _delegation_done(self, peer: str, connection: _Connection, task: asyncio.Task[None]) -> None:
+        if not task.cancelled() and task.exception():
+            connection.writer.close()
+        elif not self._closing and not connection.terminal and self._connections.get(peer) is connection:
+            self._schedule_delegations(peer, connection)
+
+    def _schedule_delegations(self, peer: str, connection: _Connection) -> None:
+        from .pcep_delegation import ownership_key, report_key
+
+        computer = self.delegated_computer
+        if (computer is None or peer not in computer.allowed_tunnels or not connection.state["synchronized"] or
+                connection.terminal or self._closing or
+                connection.computation is not None and not connection.computation.done()):
+            return
+        reports = []
+        for report in connection.state["reports"].values():
+            key = report_key(report)
+            if not report["delegate"] or report["removed"]:
+                continue
+            if connection.owned_plsps.get(report["plsp_id"]) == ownership_key(report) and report["ero"]:
+                report["delegation_accepted"] = True
+                continue
+            if key in connection.delegation_attempts:
+                continue
+            reports.append(copy.deepcopy(report))
+            if len(reports) == 8:
+                break
+        if not reports:
+            return
+        if (len(connection.delegation_attempts) + len(reports) > self.config.max_reports_per_peer or
+                len(connection.state["updates"]) + len(reports) > 32 or
+                connection.srp_sequence + len(reports) >= 0xFFFFFFFF):
+            connection.writer.close()
+            return
+        srps = tuple(range(connection.srp_sequence + 1, connection.srp_sequence + len(reports) + 1))
+        connection.srp_sequence = srps[-1]
+        connection.delegation_attempts.update(report_key(report) for report in reports)
+        connection.request_body = None
+        connection.computation = asyncio.create_task(self._compute_delegations(peer, connection, reports, srps))
+        connection.computation.add_done_callback(lambda task: self._delegation_done(peer, connection, task))
+
+    async def _compute_delegations(self, peer: str, connection: _Connection,
+                                   reports: list[dict[str, Any]], srps: tuple[int, ...]) -> None:
+        from .pcep_compute import PathReply
+        from .pcep_delegation import ownership_key, report_fingerprint, report_key, return_delegation
+
+        computer = self.delegated_computer
+        assert computer is not None
+
+        def refused(reason: str) -> PathReply:
+            return PathReply(tuple(return_delegation(report, srp) for report, srp in zip(reports, srps)),
+                             tuple({"srp_id": srp, "plsp_id": report["plsp_id"], "status": "DELEGATION_RETURNED",
+                                    "reason": reason} for report, srp in zip(reports, srps)))
+
+        if self._compute_slots.locked():
+            reply = refused("computation_capacity_exceeded")
+        else:
+            await self._compute_slots.acquire()
+
+            def run() -> PathReply:
+                result = computer(peer, reports, srps)
+                return result if computer.validate_reply(result) else refused("topology_changed_or_unavailable")
+
+            worker = asyncio.create_task(asyncio.to_thread(run))
+            self._workers.add(worker)
+
+            def finished(task: asyncio.Task[Any]) -> None:
+                self._workers.discard(task)
+                self._compute_slots.release()
+                if not task.cancelled():
+                    task.exception()
+
+            worker.add_done_callback(finished)
+            try:
+                reply = await asyncio.wait_for(asyncio.shield(worker), self.config.computation_timeout)
+            except (asyncio.TimeoutError, ValueError, RuntimeError, OSError) as exc:
+                reply = refused(f"initial_computation_unavailable:{exc}")
+        if connection.terminal or self._closing or self._connections.get(peer) is not connection:
+            return
+        for original, message, outcome in zip(reports, reply.messages, reply.outcomes):
+            current = connection.state["reports"].get(report_key(original))
+            if current is None or report_fingerprint(current) != report_fingerprint(original):
+                continue  # Revoked, changed, or removed while the worker ran.
+            srp = str(outcome["srp_id"])
+            connection.state["updates"][srp] = {**outcome, "sent_at": time.time(), "acknowledged": False,
+                                               "ownership_key": list(ownership_key(original)),
+                                               "topology_digest": reply.topology_digest}
+            if outcome["status"] == "INITIAL_PATH":
+                connection.owned_plsps[original["plsp_id"]] = ownership_key(original)
+                current["delegation_accepted"] = True
+            else:
+                connection.owned_plsps.pop(original["plsp_id"], None)
+            await self._send(peer, connection, message)
+
+    def _acknowledge_updates(self, connection: _Connection, reports: list[dict[str, Any]]) -> None:
+        from .pcep_delegation import ownership_key
+
+        for report in reports:
+            if report["end_of_sync"]:
+                continue
+            replacement_delegated = report["removed"] and any(
+                current["plsp_id"] == report["plsp_id"] and current["delegate"] and
+                current["identifiers"] != report["identifiers"] and
+                connection.owned_plsps.get(report["plsp_id"]) == ownership_key(current)
+                for current in connection.state.get("reports", {}).values())
+            if (not report["delegate"] or report["removed"]) and not replacement_delegated:
+                connection.owned_plsps.pop(report["plsp_id"], None)
+            srp = report["srp_id"]
+            if report["sync"]:
+                # Some PCCs retain the last operation ID in their synchronized
+                # state. SRP IDs belong to a PCEP session: this is historical
+                # context, never an acknowledgment of an operation here.
+                if srp:
+                    report["historical_srp_id"] = srp
+                continue
+            if srp:
+                update = connection.state["updates"].get(str(srp))
+                if update is None:
+                    # IOS also repeats historical operation IDs after sync.
+                    # An unknown ID cannot acknowledge any current operation
+                    # or establish delegation, but does not invalidate state.
+                    report["uncorrelated_srp_id"] = srp
+                    continue
+                if update["plsp_id"] != report["plsp_id"]:
+                    raise PcepProtocolError("Update response LSP identity changed", 19, 1)
+                ids = report["identifiers"]
+                if any(update.get(field, ids[key]) != ids[key] for field, key in
+                       (("sender", "sender"), ("endpoint", "endpoint"), ("tunnel_id", "tunnel_id"))):
+                    raise PcepProtocolError("Update response LSP identity changed", 19, 1)
+                if "ownership_key" in update and update["ownership_key"] != list(ownership_key(report)):
+                    raise PcepProtocolError("Update response LSP identity changed", 19, 1)
+                update.update(acknowledged=True, acknowledged_at=time.time(), reported_state=report["operational_state"],
+                              reported_ero=report["ero"], acknowledged_identifiers=copy.deepcopy(ids))
+            for update in connection.state["updates"].values():
+                if update["acknowledged"] and update.get("acknowledged_identifiers") == report["identifiers"]:
+                    update["latest_reported_state"] = "REMOVED" if report["removed"] else report["operational_state"]
 
     async def _read(self, reader: asyncio.StreamReader) -> bytes:
         header = await reader.readexactly(4)
@@ -467,6 +706,7 @@ class PcepServer:
             "peer_ip": peer, "peer_port": address[1], "source": f"pcep:{peer}",
             "connected_at": time.time(), "fresh": False, "synchronized": False,
             "reports": {}, "lsp_names": {}, "stale_reason": "synchronization_incomplete",
+            "updates": {},
         }
         connection = _Connection(writer, state, time.monotonic(), time.monotonic())
         self._connections[peer] = connection
@@ -474,7 +714,11 @@ class PcepServer:
         keepalive_task: asyncio.Task[None] | None = None
         reason = "transport_closed"
         try:
-            await self._send(peer, connection, encode_open(self.config.keepalive, self.config.deadtimer, self._sid))
+            local_stateful = peer not in self.config.stateless_peers
+            local_updates = self.delegated_computer is not None and peer in self.delegated_computer.allowed_tunnels
+            state["local_stateful"] = local_stateful
+            await self._send(peer, connection, encode_open(
+                self.config.keepalive, self.config.deadtimer, self._sid, stateful=local_stateful, updates=local_updates))
             raw = await asyncio.wait_for(self._read(reader), self.config.handshake_timeout)
             self._event(peer, "rx", raw)
             if raw[1] != OPEN:
@@ -527,6 +771,7 @@ class PcepServer:
                         raise PcepProtocolError("Invalid CLOSE object")
                     parse_tlvs(objects[0].body[4:])
                     reason = f"peer_close:{objects[0].body[3]}"
+                    connection.terminal = True
                     break
                 elif message_type == OPEN:
                     raise PcepProtocolError("Unexpected OPEN on established session", 9, 0)
@@ -538,10 +783,42 @@ class PcepServer:
                     for obj in errors:
                         parse_tlvs(obj.body[4:])
                     state["last_peer_errors"] = [{"type": obj.body[2], "value": obj.body[3]} for obj in errors]
+                    for obj in objects:
+                        if obj.object_class == 33 and obj.object_type == 1 and len(obj.body) >= 8:
+                            srp = str(int.from_bytes(obj.body[4:8], "big"))
+                            update = state["updates"].get(srp)
+                            if update is not None:
+                                update.update(acknowledged=True, status="PCC_ERROR", errors=state["last_peer_errors"])
+                                connection.owned_plsps.pop(update["plsp_id"], None)
                 elif message_type == PCRPT:
-                    if not remote["stateful"]:
+                    if not remote["stateful"] or not local_stateful:
                         raise PcepProtocolError("Stateful reporting was not negotiated", 19, 5)
-                    self._apply_reports(state, parse_reports(raw[4:]))
+                    allow_delegation = bool(local_updates and (remote["stateful_flags"] or 0) & 1)
+                    reports = parse_reports(raw[4:], allow_delegation=allow_delegation)
+                    self._apply_reports(state, reports)
+                    if allow_delegation:
+                        self._acknowledge_updates(connection, reports)
+                        self._schedule_delegations(peer, connection)
+                elif message_type == PCREQ and self.path_computer is not None:
+                    if connection.computation is not None and not connection.computation.done():
+                        from .pcep_compute import request_error
+
+                        if raw[4:] != connection.request_body:
+                            # A conflicting reused ID must not receive a late
+                            # success after the correlated error cancels it.
+                            original = parse_objects(connection.request_body or b"")
+                            incoming = parse_objects(raw[4:])
+                            old_ids = {obj.body[4:8] for obj in original if obj.object_class == 2}
+                            new_ids = {obj.body[4:8] for obj in incoming if obj.object_class == 2}
+                            if old_ids & new_ids:
+                                connection.computation.cancel()
+                            for message in request_error(raw[4:], reason="peer_computation_pending").messages:
+                                await self._send(peer, connection, message)
+                    else:
+                        connection.request_body = raw[4:]
+                        connection.computation = asyncio.create_task(self._compute(peer, connection, raw[4:]))
+                        connection.computation.add_done_callback(
+                            lambda task: connection.writer.close() if not task.cancelled() and task.exception() else None)
                 elif message_type == NOTIFICATION:
                     notifications = [obj for obj in parse_objects(raw[4:])
                                      if (obj.object_class, obj.object_type) == (12, 1)]
@@ -550,7 +827,7 @@ class PcepServer:
                     for obj in notifications:
                         parse_tlvs(obj.body[4:])
                 else:
-                    # No PCReq computation, update or initiation capabilities implemented.
+                    # No update or initiation capabilities; PCReq is opt-in only.
                     parse_objects(raw[4:])
                     await self._send(peer, connection, encode_error(2, 0))
                     while unknown and unknown[0] < connection.last_rx - 60:
@@ -574,6 +851,10 @@ class PcepServer:
         except (OSError, ConnectionError) as exc:
             reason = f"transport_or_capture_error:{exc}"
         finally:
+            connection.terminal = True
+            if connection.computation is not None:
+                connection.computation.cancel()
+                await asyncio.gather(connection.computation, return_exceptions=True)
             if keepalive_task is not None:
                 keepalive_task.cancel()
                 await asyncio.gather(keepalive_task, return_exceptions=True)
@@ -603,6 +884,16 @@ class PcepServer:
         try:
             while True:
                 await asyncio.sleep(max(0.01, self.config.keepalive - (time.monotonic() - connection.last_tx)))
+                expired = [item for item in connection.state.get("updates", {}).values()
+                           if item["status"] == "INITIAL_PATH" and not item["acknowledged"] and
+                           time.time() - item["sent_at"] > self.config.update_ack_timeout]
+                if expired:
+                    for item in expired:
+                        item["status"] = "ACK_TIMEOUT"
+                    await self._send(peer, connection, encode_close(1))
+                    connection.terminal = True
+                    connection.writer.close()
+                    return
                 if time.monotonic() - connection.last_tx >= self.config.keepalive:
                     await self._send(peer, connection, encode_message(KEEPALIVE))
         except (OSError, ConnectionError, asyncio.TimeoutError):

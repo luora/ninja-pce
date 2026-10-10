@@ -41,3 +41,33 @@ Run offline from the repository root:
 ```bash
 .venv/bin/pytest -q tests/test_pcep_live_capture.py
 ```
+
+## Initial delegated computation qualification
+
+These fixtures are unchanged frames from receive events 26/29 and transmit
+event 27 of `build/live-lab-evidence/pce-compute/pcep-T100-primary.json`, source
+SHA-256 `62f128286e2c704dba3447032cd4bc7aedd60c262a3ce12e1d175826ab4a6250`.
+They belong to PE1's same live session, PLSP-ID 524388, tunnel 100, RSVP LSP
+ID 224. Each file contains the original hexadecimal bytes and a newline.
+
+| Fixture | UTC timestamp, 2026-10-10 | Bytes | SHA-256 of decoded frame |
+|---|---|---:|---|
+| `tunnel100-initial-delegation.hex` | 20:12:09.803614 | 132 | `0884b706110e3329893be514740686e6d1646219d08420bbda99bc2cacb0ecf5` |
+| `tunnel100-initial-pcupd.hex` | 20:12:09.974315 | 128 | `30c1a89b0b074e2a2a3f29732afbb758371c607bd85d29cf54fb6eae94f3a8d8` |
+| `tunnel100-computed-active.hex` | 20:12:10.059688 | 156 | `2b5cd90e1fef9710abebe15672e46ee7e3e3d19b83d71accc62414f417604657` |
+
+The initial PCRpt has D=1, A=1, O=DOWN, an empty ERO and SRP-ID 0. It requests
+50 Mbps at priorities 7/7. This IOS image supplies a nonzero RSVP LSP ID even
+for that initial unsignalled report; this is observed compatibility, not a
+claim of complete RFC conformance. Ninja-PCE's PCUpd has SRP-ID 3, D=1 and
+strict ERO `10.0.12.2`, `10.0.25.5`, `10.0.56.6`. The same-session PCRpt
+acknowledges SRP-ID 3 and reports ACTIVE with that ERO and bandwidth.
+
+The exact BGP-LS snapshot used by this computation is
+`../bgpls-iosxe-16.9.7/bgpls-before-pce-compute-raw.json`. Replay uses its
+historical clock and constructs simulated collector-health files; it does
+not make historical evidence fresh or confer current authority.
+`test_pcep_live_computation.py` checks exact response reproduction and the
+separate directional reservation change. Independent router/RSVP/MPLS OAM
+evidence is described in
+[the live qualification report](../../../docs/live_pcep_computation_validation.md).
