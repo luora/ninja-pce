@@ -1,5 +1,10 @@
 # ninja-pce GNS3 lab guide
 
+> For the current addressing plan, safe configuration sequence, T01–T15 runner
+> and evidence rules, follow [GNS3 validation](gns3_validation.md). Earlier examples
+> below require the current [schema](input_schema.md) and [reconciliation gates](reconciliation.md).
+> No vendor-image integration tests have been executed during remediation.
+
 This guide turns `ninja-pce` from an offline CSPF script into a usable GNS3 demo appliance.
 
 The first GNS3 version is still deliberately safe:

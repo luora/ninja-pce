@@ -1,0 +1,43 @@
+! ninja-pce IOS XR-style RSVP-TE dry-run output
+! Review syntax against your exact IOS XR release before applying.
+! Service: CUSTOMER_A_PE1_PE3_50M
+! Selected path: PE1 -> P3 -> P4 -> PE3
+! Bandwidth: 50.0 Mbps / 50000 kbps
+! Dry-run only: True
+!
+! Candidate paths:
+! 1. PE1 -> P3 -> P4 -> PE3 metric=50 bottleneck=170.0Mbps residual=120.0Mbps
+! 2. PE1 -> P1 -> P3 -> P4 -> PE3 metric=60 bottleneck=90.0Mbps residual=40.0Mbps
+! 3. PE1 -> P3 -> P4 -> P2 -> PE3 metric=60 bottleneck=80.0Mbps residual=30.0Mbps
+! 4. PE1 -> P1 -> P3 -> P4 -> P2 -> PE3 metric=70 bottleneck=80.0Mbps residual=30.0Mbps
+!
+explicit-path name EP_CUSTOMER_A_PE1_PE3
+ index 10 next-address strict ipv4 unicast 10.0.13.3 ! P3
+ index 20 next-address strict ipv4 unicast 10.0.34.4 ! P4
+ index 30 next-address strict ipv4 unicast 10.0.46.6 ! PE3
+!
+interface tunnel-te100
+ description ninja-pce CUSTOMER_A_PE1_PE3_50M PE1 to PE3
+ ipv4 unnumbered Loopback0
+ destination 10.255.0.6
+ signalled-bandwidth 50000
+ priority 7 7
+ path-option 10 explicit name EP_CUSTOMER_A_PE1_PE3
+!
+
+! Suggested pre-check commands
+show mpls traffic-eng topology
+show mpls traffic-eng tunnels summary
+show rsvp interface
+show route 10.255.0.6/32
+
+! Suggested verification commands
+show mpls traffic-eng tunnels 100
+show mpls traffic-eng tunnels 100 detail
+show mpls traffic-eng tunnels topology path destination 10.255.0.6 explicit-path-name EP_CUSTOMER_A_PE1_PE3
+show rsvp interface
+show rsvp session
+
+! Rollback reminder
+! Manual recovery: confirm ownership and pre-change snapshot before changes.
+! No automatic deletion of pre-existing tunnels or paths.

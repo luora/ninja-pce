@@ -1,0 +1,1448 @@
+{
+  "captured_at": "2026-10-10T19:03:44.954198+00:00",
+  "peers_after": [
+    {
+      "peer": {
+        "afiSafis": [
+          {
+            "mpGracefulRestart": {
+              "state": {
+                "endOfRibReceived": true
+              }
+            },
+            "state": {
+              "accepted": "45",
+              "enabled": true,
+              "family": {
+                "afi": "AFI_LS",
+                "safi": "SAFI_LS"
+              }
+            }
+          }
+        ],
+        "gracefulRestart": {
+          "localRestarting": false,
+          "peerRestarting": false
+        },
+        "state": {
+          "adminState": "UP",
+          "flops": 0,
+          "messages": {
+            "received": {
+              "update": "49",
+              "withdrawPrefix": "0",
+              "withdrawUpdate": "0"
+            }
+          },
+          "neighborAddress": "172.16.100.102",
+          "sessionState": "ESTABLISHED"
+        },
+        "timers": {
+          "state": {
+            "uptime": "2026-10-10T18:38:29Z"
+          }
+        }
+      }
+    }
+  ],
+  "peers_before": [
+    {
+      "peer": {
+        "afiSafis": [
+          {
+            "mpGracefulRestart": {
+              "state": {
+                "endOfRibReceived": true
+              }
+            },
+            "state": {
+              "accepted": "45",
+              "enabled": true,
+              "family": {
+                "afi": "AFI_LS",
+                "safi": "SAFI_LS"
+              }
+            }
+          }
+        ],
+        "gracefulRestart": {
+          "localRestarting": false,
+          "peerRestarting": false
+        },
+        "state": {
+          "adminState": "UP",
+          "flops": 0,
+          "messages": {
+            "received": {
+              "update": "49",
+              "withdrawPrefix": "0",
+              "withdrawUpdate": "0"
+            }
+          },
+          "neighborAddress": "172.16.100.102",
+          "sessionState": "ESTABLISHED"
+        },
+        "timers": {
+          "state": {
+            "uptime": "2026-10-10T18:38:29Z"
+          }
+        }
+      }
+    }
+  ],
+  "poll_started_at": "2026-10-10T19:03:44.854157+00:00",
+  "rib": [
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAwEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEDAAQKABcDAQQABAoAFwI=",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB1bBAQABAr/AAMEBgAECv8AAgRAAAQAAAAABEEABEzuaygEQgAESz68IARDACBLPrwgSz68IEs+vCBLPrwgSz68IEs+vCBLPrwgSz68IAREAAQAAAAKBEcAAwAAAQ==",
+              "gA5uQARHBKwQZGYAAAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAwEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEDAAQKABcDAQQABAoAFwI="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { LINK { LOCAL_NODE: 10.255.0.3 REMOTE_NODE: 10.255.0.2 LINK: 10.0.23.3->10.0.23.2} }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T19:02:00Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAwEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABAEDAAQKACIDAQQABAoAIgQ=",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB1bBAQABAr/AAMEBgAECv8ABARAAAQAAAAABEEABEzuaygEQgAESz68IARDACBLPrwgSz68IEs+vCBLPrwgSz68IEs+vCBLPrwgSr68IAREAAQAAAAKBEcAAwAAAQ==",
+              "gA5uQARHBKwQZGYAAAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAwEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABAEDAAQKACIDAQQABAoAIgQ="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { LINK { LOCAL_NODE: 10.255.0.3 REMOTE_NODE: 10.255.0.4 LINK: 10.0.34.3->10.0.34.4} }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEIAAEBAQkABR0KABkA",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEIAAEBAQkABR0KABkA"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.2 PREFIX: [10.0.25.0/29] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABgEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQEDAAQKADgGAQQABAoAOAU=",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB1bBAQABAr/AAYEBgAECv8ABQRAAAQAAAAABEEABEzuaygEQgAESz68IARDACBLPrwgSz68IEs+vCBLPrwgSz68IEs+vCBLPrwgSz68IAREAAQAAAAKBEcAAwAAAQ==",
+              "gA5uQARHBKwQZGYAAAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABgEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQEDAAQKADgGAQQABAoAOAU="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { LINK { LOCAL_NODE: 10.255.0.6 REMOTE_NODE: 10.255.0.5 LINK: 10.0.56.6->10.0.56.5} }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABAEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAwEDAAQKACIEAQQABAoAIgM=",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB1bBAQABAr/AAQEBgAECv8AAwRAAAQAAAAABEEABEzuaygEQgAESz68IARDACBLPrwgSz68IEs+vCBLPrwgSz68IEs+vCBLPrwgSz68IAREAAQAAAAKBEcAAwAAAQ==",
+              "gA5uQARHBKwQZGYAAAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABAEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAwEDAAQKACIEAQQABAoAIgM="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { LINK { LOCAL_NODE: 10.255.0.4 REMOTE_NODE: 10.255.0.3 LINK: 10.0.34.4->10.0.34.3} }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABAEIAAEBAQkABR0KADYA",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABAEIAAEBAQkABR0KADYA"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.4 PREFIX: [10.0.54.0/29] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABAEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQEDAAQKADYEAQQABAoANgU=",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB1bBAQABAr/AAQEBgAECv8ABQRAAAQAAAAABEEABEzuaygEQgAESz68IARDACBLPrwgSz68IEs+vCBLPrwgSz68IEs+vCBLPrwgSz68IAREAAQAAAAKBEcAAwAAAQ==",
+              "gA5uQARHBKwQZGYAAAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABAEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQEDAAQKADYEAQQABAoANgU="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { LINK { LOCAL_NODE: 10.255.0.4 REMOTE_NODE: 10.255.0.5 LINK: 10.0.54.4->10.0.54.5} }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABAEDAAQKADYFAQQABAoANgQ=",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB1bBAQABAr/AAUEBgAECv8ABARAAAQAAAAABEEABEzuaygEQgAESz68IARDACBLPrwgSz68IEs+vCBLPrwgSz68IEs+vCBLPrwgSz68IAREAAQAAAAKBEcAAwAAAQ==",
+              "gA5uQARHBKwQZGYAAAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABAEDAAQKADYFAQQABAoANgQ="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { LINK { LOCAL_NODE: 10.255.0.5 REMOTE_NODE: 10.255.0.4 LINK: 10.0.54.5->10.0.54.4} }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEIAAEBAQkABSAK/wAC",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEIAAEBAQkABSAK/wAC"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.2 PREFIX: [10.255.0.2/32] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAQEDAAQKAAwCAQQABAoADAE=",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB1bBAQABAr/AAIEBgAECv8AAQRAAAQAAAAABEEABEzuaygEQgAESz68IARDACBLPrwgSz68IEs+vCBLPrwgSz68IEs+vCBLPrwgSz68IAREAAQAAAAKBEcAAwAAAQ==",
+              "gA5uQARHBKwQZGYAAAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAQEDAAQKAAwCAQQABAoADAE="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { LINK { LOCAL_NODE: 10.255.0.2 REMOTE_NODE: 10.255.0.1 LINK: 10.0.12.2->10.0.12.1} }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQEDAAQKABkCAQQABAoAGQU=",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB1bBAQABAr/AAIEBgAECv8ABQRAAAQAAAAABEEABEzuaygEQgAESz68IARDACBLPrwgSz68IEs+vCBLPrwgSz68IEs+vCBLPrwgSz68IAREAAQAAAAKBEcAAwAAAQ==",
+              "gA5uQARHBKwQZGYAAAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQEDAAQKABkCAQQABAoAGQU="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { LINK { LOCAL_NODE: 10.255.0.2 REMOTE_NODE: 10.255.0.5 LINK: 10.0.25.2->10.0.25.5} }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAEALQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABg==",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0IBAQABAr/AAY=",
+              "gA46QARHBKwQZGYAAAEALQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABg=="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { NODE { AS:65000 BGP-LS ID:0 10.255.0.6 OSPFv2:0 } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAEALQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAw==",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0IBAQABAr/AAM=",
+              "gA46QARHBKwQZGYAAAEALQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAw=="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { NODE { AS:65000 BGP-LS ID:0 10.255.0.3 OSPFv2:0 } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABAEIAAEBAQkABR0KACIA",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABAEIAAEBAQkABR0KACIA"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.4 PREFIX: [10.0.34.0/29] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAwEDAAQKABcCAQQABAoAFwM=",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB1bBAQABAr/AAIEBgAECv8AAwRAAAQAAAAABEEABEzuaygEQgAESz68IARDACBLPrwgSz68IEs+vCBLPrwgSz68IEs+vCBLPrwgSz68IAREAAQAAAAKBEcAAwAAAQ==",
+              "gA5uQARHBKwQZGYAAAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAwEDAAQKABcCAQQABAoAFwM="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { LINK { LOCAL_NODE: 10.255.0.2 REMOTE_NODE: 10.255.0.3 LINK: 10.0.23.2->10.0.23.3} }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAwEIAAEBAQkABSAK/wAD",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAwEIAAEBAQkABSAK/wAD"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.3 PREFIX: [10.255.0.3/32] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQEIAAEBAQkABR0KABkA",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQEIAAEBAQkABR0KABkA"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.5 PREFIX: [10.0.25.0/29] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAQEIAAEBAQkABR0KAAwA",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAQEIAAEBAQkABR0KAAwA"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.1 PREFIX: [10.0.12.0/29] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T19:02:00Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABAEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABgEDAAQKAC4EAQQABAoALgY=",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB1bBAQABAr/AAQEBgAECv8ABgRAAAQAAAAABEEABEzuaygEQgAESz68IARDACBLPrwgSz68IEs+vCBLPrwgSz68IEs+vCBLPrwgSr68IAREAAQAAAAKBEcAAwAAAQ==",
+              "gA5uQARHBKwQZGYAAAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABAEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABgEDAAQKAC4EAQQABAoALgY="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { LINK { LOCAL_NODE: 10.255.0.4 REMOTE_NODE: 10.255.0.6 LINK: 10.0.46.4->10.0.46.6} }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEIAAEBAQkABR0KAAwA",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEIAAEBAQkABR0KAAwA"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.2 PREFIX: [10.0.12.0/29] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAwEIAAEBAQkABR0KABcA",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAwEIAAEBAQkABR0KABcA"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.3 PREFIX: [10.0.23.0/29] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEIAAEBAQkABR0KABcA",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEIAAEBAQkABR0KABcA"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.2 PREFIX: [10.0.23.0/29] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAwEIAAEBAQkABR0KAA0A",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAwEIAAEBAQkABR0KAA0A"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.3 PREFIX: [10.0.13.0/29] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAwEIAAEBAQkABR0KACIA",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAwEIAAEBAQkABR0KACIA"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.3 PREFIX: [10.0.34.0/29] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABAEIAAEBAQkABR0KAC4A",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABAEIAAEBAQkABR0KAC4A"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.4 PREFIX: [10.0.46.0/29] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAQEIAAEBAQkABR0KAA0A",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAQEIAAEBAQkABR0KAA0A"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.1 PREFIX: [10.0.13.0/29] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABgEIAAEBAQkABR0KADgA",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABgEIAAEBAQkABR0KADgA"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.6 PREFIX: [10.0.56.0/29] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABgEIAAEBAQkABR0KAC4A",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABgEIAAEBAQkABR0KAC4A"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.6 PREFIX: [10.0.46.0/29] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAwEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAQEDAAQKAA0DAQQABAoADQE=",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB1bBAQABAr/AAMEBgAECv8AAQRAAAQAAAAABEEABEzuaygEQgAESz68IARDACBLPrwgSz68IEs+vCBLPrwgSz68IEs+vCBLPrwgSz68IAREAAQAAAAKBEcAAwAAAQ==",
+              "gA5uQARHBKwQZGYAAAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAwEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAQEDAAQKAA0DAQQABAoADQE="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { LINK { LOCAL_NODE: 10.255.0.3 REMOTE_NODE: 10.255.0.1 LINK: 10.0.13.3->10.0.13.1} }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAEALQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAQ==",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0IBAQABAr/AAE=",
+              "gA46QARHBKwQZGYAAAEALQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAQ=="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { NODE { AS:65000 BGP-LS ID:0 10.255.0.1 OSPFv2:0 } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAEALQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABA==",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0IBAQABAr/AAQ=",
+              "gA46QARHBKwQZGYAAAEALQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABA=="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { NODE { AS:65000 BGP-LS ID:0 10.255.0.4 OSPFv2:0 } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAQEIAAEBAQkABSAK/wAB",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAQEIAAEBAQkABSAK/wAB"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.1 PREFIX: [10.255.0.1/32] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABgEIAAEBAQkABSAK/wAG",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABgEIAAEBAQkABSAK/wAG"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.6 PREFIX: [10.255.0.6/32] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAEALQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAg==",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0IBAQABAr/AAI=",
+              "gA46QARHBKwQZGYAAAEALQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAg=="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { NODE { AS:65000 BGP-LS ID:0 10.255.0.2 OSPFv2:0 } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAQEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEDAAQKAAwBAQQABAoADAI=",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB1bBAQABAr/AAEEBgAECv8AAgRAAAQAAAAABEEABEzuaygEQgAESz68IARDACBLPrwgSz68IEs+vCBLPrwgSz68IEs+vCBLPrwgSz68IAREAAQAAAAKBEcAAwAAAQ==",
+              "gA5uQARHBKwQZGYAAAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAQEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEDAAQKAAwBAQQABAoADAI="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { LINK { LOCAL_NODE: 10.255.0.1 REMOTE_NODE: 10.255.0.2 LINK: 10.0.12.1->10.0.12.2} }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABAEIAAEBAQkABSAK/wAE",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABAEIAAEBAQkABSAK/wAE"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.4 PREFIX: [10.255.0.4/32] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQEIAAEBAQkABR0KADgA",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQEIAAEBAQkABR0KADgA"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.5 PREFIX: [10.0.56.0/29] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABgEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABAEDAAQKAC4GAQQABAoALgQ=",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB1bBAQABAr/AAYEBgAECv8ABARAAAQAAAAABEEABEzuaygEQgAESz68IARDACBLPrwgSz68IEs+vCBLPrwgSz68IEs+vCBLPrwgSz68IAREAAQAAAAKBEcAAwAAAQ==",
+              "gA5uQARHBKwQZGYAAAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABgEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABAEDAAQKAC4GAQQABAoALgQ="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { LINK { LOCAL_NODE: 10.255.0.6 REMOTE_NODE: 10.255.0.4 LINK: 10.0.46.6->10.0.46.4} }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T19:02:00Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAQEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAwEDAAQKAA0BAQQABAoADQM=",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB1bBAQABAr/AAEEBgAECv8AAwRAAAQAAAAABEEABEzuaygEQgAESz68IARDACBLPrwgSz68IEs+vCBLPrwgSz68IEs+vCBLPrwgSr68IAREAAQAAAAKBEcAAwAAAQ==",
+              "gA5uQARHBKwQZGYAAAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAQEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAwEDAAQKAA0BAQQABAoADQM="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { LINK { LOCAL_NODE: 10.255.0.1 REMOTE_NODE: 10.255.0.3 LINK: 10.0.13.1->10.0.13.3} }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEDAAQKABkFAQQABAoAGQI=",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB1bBAQABAr/AAUEBgAECv8AAgRAAAQAAAAABEEABEzuaygEQgAESz68IARDACBLPrwgSz68IEs+vCBLPrwgSz68IEs+vCBLPrwgSz68IAREAAQAAAAKBEcAAwAAAQ==",
+              "gA5uQARHBKwQZGYAAAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEDAAQKABkFAQQABAoAGQI="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { LINK { LOCAL_NODE: 10.255.0.5 REMOTE_NODE: 10.255.0.2 LINK: 10.0.25.5->10.0.25.2} }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABgEDAAQKADgFAQQABAoAOAY=",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB1bBAQABAr/AAUEBgAECv8ABgRAAAQAAAAABEEABEzuaygEQgAESz68IARDACBLPrwgSz68IEs+vCBLPrwgSz68IEs+vCBLPrwgSz68IAREAAQAAAAKBEcAAwAAAQ==",
+              "gA5uQARHBKwQZGYAAAIAYQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQEBACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABgEDAAQKADgFAQQABAoAOAY="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { LINK { LOCAL_NODE: 10.255.0.5 REMOTE_NODE: 10.255.0.6 LINK: 10.0.56.5->10.0.56.6} }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQEIAAEBAQkABR0KADYA",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQEIAAEBAQkABR0KADYA"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.5 PREFIX: [10.0.54.0/29] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQEIAAEBAQkABSAK/wAF",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5IQARHBKwQZGYAAAMAOwMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQEIAAEBAQkABSAK/wAF"
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.5 PREFIX: [10.255.0.5/32] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAMAOgMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEIAAEBAQkABBisEGQ=",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0A",
+              "gA5HQARHBKwQZGYAAAMAOgMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8AAgEIAAEBAQkABBisEGQ="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { PREFIXv4 { LOCAL_NODE: 10.255.0.2 PREFIX: [172.16.100.0/24] OSPF_ROUTE_TYPE:INTRA-AREA } }"
+      }
+    },
+    {
+      "destination": {
+        "paths": [
+          {
+            "age": "2026-10-10T18:38:29Z",
+            "best": true,
+            "family": {
+              "afi": "AFI_LS",
+              "safi": "SAFI_LS"
+            },
+            "filtered": false,
+            "isNexthopInvalid": false,
+            "isWithdraw": false,
+            "neighborIp": "172.16.100.102",
+            "nlriBinary": "AAEALQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQ==",
+            "pattrsBinary": [
+              "QAEBAA==",
+              "QAIA",
+              "gAQEAAAAAA==",
+              "QAUEAAAAZA==",
+              "gB0IBAQABAr/AAU=",
+              "gA46QARHBKwQZGYAAAEALQMAAAAAAAAAAAEAACACAAAEAAD96AIBAAQAAAAAAgIABAAAAAACAwAECv8ABQ=="
+            ],
+            "sourceId": "10.255.0.2",
+            "stale": false
+          }
+        ],
+        "prefix": "NLRI { NODE { AS:65000 BGP-LS ID:0 10.255.0.5 OSPFv2:0 } }"
+      }
+    }
+  ],
+  "schema_version": 1,
+  "source": "gobgp-v3.37.0-grpc"
+}

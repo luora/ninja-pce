@@ -1,0 +1,19 @@
+# Intended isolated-lab management endpoints; no connection has been validated.
+# Username and password environment references are operator-editable placeholders.
+devices:
+  - name: PE1
+    topology_node_id: PE1
+    host: 172.16.100.101
+    device_type: cisco_ios
+    username: admin
+    password_env: NINJA_PCE_IOSXE_1697_PE1_PASSWORD
+    role: headend
+    tags: []
+  - name: PE3
+    topology_node_id: PE3
+    host: 172.16.100.106
+    device_type: cisco_ios
+    username: admin
+    password_env: NINJA_PCE_IOSXE_1697_PE3_PASSWORD
+    role: tailend
+    tags: []

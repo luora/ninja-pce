@@ -16,6 +16,11 @@ This is a dry-run plan. RSVP-TE is used here for LSP signaling and bandwidth res
 |---:|---:|---:|---:|
 | {{ result.total_metric }} | {{ result.bottleneck_available_bw_mbps }} Mbps | {{ result.residual_after_reservation_mbps }} Mbps | {{ demand.setup_priority }}/{{ demand.hold_priority }} |
 
+| Directed link | ERO type | ERO address | Router loopback |
+|---|---|---|---|
+{% for hop in result.explicit_hops -%}
+| {{ hop.link_id }} | {{ hop.hop_type }} | {{ hop.address }} | {{ hop.loopback }} |
+{% endfor %}
 ## 3. Candidate paths
 
 | Rank | Path | Metric | Hops | Bottleneck before | Bottleneck after |
@@ -32,6 +37,7 @@ This is a dry-run plan. RSVP-TE is used here for LSP signaling and bandwidth res
 {% endfor %}
 ## 5. Constraints applied
 
+- Ordered waypoints: {{ demand.constraints.ordered_waypoints | join(", ") if demand.constraints.ordered_waypoints else "none" }}
 - Avoid nodes: {{ demand.constraints.avoid_nodes | join(", ") if demand.constraints.avoid_nodes else "none" }}
 - Avoid links: {{ demand.constraints.avoid_links | join(", ") if demand.constraints.avoid_links else "none" }}
 - Include nodes: {{ demand.constraints.include_nodes | join(", ") if demand.constraints.include_nodes else "none" }}
@@ -65,10 +71,11 @@ This is a dry-run plan. RSVP-TE is used here for LSP signaling and bandwidth res
 
 ## 9. Rollback
 
-1. Remove service binding from the new LSP/tunnel.
-2. Disable or remove the new LSP/tunnel.
-3. Remove explicit-path object if unused.
-4. Confirm traffic returned to the previous path or previous service state.
+1. Preserve the captured pre-change configuration and operational evidence.
+2. Confirm resource ownership and dependencies before any recovery command.
+3. If ownership or prior state is unknown, stop automated changes and require manual intervention.
+4. Confirmed commits may expire on supported platforms; reobserve actual state before releasing reservations.
+5. Restore only a reviewed, ownership-scoped previous state and verify forwarding. No automatic tunnel/path deletion is authorized by this plan.
 
 {% if result.warnings %}
 ## 10. Warnings

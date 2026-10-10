@@ -1,0 +1,21 @@
+[Unit]
+Description=GoBGP BGP-LS consumer for Ninja-PCE isolated lab
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gobgp
+Group=gobgp
+ExecStart=/usr/local/bin/gobgpd -f /etc/gobgp/gobgpd.toml --api-hosts=127.0.0.1:50051
+Restart=on-failure
+RestartSec=3
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

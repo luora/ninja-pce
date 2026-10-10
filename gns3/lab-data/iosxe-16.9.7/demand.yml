@@ -1,0 +1,22 @@
+# Offline preview only; this does not authorize router configuration.
+service:
+  name: IOSXE_1697_PE1_PE3_10M
+  source: PE1
+  destination: PE3
+  bandwidth_mbps: 10
+  setup_priority: 7
+  hold_priority: 7
+  description: Intended 10 Mbps two-router IOS XE qualification demand.
+  path:
+    hop_type: strict
+    max_candidates: 1
+    max_hops: 1
+    max_metric: 10
+  output:
+    dry_run: true
+    tunnel_id: 1001
+    tunnel_name: TUN_IOSXE_1697_PE1_PE3
+    explicit_path_name: EP_IOSXE_1697_PE1_PE3
+    formats: [generic, iosxe]
+    write_plan: true
+    write_verification: true

@@ -7,7 +7,7 @@
 !
 ip explicit-path name {{ output.explicit_path_name }} enable
 {% for hop in result.explicit_hops %}
- next-address {{ hop.loopback }}
+ next-address {{ hop.hop_type }} {{ hop.address }}
 {% endfor %}
 !
 interface Tunnel{{ output.tunnel_id }}
@@ -33,5 +33,5 @@ show ip rsvp interface
 show ip rsvp reservation
 
 ! Rollback reminder
-! no interface Tunnel{{ output.tunnel_id }}
-! no ip explicit-path name {{ output.explicit_path_name }}
+! Manual recovery: confirm ownership and pre-change snapshot before changes.
+! No automatic deletion of pre-existing tunnels or paths.

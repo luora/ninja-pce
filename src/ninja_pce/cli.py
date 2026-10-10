@@ -1,23 +1,26 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import math
+import os
 import sys
 import threading
 import time
 from dataclasses import replace
 from pathlib import Path
 
-from .cspf import CspfNoPath, compute_cspf
+from .cspf import CspfNoPath, CspfSearchLimit, compute_cspf
 from .daemon import HealthState, load_daemon_config, run_daemon_cycle, start_health_server
 from .inventory import device_for_node, validate_inventory
+from .live import add_live_commands, collect_bgpls, listen_pcep
 from .loaders import InputError, load_demand, load_inventory, load_topology
 from .reconcile import file_fingerprint, reconcile_once
 from .render import write_outputs
 from .southbound import (
     SouthboundError,
     build_push_plan,
-    push_plan,
     require_approved_execution,
 )
 
@@ -105,6 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
     daemon.add_argument("--health-host", help="Override health endpoint host")
     daemon.add_argument("--health-port", type=int, help="Override health endpoint port")
     daemon.add_argument("--no-health", action="store_true", help="Disable the health/metrics HTTP server")
+    add_live_commands(sub)
     return parser
 
 
@@ -114,6 +118,10 @@ def _add_delivery_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--inventory", required=True, help="Host/OS inventory YAML/JSON file")
     parser.add_argument("--output-dir", default="build/outputs", help="Generated output directory")
     parser.add_argument(
+        "--state-dir", default=os.environ.get("NINJA_PCE_STATE_DIR", "build/state"),
+        help="Shared local reservation/state directory for every controlled demand (default: build/state)",
+    )
+    parser.add_argument(
         "--execute",
         action="store_true",
         help="Connect with Netmiko and apply the config; otherwise preview only",
@@ -122,6 +130,14 @@ def _add_delivery_arguments(parser: argparse.ArgumentParser) -> None:
         "--approve",
         action="store_true",
         help="Explicitly approve execution; valid only with --execute",
+    )
+    parser.add_argument(
+        "--approved-plan-id",
+        help="Exact plan ID shown by a reviewed preview; rejects stale approval",
+    )
+    parser.add_argument(
+        "--approval-expires-at",
+        help="Optional timezone-aware ISO timestamp bounding this exact approval",
     )
 
 
@@ -137,6 +153,7 @@ def cmd_compute(args: argparse.Namespace) -> int:
     print(f"Service:       {demand.name}")
     print(f"Bandwidth:     {demand.bandwidth_mbps:g} Mbps")
     print(f"Path:          {' -> '.join(result.path_nodes)}")
+    print(f"Links:         {' -> '.join(link.id for link in result.path_links)}")
     print(f"Metric:        {result.total_metric}")
     print(f"Bottleneck BW: {result.bottleneck_available_bw_mbps:g} Mbps")
     print(f"Residual BW:   {result.residual_after_reservation_mbps:g} Mbps")
@@ -218,8 +235,21 @@ def _load_delivery(args: argparse.Namespace):
 
 
 def cmd_push(args: argparse.Namespace) -> int:
-    topology, demand, _inventory, result, plan = _load_delivery(args)
-    written = write_outputs(result, topology, args.output_dir)
+    require_approved_execution(args.execute, args.approve)
+    outcome = reconcile_once(
+        topology_path=args.topology,
+        demand_path=args.demand,
+        inventory_path=args.inventory,
+        output_dir=args.output_dir,
+        state_path=_state_path(args),
+        execute=args.execute,
+        approved=args.approve,
+        approved_plan_id=args.approved_plan_id,
+        approval_expires_at=args.approval_expires_at,
+    )
+    result, plan = outcome.result, outcome.plan
+    demand = result.demand
+    written = outcome.written_outputs
 
     print("ninja-pce Netmiko delivery plan")
     print("===============================")
@@ -228,6 +258,8 @@ def cmd_push(args: argparse.Namespace) -> int:
     print(f"Device:    {plan.device.name} ({plan.device.host}:{plan.device.port})")
     print(f"Platform:  {plan.device.device_type}")
     print(f"Renderer:  {plan.output_format}")
+    print(f"Plan ID:   {plan.plan_id}")
+    print(f"State:     {outcome.action}")
     print(f"Mode:      {'EXECUTE' if args.execute else 'PREVIEW ONLY'}")
     print()
     print("Configuration commands:")
@@ -238,30 +270,30 @@ def cmd_push(args: argparse.Namespace) -> int:
         print()
         print("No connection made. Use --execute --approve after reviewing the generated files.")
     else:
-        pushed = push_plan(plan)
+        pushed = outcome.push_result
         print()
-        print(f"Applied {pushed.commands_sent} commands to {pushed.device}")
-        for command, output in pushed.postcheck_output:
-            print(f"\nPost-check: {command}\n{output}")
-        for error in pushed.verification_errors:
-            print(f"\nPost-check warning: {error}")
+        if pushed:
+            print(f"{pushed.status}: {pushed.commands_sent} commands sent to {pushed.device}")
+            for error in pushed.verification_errors:
+                print(f"Verification: {error}")
 
     print()
     print("Generated files:")
     for path in written:
         print(f"- {path}")
-    return 0
+    return 1 if outcome.push_result and outcome.push_result.status != "VERIFIED" else 0
 
 
 def _state_path(args: argparse.Namespace) -> Path:
-    if args.state:
+    if getattr(args, "state", None):
         return Path(args.state)
     demand_stem = Path(args.demand).stem
     safe_stem = "".join(
         character if character.isalnum() or character in {"-", "_"} else "_"
         for character in demand_stem
     )
-    return Path(args.output_dir) / f".ninja-pce-{safe_stem}-state.json"
+    identity = hashlib.sha256(str(Path(args.demand).resolve()).encode()).hexdigest()[:12]
+    return Path(args.state_dir) / f".ninja-pce-{safe_stem}-{identity}-state.json"
 
 
 def _run_reconcile(args: argparse.Namespace, *, force: bool | None = None) -> int:
@@ -273,6 +305,8 @@ def _run_reconcile(args: argparse.Namespace, *, force: bool | None = None) -> in
         state_path=_state_path(args),
         execute=args.execute,
         approved=args.approve,
+        approved_plan_id=args.approved_plan_id,
+        approval_expires_at=args.approval_expires_at,
         force=args.force if force is None else force,
     )
     print("ninja-pce reconciliation")
@@ -283,6 +317,7 @@ def _run_reconcile(args: argparse.Namespace, *, force: bool | None = None) -> in
     print(f"Path:              {' -> '.join(outcome.result.path_nodes)}")
     print(f"Device:            {outcome.plan.device.name}")
     print(f"State:             {outcome.state_path}")
+    print(f"Plan ID:           {outcome.plan.plan_id}")
     if outcome.diff:
         print()
         print("Config diff:")
@@ -293,26 +328,26 @@ def _run_reconcile(args: argparse.Namespace, *, force: bool | None = None) -> in
     if outcome.push_result:
         print()
         print(
-            f"Applied {outcome.push_result.commands_sent} commands to "
+            f"{outcome.push_result.status}: {outcome.push_result.commands_sent} commands sent to "
             f"{outcome.push_result.device}"
         )
         for command, output in outcome.push_result.postcheck_output:
             print(f"\nPost-check: {command}\n{output}")
         for error in outcome.push_result.verification_errors:
             print(f"\nPost-check warning: {error}")
-    return 0
+    return 1 if outcome.push_result and outcome.push_result.status != "VERIFIED" else 0
 
 
 def cmd_reconcile(args: argparse.Namespace) -> int:
     require_approved_execution(args.execute, args.approve)
-    if args.poll_interval <= 0:
+    if not math.isfinite(args.poll_interval) or args.poll_interval <= 0:
         raise InputError("--poll-interval must be positive")
-    if args.debounce < 0:
+    if not math.isfinite(args.debounce) or args.debounce < 0:
         raise InputError("--debounce cannot be negative")
 
-    _run_reconcile(args)
+    result_code = _run_reconcile(args)
     if not args.watch:
-        return 0
+        return result_code
 
     watched = Path(args.topology)
     last_raw_hash = file_fingerprint(watched)
@@ -419,8 +454,12 @@ def _print_daemon_cycle(cycle) -> None:
 def cmd_daemon(args: argparse.Namespace) -> int:
     config = load_daemon_config(args.config)
     if args.poll_interval is not None:
+        if not math.isfinite(args.poll_interval) or args.poll_interval <= 0:
+            raise InputError("--poll-interval must be finite and positive")
         config = replace(config, poll_interval=args.poll_interval)
     if args.health_host or args.health_port is not None or args.no_health:
+        if args.health_port is not None and not 1 <= args.health_port <= 65535:
+            raise InputError("--health-port must be from 1 through 65535")
         health = replace(
             config.health,
             host=args.health_host or config.health.host,
@@ -478,8 +517,15 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_gns3_demo(args)
         if args.command == "daemon":
             return cmd_daemon(args)
+        if args.command == "bgpls-collect":
+            return collect_bgpls(args)
+        if args.command == "pcep-listen":
+            return listen_pcep(args)
         parser.error(f"Unknown command: {args.command}")
         return 2
+    except CspfSearchLimit as exc:
+        print(f"INDETERMINATE / SEARCH_LIMIT: {exc}", file=sys.stderr)
+        return 3
     except (InputError, CspfNoPath, SouthboundError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

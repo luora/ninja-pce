@@ -1,0 +1,19 @@
+# Local controller link; /etc/netplan/50-cloud-init.yaml continues to own ens3.
+# Example Ubuntu 24.04 VM configuration. Replace the example MAC with your NIC's.
+network:
+  version: 2
+  ethernets:
+    ens4:
+      renderer: networkd
+      match:
+        macaddress: "02:00:00:00:00:11"
+      set-name: ens4
+      dhcp4: false
+      dhcp6: false
+      accept-ra: false
+      optional: true
+      addresses:
+        - 172.16.100.10/24
+      routes:
+        - to: 10.255.0.0/24
+          via: 172.16.100.102

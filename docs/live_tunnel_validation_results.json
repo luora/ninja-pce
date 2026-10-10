@@ -1,0 +1,197 @@
+{
+  "applied_candidate": "gns3/router-configs/ios-xe/16.9.7-six-router/underlay/PE1-tunnel100.cfg",
+  "artifacts": {
+    "P3-verify.txt": {
+      "path": "build/live-lab-evidence/first-tunnel/P3-verify.txt",
+      "sha256": "3035dd60b66fd69097fe89662176e1131cc8112bf1a1c326f3d5c76404ed7e1e"
+    },
+    "P4-verify.txt": {
+      "path": "build/live-lab-evidence/first-tunnel/P4-verify.txt",
+      "sha256": "7b7b17471ad549cb3de8aa6c2d92f88600c8082958caea95e0a36ff22aa29a46"
+    },
+    "PE1-initial.txt": {
+      "path": "build/live-lab-evidence/first-tunnel/PE1-initial.txt",
+      "sha256": "24683b2dc73bf7673647393dcb7fdb0bb0b7eba5b5d1d20cc7f262dcedc39c0d"
+    },
+    "PE1-oam.txt": {
+      "path": "build/live-lab-evidence/first-tunnel/PE1-oam.txt",
+      "sha256": "74ba580d596180070adcb86e39db2dfb28d3b91d59c5dadf880b322b531a5c5b"
+    },
+    "PE1-save.txt": {
+      "path": "build/live-lab-evidence/first-tunnel/PE1-save.txt",
+      "sha256": "749c4df46b2ed04fb79d268d257be8965f70b915d6750d7e5dd6f07e66519686"
+    },
+    "PE3-verify.txt": {
+      "path": "build/live-lab-evidence/first-tunnel/PE3-verify.txt",
+      "sha256": "f841c8d1bcc6f9b51ff160e61303575a1add615195f153f8fc1c27f7951e55ed"
+    },
+    "bgpls-reserved-raw.json": {
+      "path": "build/live-lab-evidence/first-tunnel/bgpls-reserved-raw.json",
+      "sha256": "0f754bb000ff05fdee536716be18db3407fee683b66f7911e13c247399b5ce79"
+    },
+    "computed-before.json": {
+      "path": "build/live-lab-evidence/first-tunnel/computed-before.json",
+      "sha256": "120551286d05220db08f83ca425d19310bf39ed554f0697ccfd0acf1eddbda01"
+    },
+    "pcep-created.json": {
+      "path": "build/live-lab-evidence/first-tunnel/pcep-created.json",
+      "sha256": "bb4ef97cbaf2c4a014fd94a28cb4fa84dfed88e93664cd478fcff67781bfcb55"
+    }
+  },
+  "controller_role": {
+    "path_computation": "Ninja-PCE using live BGP-LS",
+    "pcep": "Passive non-delegated state reporting",
+    "pcinitiate": false,
+    "pcupd": false,
+    "reservation_ledger_integration": false,
+    "tunnel_provisioning": "Manual PE1 lab console; PE1 signals RSVP-TE"
+  },
+  "date": "2026-10-10",
+  "expected": {
+    "bandwidth_bps": 50000000,
+    "directional_link_ids": [
+      "bgpls-link-a70c5cd531f031e705c2448df1be7c5c",
+      "bgpls-link-6779f84c8aff93f719c1b60a6052df3b",
+      "bgpls-link-2ea7c3d6657298d0e01a447860920dca"
+    ],
+    "nodes": [
+      "PE1",
+      "P3",
+      "P4",
+      "PE3"
+    ],
+    "strict_remote_hops": [
+      "10.0.13.3",
+      "10.0.34.4",
+      "10.0.46.6"
+    ],
+    "total_te_metric": 30
+  },
+  "kind": "actual_gns3_rsvp_tunnel_validation",
+  "limitations": [
+    "This tunnel was manually configured using the computed path; PCEP does not initiate or update it.",
+    "PCEP has no RRO in this report; intended ERO is independently corroborated by MPLS traceroute and transit RSVP state.",
+    "Optional IOS TLV31/BANDWIDTH-type5 semantics and actual/intended bandwidth role normalization are not implemented.",
+    "Reservation ownership is not integrated into the controller ledger; BGP-LS remains non-authoritative.",
+    "CSR throughput limit observed at 1000kbps; 50Mbps refers to RSVP reservation, not measured traffic throughput.",
+    "IOS XE16.9.7 autonomous CLI delivery remains unqualified."
+  ],
+  "local_regression": {
+    "coverage_percent_rounded": 84,
+    "mypy": "PASS",
+    "pytest_passed": 441,
+    "ruff": "PASS",
+    "seconds": 17.41,
+    "source_files_typechecked": 17
+  },
+  "observed": {
+    "admin": "up",
+    "autoroute": false,
+    "bandwidth_kbps": 50000,
+    "bgpls": {
+      "authoritative": false,
+      "captured_at_utc": "2026-10-10T19:03:44.954198+00:00",
+      "directed_links": 16,
+      "other_edges_reserved_bps": 0,
+      "reserved_bps_per_selected_edge": 50000000,
+      "reserved_forward_edges": [
+        [
+          "PE1",
+          "P3"
+        ],
+        [
+          "P3",
+          "P4"
+        ],
+        [
+          "P4",
+          "PE3"
+        ]
+      ],
+      "reverse_edges_changed": false,
+      "unreserved_bps_per_selected_edge": [
+        100000000,
+        100000000,
+        100000000,
+        100000000,
+        100000000,
+        100000000,
+        100000000,
+        50000000
+      ]
+    },
+    "destination": "10.255.0.6",
+    "headend": "PE1",
+    "headend_rsvp_ero": [
+      "10.0.13.3",
+      "10.0.34.4",
+      "10.0.46.6",
+      "10.255.0.6"
+    ],
+    "hold_priority": 7,
+    "interface": "Tunnel100",
+    "lsp_id": 1,
+    "mpls_oam": {
+      "packet_throughput_test": false,
+      "ping_sent": 5,
+      "ping_successful": 5,
+      "traceroute_hops": [
+        "10.0.13.3",
+        "10.0.34.4",
+        "10.0.46.6"
+      ]
+    },
+    "oper": "up",
+    "path": "valid",
+    "path_weight": 30,
+    "pcep": {
+      "bandwidth_bps": 50000000.0,
+      "captured_at_utc": "2026-10-10T19:03:14.760769+00:00",
+      "delegated": false,
+      "fresh_at_capture": true,
+      "operational_state": "ACTIVE",
+      "peer_state": "ESTABLISHED",
+      "plsp_id": 524388,
+      "record_route_present": false,
+      "strict_ero": [
+        "10.0.13.3",
+        "10.0.34.4",
+        "10.0.46.6"
+      ],
+      "symbolic_name": "Tunnel100_w",
+      "synchronized_at_capture": true
+    },
+    "saved_to_startup": true,
+    "setup_priority": 7,
+    "signalling": "connected",
+    "source": "10.255.0.1",
+    "transit_reservations": {
+      "P3:GigabitEthernet3": 50000000,
+      "P4:GigabitEthernet2": 50000000,
+      "PE1:GigabitEthernet2": 50000000
+    },
+    "tunnel_id": 100
+  },
+  "reproduce_guide": "docs/live_tunnel_validation.md",
+  "scenario": "T01",
+  "scenario_scope": "Baseline 50 Mbps computation, exact path and operational RSVP-TE LSP comparison; manual console provisioning on isolated CSR1000v IOS XE16.9.7. Does not qualify automated CLI delivery or PCEP initiation.",
+  "schema_version": 1,
+  "source_commit": "bf509635081b4121add57f2588838d9b2901e546",
+  "status": "PASS",
+  "unexecuted_matrix": [
+    "T02",
+    "T03",
+    "T04",
+    "T05",
+    "T06",
+    "T07",
+    "T08",
+    "T09",
+    "T10",
+    "T11",
+    "T12",
+    "T13",
+    "T14",
+    "T15"
+  ]
+}

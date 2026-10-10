@@ -12,17 +12,16 @@
 !
 explicit-path name {{ output.explicit_path_name }}
 {% for hop in result.explicit_hops %}
- index {{ hop.index * 10 }} next-address {{ hop.hop_type }} ipv4 unicast {{ hop.loopback }} ! {{ hop.node_id }}
+ index {{ hop.index * 10 }} next-address {{ hop.hop_type }} ipv4 unicast {{ hop.address }} ! {{ hop.node_id }}
 {% endfor %}
 !
 interface {{ output.iosxr_interface }}
  description ninja-pce {{ demand.name }} {{ demand.source }} to {{ demand.destination }}
  ipv4 unnumbered Loopback0
- tunnel mode mpls traffic-eng
- tunnel destination {{ dest_node.loopback }}
- tunnel mpls traffic-eng bandwidth {{ bandwidth_kbps }}
- tunnel mpls traffic-eng priority {{ demand.setup_priority }} {{ demand.hold_priority }}
- tunnel mpls traffic-eng path-option 10 explicit name {{ output.explicit_path_name }}
+ destination {{ dest_node.loopback }}
+ signalled-bandwidth {{ bandwidth_kbps }}
+ priority {{ demand.setup_priority }} {{ demand.hold_priority }}
+ path-option 10 explicit name {{ output.explicit_path_name }}
 !
 
 ! Suggested pre-check commands
@@ -32,12 +31,12 @@ show rsvp interface
 show route {{ dest_node.loopback }}/32
 
 ! Suggested verification commands
-show mpls traffic-eng tunnels {{ output.iosxr_interface }}
-show mpls traffic-eng tunnels {{ output.iosxr_interface }} detail
-show mpls traffic-eng topology path {{ source_node.loopback }} {{ dest_node.loopback }}
+show mpls traffic-eng tunnels {{ output.iosxr_interface | replace("tunnel-te", "") }}
+show mpls traffic-eng tunnels {{ output.iosxr_interface | replace("tunnel-te", "") }} detail
+show mpls traffic-eng tunnels topology path destination {{ dest_node.loopback }} explicit-path-name {{ output.explicit_path_name }}
 show rsvp interface
 show rsvp session
 
 ! Rollback reminder
-! no interface {{ output.iosxr_interface }}
-! no explicit-path name {{ output.explicit_path_name }}
+! Manual recovery: confirm ownership and pre-change snapshot before changes.
+! No automatic deletion of pre-existing tunnels or paths.

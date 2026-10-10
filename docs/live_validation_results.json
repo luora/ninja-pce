@@ -1,0 +1,275 @@
+{
+  "artifacts": {
+    "bgpls-healthy-raw.json": {
+      "path": "build/live-lab-evidence/controller/bgpls-healthy-raw.json",
+      "sha256": "52bd12841798adf238541e549efde7968e73ad463ccc6ce2dd4d7f68c193bd10"
+    },
+    "bgpls-withdrawn-raw.json": {
+      "path": "build/live-lab-evidence/controller/bgpls-withdrawn-raw.json",
+      "sha256": "a60cfc23a16a6c21b9a59488110cf665568d1633c30a5528b1425dae94897c3f"
+    },
+    "compute-summary.json": {
+      "path": "build/live-lab-evidence/controller/compute-summary.json",
+      "sha256": "120551286d05220db08f83ca425d19310bf39ed554f0697ccfd0acf1eddbda01"
+    },
+    "pcep-healthy.json": {
+      "path": "build/live-lab-evidence/controller/pcep-healthy.json",
+      "sha256": "c53b0d6fc8ce3de4712f9a4765737149cd9cd44ab9041195bf36d6ab80b23429"
+    },
+    "topology-healthy.json": {
+      "path": "build/live-lab-evidence/controller/topology-healthy.json",
+      "sha256": "2528d8cb9bcb022a3a5211b00c333012a314d6a9097ea96d195c80f9f43b7d7b"
+    }
+  },
+  "checks": [
+    {
+      "evidence_directory": "build/live-lab-evidence/final-underlay",
+      "id": "LIVE-UNDERLAY",
+      "observed": {
+        "controller_loopbacks_reachable": 6,
+        "ldp_oper_counts": {
+          "P1": 3,
+          "P2": 3,
+          "P3": 3,
+          "P4": 3,
+          "PE1": 2,
+          "PE3": 2
+        },
+        "ospf_full_counts": {
+          "P1": 3,
+          "P2": 3,
+          "P3": 3,
+          "P4": 3,
+          "PE1": 2,
+          "PE3": 2
+        },
+        "routers": 6
+      },
+      "status": "PASS"
+    },
+    {
+      "artifacts": [
+        "bgpls-healthy-raw.json",
+        "topology-healthy.json"
+      ],
+      "captured_at": "2026-10-10T18:36:53.222648+00:00",
+      "id": "LIVE-BGPLS",
+      "observed": {
+        "authoritative": false,
+        "complete": false,
+        "directed_links": 16,
+        "maximum_bps": 1000000000,
+        "metric": 10,
+        "nodes": 6,
+        "peer": "172.16.100.102",
+        "prefix_nlris_excluded": 23,
+        "received_and_accepted_nlris": 45,
+        "reservable_bps": 100000000,
+        "session": "ESTABLISHED",
+        "unreserved_bps": [
+          100000000,
+          100000000,
+          100000000,
+          100000000,
+          100000000,
+          100000000,
+          100000000,
+          100000000
+        ]
+      },
+      "status": "PASS"
+    },
+    {
+      "artifacts": [
+        "pcep-healthy.json"
+      ],
+      "id": "LIVE-PCEP",
+      "mode": "passive_stateful; U=0/I=0; no delegation or tunnel updates",
+      "observed": {
+        "10.255.0.1": {
+          "fresh": true,
+          "lsp_reports": 0,
+          "state": "ESTABLISHED",
+          "synchronized": true
+        },
+        "172.16.100.102": {
+          "fresh": true,
+          "lsp_reports": 0,
+          "state": "ESTABLISHED",
+          "synchronized": true
+        }
+      },
+      "status": "PASS"
+    },
+    {
+      "artifacts": [
+        "compute-summary.json"
+      ],
+      "id": "LIVE-CSPF-DRY-RUN",
+      "limitation": "Computation only; advertised bandwidth is not measured forwarding throughput or an established RSVP service.",
+      "observed": {
+        "bandwidth_bps": 50000000,
+        "dry_run": true,
+        "optimality_proven": true,
+        "path_nodes": [
+          "PE1",
+          "P3",
+          "P4",
+          "PE3"
+        ],
+        "strict_remote_hops": [
+          "10.0.13.3",
+          "10.0.34.4",
+          "10.0.46.6"
+        ],
+        "total_metric": 30
+      },
+      "status": "PASS"
+    },
+    {
+      "artifacts": [
+        "bgpls-withdrawn-raw.json"
+      ],
+      "id": "LIVE-WITHDRAWAL",
+      "observed": "Directed links16\u219215\u219214; P1\u2192P2 removed first, P2\u2192P1 after OSPF dead timer40s. No reverse edge synthesized.",
+      "status": "PASS",
+      "transcript": "build/live-lab-evidence/bgpls-converged-withdrawal.txt",
+      "trigger": "P1 GigabitEthernet2 shutdown"
+    },
+    {
+      "id": "LIVE-RECOVERY",
+      "observed": "6 nodes/16 directed links recovered; all original OSPF/LDP peers operational.",
+      "status": "PASS",
+      "transcript": "build/live-lab-evidence/controller-final-status.txt",
+      "trigger": "P1 GigabitEthernet2 no shutdown"
+    },
+    {
+      "id": "LIVE-SOURCE-LOSS",
+      "observed": "Published topology removed and unavailable status recorded; both PCEP peers remained established/fresh/synchronized; BGP-LS graph recovered.",
+      "status": "PASS",
+      "transcript": "build/live-lab-evidence/bgpls-source-loss.txt",
+      "trigger": "Stop/restart gobgpd service"
+    },
+    {
+      "evidence_directory": "build/live-lab-evidence/startup-save",
+      "id": "LIVE-PERSISTENCE",
+      "observed": "All6 routers returned [OK] to write memory after final checks; pre-save startup backups retained. Three controller services enabled.",
+      "status": "PASS"
+    }
+  ],
+  "date": "2026-10-10",
+  "follow_up_report": "docs/live_tunnel_validation_results.json",
+  "kind": "actual_gns3_live_protocol_stage",
+  "lab_scope": "Six isolated CSR1000v routers and Ubuntu controller; console access only to GNS3 server; no server OS changes.",
+  "limitations": [
+    "No PCEP PCReq computation reply, PCUpd or PCInitiate; no LSP delegation/control.",
+    "PCEP reports are not integrated with the reservation ledger.",
+    "BGP-LS physical interface state and complete IGP export cannot be proved; autonomous delivery remains disabled.",
+    "IOS XE16.9.7 is not qualified for autonomous CLI LSP writes.",
+    "No authenticated PCEPS/TLS session or packet throughput validation."
+  ],
+  "local_regression": {
+    "commands": [
+      ".venv/bin/pytest -q --cov=src/ninja_pce",
+      ".venv/bin/ruff check src tests gns3/validation",
+      ".venv/bin/mypy"
+    ],
+    "mypy": "PASS",
+    "mypy_source_files": 17,
+    "pytest": {
+      "coverage_percent_rounded": 84,
+      "passed": 435,
+      "seconds": 17.3,
+      "status": "PASS"
+    },
+    "ruff": "PASS",
+    "scope": "Offline regression tests include actual historical protocol captures; they do not replace the separately recorded live lab checks."
+  },
+  "reproduce_guide": "docs/live_protocol_setup.md",
+  "rsvp_lsp_matrix": [
+    {
+      "id": "T01",
+      "reason": "Complete original RSVP-LSP scenario not executed: this stage establishes live observation/computation; no tunnel provisioned, delegated, updated or operationally verified.",
+      "status": "SKIP"
+    },
+    {
+      "id": "T02",
+      "reason": "Complete original RSVP-LSP scenario not executed: this stage establishes live observation/computation; no tunnel provisioned, delegated, updated or operationally verified.",
+      "status": "SKIP"
+    },
+    {
+      "id": "T03",
+      "reason": "Complete original RSVP-LSP scenario not executed: this stage establishes live observation/computation; no tunnel provisioned, delegated, updated or operationally verified.",
+      "status": "SKIP"
+    },
+    {
+      "id": "T04",
+      "reason": "Complete original RSVP-LSP scenario not executed: this stage establishes live observation/computation; no tunnel provisioned, delegated, updated or operationally verified.",
+      "status": "SKIP"
+    },
+    {
+      "id": "T05",
+      "reason": "Complete original RSVP-LSP scenario not executed: this stage establishes live observation/computation; no tunnel provisioned, delegated, updated or operationally verified.",
+      "status": "SKIP"
+    },
+    {
+      "id": "T06",
+      "reason": "Complete original RSVP-LSP scenario not executed: this stage establishes live observation/computation; no tunnel provisioned, delegated, updated or operationally verified.",
+      "status": "SKIP"
+    },
+    {
+      "id": "T07",
+      "reason": "Complete original RSVP-LSP scenario not executed: this stage establishes live observation/computation; no tunnel provisioned, delegated, updated or operationally verified.",
+      "status": "SKIP"
+    },
+    {
+      "id": "T08",
+      "reason": "Complete original RSVP-LSP scenario not executed: this stage establishes live observation/computation; no tunnel provisioned, delegated, updated or operationally verified.",
+      "status": "SKIP"
+    },
+    {
+      "id": "T09",
+      "reason": "Complete original RSVP-LSP scenario not executed: this stage establishes live observation/computation; no tunnel provisioned, delegated, updated or operationally verified.",
+      "status": "SKIP"
+    },
+    {
+      "id": "T10",
+      "reason": "Complete original RSVP-LSP scenario not executed: this stage establishes live observation/computation; no tunnel provisioned, delegated, updated or operationally verified.",
+      "status": "SKIP"
+    },
+    {
+      "id": "T11",
+      "reason": "Complete original RSVP-LSP scenario not executed: this stage establishes live observation/computation; no tunnel provisioned, delegated, updated or operationally verified.",
+      "status": "SKIP"
+    },
+    {
+      "id": "T12",
+      "reason": "Complete original RSVP-LSP scenario not executed: this stage establishes live observation/computation; no tunnel provisioned, delegated, updated or operationally verified.",
+      "status": "SKIP"
+    },
+    {
+      "id": "T13",
+      "reason": "Complete original RSVP-LSP scenario not executed: this stage establishes live observation/computation; no tunnel provisioned, delegated, updated or operationally verified.",
+      "status": "SKIP"
+    },
+    {
+      "id": "T14",
+      "reason": "Complete original RSVP-LSP scenario not executed: this stage establishes live observation/computation; no tunnel provisioned, delegated, updated or operationally verified.",
+      "status": "SKIP"
+    },
+    {
+      "id": "T15",
+      "reason": "Complete original RSVP-LSP scenario not executed: this stage establishes live observation/computation; no tunnel provisioned, delegated, updated or operationally verified.",
+      "status": "SKIP"
+    }
+  ],
+  "schema_version": 1,
+  "scope_note": "Initial protocol-observation snapshot before Tunnel100 creation; see follow_up_report for later tunnel state.",
+  "software": {
+    "controller": "Ubuntu 24.04.4 / Python 3.12.3",
+    "gobgp": "3.37.0",
+    "grpcurl": "1.9.3",
+    "routers": "Cisco IOS XE 16.9.7 CSR1000v"
+  },
+  "source_commit": "70c3b35b5967b93413875753f40527b33a6a48b8"
+}
