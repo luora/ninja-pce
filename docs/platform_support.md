@@ -35,6 +35,27 @@ available bandwidth. The shared ledger reserves the actual signaled amount.
 Junos emits an integer bit/s value. Customer CIR and service binding remain
 separate operator functions.
 
+## IOS XE 16.9.7 candidate supplied for GNS3 preparation
+
+On 2026-10-10 the operator supplied partial `show version` output identifying
+IOS XE `16.09.07` and IOS Software `16.9.7` (Fuji, Virtual XE,
+`X86_64_LINUX_IOSD-UNIVERSALK9-M`). Empty PCE client LSP/peer tables are not
+operational RSVP-TE evidence. Model/PID, license, interface mapping, TE
+advertisements, reservations and established tunnel state remain unqualified.
+
+The [Fuji 16.9 TE documentation](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/mp_te_path_protect/configuration/xe-16-9/mp-te-path-protect-xe-16-9-book/mpls-traffic-engineering-bfd-triggered-fast-reroute.html)
+provides release-family command references, with platform restrictions; it does
+not certify this unidentified virtual appliance. Use the initial setup and
+read-only capture procedure in [GNS3 validation](gns3_validation.md). The
+separate two-router profile is for offline preview and lab qualification only.
+
+The IOS XE verifier and write gate remain restricted to **17.12.x**. A 16.9.7
+version is rejected before configuration. `verify_plan` still retains raw
+version and tunnel output read-only, returning `VERIFICATION_FAILED` rather
+than `VERIFIED`. Real complete up/down, RSVP bandwidth and ERO captures must
+support parser changes before expanding that release scope. No PCEP server or
+PCC relationship is implemented by Ninja-PCE today.
+
 ## Delivery boundary and recovery
 
 `build_push_plan` hashes the topology's directional resources and provenance,
@@ -96,5 +117,6 @@ to TE resources, never the complete device configuration.
 - [Juniper show mpls lsp reference](https://www.juniper.net/documentation/us/en/software/junos/cli-reference/topics/ref/command/show-mpls-lsp.html): operational fields and ERO/RRO evidence.
 - [Netmiko IOS XR adapter source documentation](https://ktbyers.github.io/netmiko/docs/netmiko/cisco/cisco_xr.html) and [Junos adapter source documentation](https://ktbyers.github.io/netmiko/docs/netmiko/juniper/juniper.html): timeout-aware commit and confirmed-commit interfaces.
 
-References checked on 2026-10-09. Release-family syntax does not establish that a
-particular image, license, virtual dataplane or hardware supports RSVP-TE.
+Original adapter references checked on 2026-10-09; IOS XE 16.9 candidate
+references checked on 2026-10-10. Release-family syntax does not establish that
+a particular image, license, virtual dataplane or hardware supports RSVP-TE.

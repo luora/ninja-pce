@@ -275,6 +275,53 @@ def test_unknown_version_refuses_configuration():
     assert connection.disconnected
 
 
+# Partial software records reported by the user; no operational LSP capture was supplied.
+IOSXE_16_9_PARTIAL_VERSION = (
+    "Cisco IOS XE Software, Version 16.09.07\n"
+    "Cisco IOS Software [Fuji], Virtual XE Software "
+    "(X86_64_LINUX_IOSD-UNIVERSALK9-M), Version 16.9.7\n"
+)
+SYNTHETIC_16_9_TUNNEL_OUTPUT = "SYNTHETIC test response: no operational tunnel evidence supplied.\n"
+
+
+def test_reported_iosxe_16_9_partial_version_refuses_write_before_configuration():
+    plan = _plan("iosxe")
+    connection = FakeConnection("iosxe", details=SYNTHETIC_16_9_TUNNEL_OUTPUT)
+    connection.version = IOSXE_16_9_PARTIAL_VERSION
+
+    with pytest.raises(SouthboundError, match="Unsupported or missing software version"):
+        _execute(plan, connection)
+
+    assert connection.show_commands == list(plan.precheck_commands)
+    assert not connection.config_commands
+    assert not connection.commits
+    assert connection.disconnected
+
+
+def test_reported_iosxe_16_9_readonly_collection_retains_unverified_raw_evidence():
+    plan = _plan("iosxe")
+    connection = FakeConnection("iosxe", details=SYNTHETIC_16_9_TUNNEL_OUTPUT)
+    connection.version = IOSXE_16_9_PARTIAL_VERSION
+
+    result = verify_plan(
+        plan,
+        environ={"NINJA_PCE_PE1_PASSWORD": "test-secret"},
+        connect_handler=lambda **kwargs: connection,
+        verification_attempts=1,
+    )
+
+    assert result.precheck_output == (("show version", IOSXE_16_9_PARTIAL_VERSION),)
+    assert result.postcheck_output == ((plan.postcheck_commands[0], SYNTHETIC_16_9_TUNNEL_OUTPUT),)
+    assert result.status == "VERIFICATION_FAILED"
+    assert result.verification_errors == ("Unsupported or missing platform/software version",)
+    assert not result.verified
+    assert result.commands_sent == 0
+    assert connection.show_commands == ["show version", *plan.postcheck_commands]
+    assert not connection.config_commands
+    assert not connection.commits
+    assert connection.disconnected
+
+
 def test_existing_resources_are_not_merged_or_blindly_deleted():
     connection = FakeConnection()
     connection.snapshot = "interface tunnel-te100\n destination 192.0.2.1\n"
