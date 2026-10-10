@@ -61,8 +61,10 @@ Observed through the supplied device consoles on 2026-10-10:
 
 Ubuntu reached all six loopbacks, and PE1 reached 172.16.100.10 with source
 10.255.0.1 (3/3). The later merged Netplan inspection showed ens3 explicitly
-configured as 192.0.2.81/24 with gateway 192.0.2.254 and DNS 8.8.8.8/1.1.1.1;
-these working operator settings were preserved.
+configured with a static Internet address, gateway and DNS 8.8.8.8/1.1.1.1;
+these working operator settings were preserved. Publication substitutes
+documentation-only address `192.0.2.81/24` and gateway `192.0.2.254` for the
+original Internet identifiers. Use your own working settings instead.
 
 GoBGP 3.37.0 and grpcurl 1.9.3 were installed from pinned upstream release
 archives after SHA256 verification. BGP-LS then established between P1 and

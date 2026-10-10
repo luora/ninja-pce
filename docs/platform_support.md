@@ -4,7 +4,10 @@ These are documentation-checked configuration candidates and conservative CLI
 parsers, **not a platform certification or an executed GNS3 result**. All files
 under `tests/fixtures/operational/*.mock.txt` are synthetic mocks. The golden
 render fixtures describe intended configuration text; they are not router output.
-No physical or virtual router was contacted during this implementation.
+Those initial renderer/parser checks did not contact a router. Subsequent
+[live GNS3 qualification](live_pcep_computation_validation.md) exercised
+BGP-LS and initial delegated PCEP paths on CSR1000v IOS XE 16.9.7. That
+protocol qualification does not expand the automated CLI release gates below.
 
 | Adapter | Documentation / candidate release scope | Numbered IPv4 strict ERO | Operational evidence dialect |
 |---|---|---|---|
@@ -41,7 +44,9 @@ On 2026-10-10 the operator supplied partial `show version` output identifying
 IOS XE `16.09.07` and IOS Software `16.9.7` (Fuji, Virtual XE,
 `X86_64_LINUX_IOSD-UNIVERSALK9-M`). Empty PCE client LSP/peer tables are not
 operational RSVP-TE evidence. Model/PID, license, interface mapping, TE
-advertisements, reservations and established tunnel state remain unqualified.
+advertisements, reservations and established tunnel state were unqualified
+at that first inspection. Later manual and PCEP lab results are recorded in
+the [live qualification](live_pcep_computation_validation.md).
 
 The [Fuji 16.9 TE documentation](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/mp_te_path_protect/configuration/xe-16-9/mp-te-path-protect-xe-16-9-book/mpls-traffic-engineering-bfd-triggered-fast-reroute.html)
 provides release-family command references, with platform restrictions; it does
@@ -53,8 +58,9 @@ The IOS XE verifier and write gate remain restricted to **17.12.x**. A 16.9.7
 version is rejected before configuration. `verify_plan` still retains raw
 version and tunnel output read-only, returning `VERIFICATION_FAILED` rather
 than `VERIFIED`. Real complete up/down, RSVP bandwidth and ERO captures must
-support parser changes before expanding that release scope. No PCEP server or
-PCC relationship is implemented by Ninja-PCE today.
+support parser changes before expanding that release scope. The separate
+PCEP listener now supports observation, a bounded PCReq profile, and opt-in
+initial delegated PCUpd; see [its implemented scope](pcep_computation.md).
 
 ## Delivery boundary and recovery
 

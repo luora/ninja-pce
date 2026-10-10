@@ -1,4 +1,5 @@
 {
+  "publication_redaction": "Controller session UUIDs are stable pseudonyms. Protocol fixture bytes and local raw artifact hashes are unchanged.",
   "applied_candidate": "gns3/router-configs/ios-xe/16.9.7-six-router/underlay/PE1-pce-tunnel100.cfg",
   "artifacts": {
     "P1-T100-transit.txt": {
@@ -210,7 +211,7 @@
     },
     "saved_to_startup": true,
     "selection_context": "Fresh TED advertises existing50Mbps on P1/P2 route; no self-credit; P3/P4 has more free bandwidth.",
-    "session_id": "00000000-0000-4000-8000-000000000001",
+      "session_id": "00000000-0000-4000-8000-000000000001",
     "setup_priority": 7,
     "signalling": "connected",
     "source": "10.255.0.1",
@@ -569,7 +570,7 @@
       ],
       "record_route_present": false,
       "same_srp_repeated": true,
-      "session_id": "00000000-0000-4000-8000-000000000002",
+    "session_id": "00000000-0000-4000-8000-000000000002",
       "srp_id": 3,
       "strict_ero": [
         "10.0.12.2",

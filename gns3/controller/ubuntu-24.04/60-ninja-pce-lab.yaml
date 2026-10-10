@@ -1,5 +1,5 @@
 # Local controller link; /etc/netplan/50-cloud-init.yaml continues to own ens3.
-# Matches the operator's Ubuntu 24.04 VM. Recheck MACs if the node is cloned.
+# Example Ubuntu 24.04 VM configuration. Replace the example MAC with your NIC's.
 network:
   version: 2
   ethernets:

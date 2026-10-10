@@ -1,5 +1,11 @@
 # ninja-pce
 
+> **Current lab preview:** start with the [tester guide](docs/tester_guide.md).
+> Live BGP-LS ingestion and bounded PCEP initial-path provision have been
+> [validated in GNS3](docs/live_pcep_computation_validation.md). The older status,
+> roadmap and execution examples below are historical; use the current guides
+> for supported behavior and approval requirements.
+
 > Reliability remediation: current behavior and migration rules are documented in
 > [input schema](docs/input_schema.md), [reconciliation safety](docs/reconciliation.md),
 > [platform support](docs/platform_support.md), and the [engineering audit](docs/engineering_audit.md).

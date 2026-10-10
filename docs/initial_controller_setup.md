@@ -10,6 +10,11 @@ does not start them; continue with [live protocol setup](live_protocol_setup.md)
 
 ## Observed Ubuntu state, 2026-10-10
 
+Publication replaces the original Internet addresses with documentation-only
+`192.0.2.0/24` values and VM MACs with locally administered examples. Use your
+own Internet configuration and actual NIC MACs; these example values are not
+deployment settings. Private lab addressing is retained for reproducible tests.
+
 The operator supplied Ubuntu 24.04.4 LTS console output with `systemd-networkd`
 active. `ens3` has carrier, DHCP address `192.0.2.81/24`, and default gateway
 `192.0.2.254`; Internet ICMP works. That address is an observed lease, not a
@@ -133,14 +138,10 @@ python3 --version
 timedatectl status
 ```
 
-Use the reviewed `fix/te-cspf-reliability` branch. The work in this session has
-not been pushed to GitHub. Transfer the supplied `ninja-pce-validation.bundle`
-to `/tmp` on Ubuntu using an available file-transfer mechanism. It contains
-the committed remediation branch, without the local virtual environment or
-uncommitted files. Clone it into a new directory:
+Use the reviewed `fix/te-cspf-reliability` branch. Clone it into a new directory:
 
 ```bash
-git clone --branch fix/te-cspf-reliability /tmp/ninja-pce-validation.bundle ~/ninja-pce
+git clone --branch fix/te-cspf-reliability --single-branch https://github.com/luora/ninja-pce.git ~/ninja-pce
 cd ~/ninja-pce
 git log -1 --oneline
 python3 -m venv .venv
@@ -150,8 +151,8 @@ python3 -m venv .venv
 ```
 
 If `~/ninja-pce` already exists, inspect it before selecting an empty clone
-destination; do not overwrite it. The bundle clone's origin is a local bundle;
-configure a GitHub remote when the reviewed branch is published.
+destination; do not overwrite it. The [GNS3 guide](gns3_validation.md) also
+describes offline bundle transfer.
 
 ## First offline check
 

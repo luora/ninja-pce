@@ -38,7 +38,11 @@ The operator selected `ens3` for Internet and a direct `ens4` connection to
 transit router P1 for controller connectivity. GNS3 Telnet consoles remain
 available for all routers, so no management switch is needed:
 
-| Ubuntu NIC | Reported MAC | GNS3 connection | Addressing |
+Internet addresses and NIC MACs below are anonymized examples. Preserve your
+actual Internet settings and substitute the MACs reported by your own VM.
+Private lab subnets are retained as reproducible example addressing.
+
+| Ubuntu NIC | Example MAC | GNS3 connection | Addressing |
 |---|---|---|---|
 | `ens3` | `02:00:00:00:00:10` | NAT node / existing Internet network | Existing working Internet settings; latest observed static 192.0.2.81/24 |
 | `ens4` | `02:00:00:00:00:11` | Direct to P1's spare GbE3 | Ubuntu `172.16.100.10/24`; P1 `172.16.100.102/24`; no gateway |
@@ -157,19 +161,11 @@ git ls-remote https://github.com/luora/ninja-pce.git HEAD
 ```
 
 Use branch `fix/te-cspf-reliability` containing the remediation and this guide.
-The branch has not been published by this work; cloning the default GitHub
-branch does not guarantee these changes are present. To transfer the committed
-branch without publishing, run on the development machine:
+Cloning the default GitHub branch does not guarantee these changes are present.
+Install the testing branch on Ubuntu:
 
 ```bash
-git bundle create /tmp/ninja-pce-validation.bundle fix/te-cspf-reliability
-```
-
-Copy that bundle to Ubuntu using the lab's available file-transfer mechanism,
-then run there (substitute its actual location):
-
-```bash
-git clone --branch fix/te-cspf-reliability /path/to/ninja-pce-validation.bundle ~/ninja-pce
+git clone --branch fix/te-cspf-reliability --single-branch https://github.com/luora/ninja-pce.git ~/ninja-pce
 cd ~/ninja-pce
 git log -1 --oneline
 python3 -m venv .venv
@@ -179,19 +175,22 @@ python3 -m venv .venv
 ```
 
 The Python 3.12 dependency versions from remediation are recorded in
-[validation_environment.txt](validation_environment.txt). A bundle includes
-committed files only; commit the reviewed guide/profile before generating it.
-Future pulls require configuring a network remote after the branch is published;
-the bundle clone's initial `origin` is the local bundle.
+[validation_environment.txt](validation_environment.txt). For offline transfer,
+run `git bundle create /tmp/ninja-pce-validation.bundle fix/te-cspf-reliability`
+on the development machine, copy the bundle to Ubuntu and substitute its path
+for the GitHub URL in the clone command. A bundle includes committed files only;
+its clone's initial `origin` is the local bundle. Set a GitHub remote before
+attempting later network pulls.
 
 ### 3. Identify the router and capture capability evidence
 
 The supplied version lines identify `16.09.07` / `16.9.7`, Fuji, with image
 package `X86_64_LINUX_IOSD-UNIVERSALK9-M`. They do not identify the appliance PID
 or active license. Empty `show pce client lsp` and `show pce client peer` output
-does not demonstrate RSVP-TE operation. Ninja-PCE currently computes paths and
-uses CLI delivery; it does not implement a PCEP server, so a peer relationship
-with Ninja-PCE is not part of this validation.
+does not demonstrate RSVP-TE operation. Those initial preparation checks
+predate the live PCEP listener and initial-PCUpd qualification recorded at
+the top of this guide. Current PCEP behavior and peer setup are documented in
+the [computation guide](pcep_computation.md).
 
 On the existing router console, capture the following **read-only** commands:
 
