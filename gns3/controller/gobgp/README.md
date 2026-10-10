@@ -5,10 +5,12 @@ GoBGP is the BGP speaker; Ninja-PCE reads its RIB using the supported
 implemented here. The adapter is pinned to the GoBGP **v3.37.0 API** and grpcurl
 **v1.9.3**. Later GoBGP major versions need separate qualification.
 
-The Python parser and transport are tested with synthetic binary NLRIs and
-mock RPC responses. Real GoBGP/peer/router interoperability has **not** been
-executed by these tests. P1's actual IOS XE image must support BGP-LS production;
-the earlier partial `show version` output does not establish that capability.
+Synthetic binary and mocked-RPC tests are supplemented by an actual GNS3
+interop run on 2026-10-10: GoBGP 3.37.0 established BGP-LS with CSR1000v IOS XE
+16.9.7 P1, accepted 45 advertisements, and Ninja-PCE decoded six nodes and
+sixteen directed TE links. A 50 Mbps dry-run computed PE1–P3–P4–PE3 with metric
+30 from that live RIB. See the [live setup/evidence guide](../../../docs/live_protocol_setup.md)
+for the observed scope and remaining stateful-control limits.
 
 ## Install pinned tools on Ubuntu x86-64
 
@@ -51,8 +53,8 @@ they are not an independently authenticated package signature.
 ## Receive-only candidate configuration
 
 Review [gobgpd.toml](gobgpd.toml): controller `172.16.100.10`, producer P1
-`172.16.100.102`, candidate AS 65000 on both sides. The ASN is a deliberate
-lab choice, not an observed router setting. The sole address family is `ls`;
+`172.16.100.102`, AS 65000 on both sides as configured and observed in this lab.
+The sole address family is `ls`;
 default export rejects all routes at global and neighbor scope. There are no
 locally originated routes or Linux kernel/FIB integration. P1 needs matching
 BGP-LS export configuration, independently qualified for its platform.
@@ -74,7 +76,7 @@ sudo /usr/local/bin/gobgpd --dry-run -f /etc/gobgp/gobgpd.toml
 sudo systemctl daemon-reload
 sudo systemctl enable --now gobgpd
 systemctl status gobgpd --no-pager
-gobgp neighbor
+gobgp -u 127.0.0.1 neighbor
 ```
 
 The service binds BGP TCP/179 only to the lab address and the management gRPC

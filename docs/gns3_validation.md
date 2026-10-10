@@ -1,19 +1,24 @@
 # GNS3 preparation and repeatable validation
 
-**Device tests: NOT EXECUTED.** Initial remediation used offline computation
-and synthetic parser fixtures. On 2026-10-10 the operator supplied a partial
-version capture from an IOS XE 16.9.7 Virtual XE router and Ubuntu guest hardware
-and interface output. This is preparation evidence, not an operational RSVP-TE
-test. No router connection has been attempted by the remediation tools.
+**Executed scope, 2026-10-10:** the six CSR1000v IOS XE 16.9.7 routers now have
+verified OSPF, MPLS/LDP and RSVP-TE advertisement configuration. Live GoBGP
+BGP-LS ingestion, passive PCEP synchronization, CSPF dry-run, directional link
+withdrawal/recovery and source-loss invalidation were exercised. See the
+[current live setup and evidence](live_protocol_setup.md) and
+[machine-readable stage results](live_validation_results.json).
+
+The complete T01–T15 RSVP-LSP validation matrix below remains **NOT EXECUTED**:
+no tunnel has been provisioned or operationally verified. Earlier setup steps
+below are preparation references, not the latest observed controller state.
 
 ## Start here: the available IOS XE router and Ubuntu node
 
-The operator has now supplied Ubuntu 24.04.4 console output showing working
-Internet access on `ens3` and an unconfigured `ens4`. Use the exact
-[initial controller setup](initial_controller_setup.md) for that observed
-configuration; it adds an `ens4`-only Netplan file and preserves the existing
-cloud-init DHCP definition. The earlier generic inspection/trial procedure
-below remains a reference for other images.
+The first Ubuntu 24.04.4 inspection showed working Internet access on `ens3`
+and an unconfigured `ens4`; [initial controller setup](initial_controller_setup.md)
+records that starting point. The latest inspected configuration uses static
+Internet addressing on `ens3` and 172.16.100.10/24 on `ens4`, as recorded in the
+[live guide](live_protocol_setup.md). Preserve the working Internet definition.
+The generic inspection/trial procedure below remains a reference for other images.
 
 The Ubuntu `pce-ninja` VM runs Ninja-PCE as a guest in the same GNS3 project as
 the routers. It has 4 vCPUs, 3.8 GiB RAM and approximately 17 GiB free storage.
@@ -26,7 +31,7 @@ available for all routers, so no management switch is needed:
 
 | Ubuntu NIC | Reported MAC | GNS3 connection | Addressing |
 |---|---|---|---|
-| `ens3` | `02:00:00:00:00:10` | NAT node / existing Internet network | DHCP; default route and DNS |
+| `ens3` | `02:00:00:00:00:10` | NAT node / existing Internet network | Existing working Internet settings; latest observed static 192.0.2.81/24 |
 | `ens4` | `02:00:00:00:00:11` | Direct to P1's spare GbE3 | Ubuntu `172.16.100.10/24`; P1 `172.16.100.102/24`; no gateway |
 
 Use GNS3 Telnet consoles for router configuration and manual show-command

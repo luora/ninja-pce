@@ -82,6 +82,27 @@ def test_codec_exact_open_passive_capability_and_tlv_padding() -> None:
     assert parse_reports(payload)[0]["srp_id"] == 0
 
 
+def test_ios_xe_16_9_captured_open_and_empty_database_sync() -> None:
+    # Actual CSR1000v IOS XE 16.9.7 frames captured in the six-router lab.
+    peer_open = bytes.fromhex("2001001c01100018202878010010000400000005001a000400000010")
+    end_of_sync = bytes.fromhex(
+        "200a00242010001c00000000001200100000000000000000000000000000000007100004"
+    )
+    opened = parse_open(peer_open[4:])
+    assert opened["keepalive"] == 40 and opened["deadtimer"] == 120
+    assert opened["stateful"] and opened["stateful_flags"] == 5
+    assert {"type": 26, "value_hex": "00000010"} in opened["tlvs"]
+
+    reports = parse_reports(end_of_sync[4:])
+    assert len(reports) == 1
+    assert reports[0]["end_of_sync"] and reports[0]["plsp_id"] == 0
+    assert reports[0]["ero"] == [] and reports[0]["identifiers"]["all_zero"]
+    state: dict[str, Any] = {"reports": {}, "lsp_names": {}, "synchronized": False}
+    server = PcepServer(PcepServerConfig(("127.0.0.1",)))
+    server._apply_reports(state, reports)
+    assert state["synchronized"] and state["reports"] == {} and state["lsp_names"] == {}
+
+
 @pytest.mark.parametrize("body", [b"\x01", b"\x01\x10\x00\x00", b"\x01\x10\x00\x06xx",
                                   b"\x01\x10\x00\x0c1234", b"\x01\x00\x00\x04"])
 def test_invalid_objects_rejected(body: bytes) -> None:

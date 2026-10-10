@@ -1,7 +1,8 @@
 # Live BGP-LS and passive PCEP lab setup
 
 This stage uses the operator's six CSR1000v IOS XE 16.9.7 nodes and Ubuntu
-24.04 controller. Ubuntu ens3 retains Internet DHCP; ens4 is 172.16.100.10/24
+24.04 controller. Ubuntu ens3 retains its working Internet settings; ens4 is
+172.16.100.10/24
 through P1 Gi3, 172.16.100.102/24. The router loopbacks are 10.255.0.1 through
 .6, with PE1/P1/P3/P4/P2/PE3 respectively. P1 exports topology; PE1 is the
 tunnel headend. No changes to the GNS3 server host are required.
@@ -49,10 +50,44 @@ Observed through the supplied device consoles on 2026-10-10:
   with zero unresolved links, and originated 45 BGP-LS NLRIs. These facts do
   not alone demonstrate the controller's BGP adjacency or ingestion.
 
+Ubuntu reached all six loopbacks, and PE1 reached 172.16.100.10 with source
+10.255.0.1 (3/3). The later merged Netplan inspection showed ens3 explicitly
+configured as 192.0.2.81/24 with gateway 192.0.2.254 and DNS 8.8.8.8/1.1.1.1;
+these working operator settings were preserved.
+
+GoBGP 3.37.0 and grpcurl 1.9.3 were installed from pinned upstream release
+archives after SHA256 verification. BGP-LS then established between P1 and
+Ubuntu: GoBGP accepted all 45 advertisements, and the read-only collector
+published six nodes and sixteen directed TE links. Each link had metric 10,
+maximum bandwidth 1 Gbps, reservable bandwidth 100 Mbps and eight unreserved
+values of 100 Mbps. Twenty-three prefix NLRIs were deliberately excluded from
+the TE graph. Physical interface state remains unknown; the source is
+non-authoritative and ineligible for automatic delivery. The 50 Mbps dry-run selected PE1–P3–P4–PE3, metric 30, bottleneck
+100 Mbps, with strict remote-interface hops 10.0.13.3, 10.0.34.4 and 10.0.46.6.
+No tunnel was provisioned by that computation.
+
+A controlled P1 Gi2 shutdown withdrew P1→P2 first; after the remote OSPF
+40-second dead timer expired, P2→P1 also disappeared, leaving fourteen directed
+links. Re-enabling Gi2 restored sixteen links. The collector preserved the
+independent directional advertisements throughout convergence. Stopping GoBGP
+removed the published topology and recorded source unavailability while PCEP
+remained established; restarting GoBGP restored the live graph.
+
+Live PCEP was then established from P1 (172.16.100.102) and PE1
+(10.255.0.1) to the controller on TCP/4189. Both IOS peers reported State up,
+Stateful capability, and stable keepalive exchange with zero PCEP errors.
+The controller decoded each actual OPEN and PLSP-ID 0 end-of-sync PCRpt;
+both peers were fresh and synchronized with empty LSP databases. No tunnel
+had been created. The captured IOS 16.9.7 OPEN and empty-database marker are
+also retained as a codec regression test.
+
 Raw before/apply/verification transcripts are local artifacts under
 `build/live-lab-evidence/`; they are not committed router configurations.
-The console backups precede the changes. Running router configuration has not
-been saved to startup configuration by this procedure.
+The running-config backups precede the changes, and startup-config backups
+precede persistence. All six running configurations were saved after final
+OSPF/LDP recovery checks. The controller services are enabled for boot.
+The [machine-readable stage results](live_validation_results.json) distinguish
+these observed checks from the unexecuted RSVP-LSP validation matrix.
 
 ## Controller installation
 
@@ -117,8 +152,8 @@ On Ubuntu:
 
 ```bash
 cd ~/ninja-pce
-gobgp neighbor
-gobgp global rib -a ls
+gobgp -u 127.0.0.1 neighbor
+gobgp -u 127.0.0.1 global rib -a ls
 journalctl -u gobgpd -u ninja-bgpls -u ninja-pcep --no-pager -n 60
 .venv/bin/ninja-pce topology-summary --topology build/live/topology.json
 .venv/bin/ninja-pce compute --topology build/live/topology.json \
@@ -136,12 +171,20 @@ actual end-of-sync report. An empty report set is expected when no LSP exists;
 it is not evidence of an established RSVP service. Honor report freshness and
 `valid_until`; process crashes cannot update the persisted capture immediately.
 
-Validation of this implementation: 423 local tests passed, 84% aggregate
+Validation after the live captures: 435 local tests passed in 17.30 seconds,
+84% aggregate
 coverage, including fragmented/coalesced real loopback PCEP traffic, malformed
 frames, timers, allowlists, synchronization, stale/restart and bounded storage;
 BGP-LS binary parsing/replay/withdrawal/unknown-attribute/session-failure cases;
-and CLI feed publication/invalidation/shutdown contracts. Router observations
-above are separate from these synthetic tests.
+CLI feed publication/invalidation/shutdown contracts; and actual captured
+GoBGP/IOS binary replay and PCEP OPEN/end-of-sync regression cases. Ruff and
+mypy also passed. Router observations above remain distinct from offline replay.
+
+```bash
+.venv/bin/pytest -q --cov=src/ninja_pce
+.venv/bin/ruff check src tests gns3/validation
+.venv/bin/mypy
+```
 
 References: [Cisco 16.9 BGP-LS](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_bgp/configuration/xe-16-9/irg-xe-16-9-book/bgp-ls.html),
 [Cisco 16.9 Dynamic PCC](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/seg_routing/configuration/xe-16-9/segrt-xe-16-9-book/sr-dynamic-pcc.html),
