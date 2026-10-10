@@ -7,9 +7,12 @@ withdrawal/recovery and source-loss invalidation were exercised. See the
 [current live setup and evidence](live_protocol_setup.md) and
 [machine-readable stage results](live_validation_results.json).
 
-The complete T01–T15 RSVP-LSP validation matrix below remains **NOT EXECUTED**:
-no tunnel has been provisioned or operationally verified. Earlier setup steps
-below are preparation references, not the latest observed controller state.
+**T01 baseline: PASS with manual lab provisioning.** PE1 Tunnel100 now signals
+50 Mbps over the computed PE1–P3–P4–PE3 path, MPLS LSP ping succeeds 5/5,
+PCEP reports ACTIVE and BGP-LS reflects the directional reservation. See the
+[first tunnel results](live_tunnel_validation.md). T02–T15 remain unexecuted
+end to end. Earlier setup steps below are preparation references, not the
+latest observed controller state.
 
 ## Start here: the available IOS XE router and Ubuntu node
 

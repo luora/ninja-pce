@@ -1,5 +1,9 @@
 # Live BGP-LS and passive PCEP lab setup
 
+The initial observation stage below has now been followed by a
+[verified 50 Mbps RSVP-TE Tunnel100](live_tunnel_validation.md). That tunnel was
+configured on PE1 from the computed path; PCEP observes its state.
+
 This stage uses the operator's six CSR1000v IOS XE 16.9.7 nodes and Ubuntu
 24.04 controller. Ubuntu ens3 retains its working Internet settings; ens4 is
 172.16.100.10/24

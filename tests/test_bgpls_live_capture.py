@@ -25,9 +25,11 @@ NODE_NAMES = {
 }
 HEALTHY = "bgpls-healthy-raw.json"
 WITHDRAWN = "bgpls-withdrawn-raw.json"
+RESERVED = "bgpls-reserved-raw.json"
 SHA256 = {
     HEALTHY: "52bd12841798adf238541e549efde7968e73ad463ccc6ce2dd4d7f68c193bd10",
     WITHDRAWN: "a60cfc23a16a6c21b9a59488110cf665568d1633c30a5528b1425dae94897c3f",
+    RESERVED: "0f754bb000ff05fdee536716be18db3407fee683b66f7911e13c247399b5ce79",
 }
 CORE_LINKS = {
     ("PE1", "P1", "10.0.12.1", "10.0.12.2"),
@@ -60,7 +62,7 @@ def parse_capture(filename: str) -> Topology:
     )
 
 
-@pytest.mark.parametrize("filename", [HEALTHY, WITHDRAWN])
+@pytest.mark.parametrize("filename", [HEALTHY, WITHDRAWN, RESERVED])
 def test_captures_preserve_actual_raw_wire_data(filename: str) -> None:
     assert hashlib.sha256((FIXTURES / filename).read_bytes()).hexdigest() == SHA256[filename]
     capture = read_capture(filename)
@@ -152,7 +154,35 @@ def test_actual_withdrawal_removes_both_directions_and_preserves_other_identitie
     assert withdrawn_ids == {key: value for key, value in healthy_ids.items() if key not in WITHDRAWN_LINKS}
 
 
-@pytest.mark.parametrize("filename", [HEALTHY, WITHDRAWN])
+def test_actual_rsvp_reservation_changes_only_three_forward_priority7_capacities() -> None:
+    assert hashlib.sha256((FIXTURES / RESERVED).read_bytes()).hexdigest() == SHA256[RESERVED]
+    healthy = parse_capture(HEALTHY)
+    reserved = parse_capture(RESERVED)
+    assert len(reserved.nodes) == 6 and len(reserved.links) == 16
+    assert {edge.id for edge in reserved.links} == {edge.id for edge in healthy.links}
+    forward_path = {("PE1", "P3"), ("P3", "P4"), ("P4", "PE3")}
+    assert {(edge.source, edge.target) for edge in reserved.links if edge.reserved_bw_bps} == forward_path
+    for edge in reserved.links:
+        assert edge.metric == 10
+        assert type(edge.max_bw_bps) is int and edge.max_bw_bps == 1_000_000_000
+        assert type(edge.reservable_bw_bps) is int and edge.reservable_bw_bps == 100_000_000
+        assert type(edge.reserved_bw_bps) is int
+        assert all(type(amount) is int for amount in edge.unreserved_bw_bps)
+        if (edge.source, edge.target) in forward_path:
+            assert edge.reserved_bw_bps == 50_000_000
+            assert edge.unreserved_bw_bps == (100_000_000,) * 7 + (50_000_000,)
+            # Priority 0 cannot automatically preempt the priority 7 LSP.
+            assert all(edge.available_bps(priority) == 50_000_000 for priority in range(8))
+        else:
+            assert edge.reserved_bw_bps == 0
+            assert edge.unreserved_bw_bps == (100_000_000,) * 8
+            assert all(edge.available_bps(priority) == 100_000_000 for priority in range(8))
+    assert reserved.raw_metadata["authoritative"] is False
+    assert reserved.raw_metadata["complete"] is False
+    assert reserved.raw_metadata["execution_eligible"] is False
+
+
+@pytest.mark.parametrize("filename", [HEALTHY, WITHDRAWN, RESERVED])
 def test_historical_capture_is_rejected_after_freshness_budget(filename: str) -> None:
     capture = read_capture(filename)
     with pytest.raises(BgplsError, match="expired"):

@@ -158,6 +158,7 @@
     }
   ],
   "date": "2026-10-10",
+  "follow_up_report": "docs/live_tunnel_validation_results.json",
   "kind": "actual_gns3_live_protocol_stage",
   "lab_scope": "Six isolated CSR1000v routers and Ubuntu controller; console access only to GNS3 server; no server OS changes.",
   "limitations": [
@@ -263,6 +264,7 @@
     }
   ],
   "schema_version": 1,
+  "scope_note": "Initial protocol-observation snapshot before Tunnel100 creation; see follow_up_report for later tunnel state.",
   "software": {
     "controller": "Ubuntu 24.04.4 / Python 3.12.3",
     "gobgp": "3.37.0",

@@ -8,6 +8,12 @@ Core interfaces enable LDP, MPLS TE, and RSVP. The 100000-kbps aggregate pool an
 
 The six HOST.cfg files contain no tunnel, PCC, BGP, authentication, save, or reload commands. The separately named P1-bgpls.cfg, P1-pcep.cfg and PE1-pcep.cfg enable the later live protocol stage. They preserve base IP addresses and unused-port state. The LDP router-ID preference uses Loopback0 without `force`; inspect the operational LDP ID because an existing LDP process may retain its current ID until its normal next selection.
 
+The separately named [PE1-tunnel100.cfg](PE1-tunnel100.cfg) is the first manual
+50 Mbps RSVP-TE tunnel candidate. It was applied only after confirming its
+resources were unused. See the [actual tunnel verification](../../../../../docs/live_tunnel_validation.md)
+for RSVP state, MPLS OAM, PCEP reporting and BGP-LS reservation evidence.
+It does not enable PCEP initiation or broaden automated-delivery support.
+
 ## Expected adjacencies
 
 Each row lists the complete core interface set and expected directly connected OSPF/LDP peers after all six candidates converge.
