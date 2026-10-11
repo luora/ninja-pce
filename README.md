@@ -5,6 +5,9 @@
 > [validated in GNS3](docs/live_pcep_computation_validation.md) on CSR1000v IOS XE
 > 16.9.7. This is an experimental lab preview, not multi-vendor certification.
 > The [read-only dashboard](docs/dashboard.md) displays local controller evidence.
+> [Opt-in withdrawal recovery](docs/pcep_failure_recovery.md) passed
+> [one IOS XE 16.9.7 lab trial](docs/pcep_failure_recovery_validation.md). Dashboard
+> [three-field tunnel creation](docs/dashboard_tunnel_creation.md) is proposed.
 
 > Reliability remediation: current behavior and migration rules are documented in
 > [input schema](docs/input_schema.md), [reconciliation safety](docs/reconciliation.md),
@@ -23,7 +26,9 @@ host/OS inventory; computes feasible bandwidth-aware RSVP-TE paths; renders
 platform configuration; and can deliver an explicitly approved new configuration
 with Netmiko. A separate live GoBGP adapter and bounded PCEP listener support
 observation, constrained path requests and opt-in initial delegated paths.
-General active rerouting and controller-initiated LSPs remain unimplemented.
+A separate opt-in profile can replace one authorized tunnel's path after a
+validated link withdrawal. General active optimization, PCReq reoptimization
+and controller-initiated LSPs remain unimplemented.
 
 ## What problem this solves
 
@@ -72,8 +77,10 @@ This repository is now beyond the first MVP, but still intentionally safe:
 - Done: multi-demand daemon with guarded autonomous delivery policy
 - Done: read-only live BGP-LS ingestion through GoBGP
 - Done: passive stateful PCEP, bounded PCReq/PCRep and opt-in initial PCUpd
+- Done: opt-in one-tunnel withdrawal recovery, qualified for one IOS XE 16.9.7 lab scenario
 - Done: read-only local controller dashboard, with explicitly labelled demo mode
-- Not implemented: general active rerouting, PCInitiate or durable delegated ownership
+- Not implemented: general active optimization, PCReq reoptimization,
+  PCInitiate, dashboard tunnel creation or durable delegated ownership
 
 Rendering and mock-tested operational parsers cover IOS XR 7.9.x, IOS XE
 17.12.x and Junos 23.4R candidate dialects. Actual live qualification is currently
@@ -141,6 +148,8 @@ YAML/JSON topology  YAML/JSON demand  YAML/JSON inventory
   withdrawals, source health and unknown attributes.
 - `pcep.py`, `pcep_compute.py` and `pcep_delegation.py` implement observation and
   the explicitly enabled computation profiles described in [PCEP scope](docs/pcep_computation.md).
+  `pcep_failover.py` adds separately enabled
+  [one-tunnel withdrawal recovery](docs/pcep_failure_recovery.md).
 - `dashboard.py` and `web/` serve a read-only view of snapshots, reports and events.
 - `cli.py` is the command surface for `compute`, `validate`,
   `inventory-validate`, `push`, `reconcile`, `topology-summary`, `gns3-demo`,
@@ -245,11 +254,17 @@ rollback/release require ownership-aware manual recovery.
 
 ### Safety boundaries
 
-Routers perform RSVP signaling and final admission. The live PCEP profile can
-provide an initial path only for explicitly authorized delegated DOWN/empty-ERO
-LSPs; it does not automate active service recovery. General reoptimization,
-durable delegated ownership, PCEP-to-ledger integration and authenticated PCEPS
-remain future work. Customer policing, shaping and queuing remain PE service
+Routers perform RSVP signaling and final admission. The initial PCEP profile
+provides paths only for explicitly authorized delegated DOWN/empty-ERO LSPs.
+Separately enabled [withdrawal recovery](docs/pcep_failure_recovery.md) can
+replace one authorized path after a mapped healthy baseline and stable failure
+evidence; healthy-path optimization and automatic switchback are excluded.
+One [live IOS XE 16.9.7 withdrawal trial](docs/pcep_failure_recovery_validation.md)
+passed with independent RSVP/OAM evidence; this does not qualify broader autonomy.
+Its journal preserves uncertain intent but is not a shared reservation ledger
+or durable delegated ownership. General optimization, PCReq reoptimization,
+PCInitiate, PCEP-to-ledger integration and authenticated PCEPS remain future
+work. Customer policing, shaping and queuing remain PE service
 policy responsibilities. Reported ACTIVE state and advertised bandwidth are
 distinct from independently verified forwarding and measured throughput.
 
@@ -532,10 +547,14 @@ TUN_CUSTOMER_A_PE1_PE3_summary.json
   evidence; qualify XR/Juniper headends and mixed-vendor paths on exact releases.
 - Integrate PCEP/RSVP observations with durable ownership and reservation
   accounting, including old-path holds and safe release.
-- Implement bounded active-path replacement and the PCReq reoptimization
-  extensions emitted by actual PCCs. Initial PCUpd is not automatic failover.
+- Extend the qualified one-tunnel withdrawal scenario to additional failures,
+  no-path, contention and restart cases, then address general active optimization
+  and the PCReq reoptimization extensions emitted by actual PCCs.
+  Initial PCUpd alone does not enable recovery.
 - Add authenticated transport/PCEPS, distributed fencing and qualified recovery
   before widening control authority. PCInitiate remains a separate extension.
+- Implement the proposed [headend/destination/bandwidth creation flow](docs/dashboard_tunnel_creation.md)
+  only after RSVP initiation, ownership, admission and security qualification.
 - Qualify IPv6/unnumbered, inter-area/inter-AS and diversity/protection behavior;
   investigate scalability and additional NETCONF/vendor adapters separately.
 - Choose a project license and reproducible dependency pins before wider reuse.

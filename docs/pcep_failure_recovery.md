@@ -6,6 +6,10 @@ It preserves the tunnel's endpoints, requested bandwidth, priorities and LSPA.
 Healthy paths stay in place, including after a failed link returns. The default
 listener and initial-path profile do not enable this behavior.
 
+The [2026-10-11 live qualification](pcep_failure_recovery_validation.md) passed
+one reversible core-link withdrawal on Cisco IOS XE 16.9.7, with correlated
+ACTIVE reporting, independent RSVP/MPLS OAM and restoration without switchback.
+
 ## Execution boundary
 
 Both peers must negotiate updates, and the PCC must finish synchronization and

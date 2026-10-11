@@ -11,7 +11,14 @@ answer a bounded IPv4 PCReq profile or provide an initial PCUpd for an authorize
 delegated DOWN/empty-ERO RSVP path after synchronization. `live.py` exposes these
 profiles. See [computation scope](pcep_computation.md) and
 [live qualification](live_pcep_computation_validation.md).
-General active-LSP reoptimization, PCInitiate, durable delegated ownership and
+A further opt-in [withdrawal recovery profile](pcep_failure_recovery.md) can
+replace one authorized tunnel's path after stable validated failure evidence.
+It has unit/socket coverage and
+[one successful IOS XE 16.9.7 lab withdrawal trial](pcep_failure_recovery_validation.md),
+including independent RSVP/OAM evidence and no switchback after restoration.
+This does not qualify general autonomous recovery or enable general active
+optimization or PCReq reoptimization.
+PCInitiate, durable delegated ownership and
 integration with the reservation ledger remain future work. Protocol acceptance
 remains distinct from independently verified RSVP forwarding.
 
@@ -59,12 +66,22 @@ implementation and test claims, not complete protocol conformance certification.
 Baseline protocol behavior comes from [RFC 5440](https://www.rfc-editor.org/info/rfc5440/).
 Read-only PCRpt synchronization must complete before enabling stateful updates;
 the initial delegated-path profile enables updates only for explicitly bound
-PCC/tunnel IDs, with both peers' U flags set. It sends no active-path rerouting
-or PCInitiate, and returns unsupported delegations to PCC local policy.
+PCC/tunnel IDs, with both peers' U flags set. Initial-only enablement does not
+reroute active paths and returns unsupported delegations to PCC local policy.
+All current profiles keep initiation clear and send no PCInitiate.
+The separate one-tunnel recovery profile requires a synchronized delegated
+healthy baseline, a later validated withdrawal and an unchanged constraint set.
+It sends a bounded replacement PCUpd, keeps healthy paths in place after link
+restoration, and journals intent before sending. Uncertain pending operations
+survive restart for manual review; they are not automatically replayed. This
+journal does not provide shared resource accounting or distributed fencing.
 Delegation/revocation and synchronization belong to the session/state owner;
 computation does not confer control authority. [RFC 8231](https://www.rfc-editor.org/info/rfc8231/)
 defines these stateful capabilities. PCE-initiated creation/removal is a separate
 negotiated stage under [RFC 8281](https://www.rfc-editor.org/info/rfc8281/).
+The [proposed dashboard creation flow](dashboard_tunnel_creation.md) uses the
+selected headend, destination and bandwidth; no Create button or creation API
+is implemented yet.
 
 Maintain PLSP-ID scoped to PCC/session identity, symbolic LSP identity, SRP
 correlation, reported operational state, actual routes and delegation ownership.
@@ -111,8 +128,11 @@ secrets, and audit state/approval revisions.
    tests. Compare its normalized snapshots against router TED state.
 4. Add stateless PCEP interoperability tests, then passive stateful synchronization.
 5. The isolated initial-delegation profile has capability, restart and bounded
-   worker tests plus live forwarding qualification. General delegated updates
-   still require durable ownership, authentication and recovery qualification.
+   worker tests plus live forwarding qualification. The additional one-tunnel
+   withdrawal profile has unit/socket coverage and one qualified IOS XE 16.9.7
+   lab scenario. Additional failure, contention and restart cases remain to qualify.
+   General optimization and PCReq reoptimization still require implementation,
+   durable ownership, authentication and recovery qualification.
 6. Enable initiated LSPs and closed-loop changes after ownership/fencing and
    multi-controller recovery tests prove safe operation.
 
