@@ -240,16 +240,80 @@ def test_collector_status_requires_its_own_valid_fresh_observation_time(
     assert not any(peer["protocol"] == "BGP-LS" and peer["fresh"] for peer in snapshot["peers"])
 
 
-def test_persisted_fresh_pcep_flag_expires_at_valid_until(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("idle_seconds", "report_age_seconds"), [(31, 31), (59, 3600), (119, 86400)])
+def test_fresh_pcep_capture_keeps_synchronized_report_current_until_session_deadline(
+    tmp_path: Path, idle_seconds: int, report_age_seconds: int,
+) -> None:
+    config, reported = _publish(tmp_path)
+    now = reported + timedelta(seconds=idle_seconds)
+    capture = load_state(config.pcep_path)
+    # Synthetic heartbeat/session timing around unchanged historical report bytes.
+    # Quiet RSVP LSPs need not emit another PCRpt while their PCEP session is live.
+    capture["generated_at"] = now.timestamp()
+    capture["peers"][PCC]["valid_until"] = reported.timestamp() + 120
+    for report in capture["peers"][PCC]["reports"].values():
+        report["received_at"] = now.timestamp() - report_age_seconds
+    write_state(config.pcep_path, capture)
+
+    snapshot = DashboardStore(config).snapshot(now=now)
+    peer = next(item for item in snapshot["peers"] if item["protocol"] == "PCEP")
+    assert _source(snapshot, "pcep")["state"] == "fresh"
+    assert peer["fresh"] is True and peer["synchronized"] is True
+    assert peer["last_seen"] == reported.isoformat()
+    lsp = snapshot["lsps"][0]
+    assert lsp["fresh"] is True and lsp["operational_state"] == "ACTIVE"
+    assert lsp["bandwidth_bps"] == 50_000_000
+    assert lsp["ero"] == ["10.0.12.2", "10.0.25.5", "10.0.56.6"]
+    assert snapshot["summary"]["active_lsps"] == 1
+    assert lsp.get("forwarding_verified", False) is False
+
+
+@pytest.mark.parametrize("deadline_offset", [-1, 0])
+def test_persisted_fresh_pcep_flag_expires_at_valid_until(
+    tmp_path: Path, deadline_offset: int,
+) -> None:
     config, now = _publish(tmp_path)
     capture = load_state(config.pcep_path)
-    capture["peers"][PCC]["valid_until"] = now.timestamp() - 1
+    capture["peers"][PCC]["valid_until"] = now.timestamp() + deadline_offset
     write_state(config.pcep_path, capture)
     snapshot = DashboardStore(config).snapshot(now=now)
     peer = next(peer for peer in snapshot["peers"] if peer["protocol"] == "PCEP")
     assert peer["fresh"] is False
     assert all(not lsp["fresh"] for lsp in snapshot["lsps"])
     assert _source(snapshot, "pcep")["state"] != "fresh"
+
+
+def test_future_pcep_receive_time_is_not_live_despite_future_session_deadline(tmp_path: Path) -> None:
+    config, now = _publish(tmp_path)
+    capture = load_state(config.pcep_path)
+    capture["peers"][PCC].update(last_received_at=now.timestamp() + 1,
+                                valid_until=now.timestamp() + 120)
+    write_state(config.pcep_path, capture)
+
+    snapshot = DashboardStore(config).snapshot(now=now)
+    peer = next(item for item in snapshot["peers"] if item["protocol"] == "PCEP")
+    assert peer["fresh"] is False and peer["synchronized"] is False
+    assert len(snapshot["lsps"]) == 1
+    assert all(lsp["fresh"] is False and lsp["operational_state"] == "STALE"
+               for lsp in snapshot["lsps"])
+    assert snapshot["summary"]["active_lsps"] == 0
+
+
+def test_stale_pcep_capture_wins_over_unexpired_session_and_persisted_fresh_flags(tmp_path: Path) -> None:
+    config, generated = _publish(tmp_path)
+    capture = load_state(config.pcep_path)
+    capture["peers"][PCC]["valid_until"] = generated.timestamp() + 120
+    write_state(config.pcep_path, capture)
+    now = generated + timedelta(seconds=31)
+
+    snapshot = DashboardStore(config).snapshot(now=now)
+    peer = next(item for item in snapshot["peers"] if item["protocol"] == "PCEP")
+    assert _source(snapshot, "pcep")["state"] == "stale"
+    assert peer["fresh"] is False and peer["synchronized"] is False
+    assert len(snapshot["lsps"]) == 1
+    assert all(lsp["fresh"] is False and lsp["reported_state"] == "ACTIVE"
+               for lsp in snapshot["lsps"])
+    assert snapshot["summary"]["active_lsps"] == 0
 
 
 def test_removed_old_incarnation_is_never_counted_as_active(tmp_path: Path) -> None:
@@ -519,3 +583,163 @@ def test_cli_rejects_invalid_listener_options_before_binding(monkeypatch, argume
 
     monkeypatch.setattr(dashboard, "create_dashboard_server", forbid_binding)
     assert main(["dashboard", *arguments]) == 1
+
+
+def _next_collector_publication(config: DashboardConfig, captured: datetime) -> tuple[dict[str, Any], ...]:
+    # Synthetic generation timing around unchanged historical NLRI bytes models
+    # the collector replacing its raw, normalized and status files separately.
+    later = captured + timedelta(seconds=1)
+    raw = json.loads(config.bgpls_raw_path.read_text())
+    raw.update(captured_at=later.isoformat(), poll_started_at=captured.isoformat())
+    topology = parse_gobgp_snapshot(raw, required_peers=(EXPORTER,), node_names=NODE_NAMES, now=later)
+    status = {"status": "ok", "observed_at": later.timestamp(), "nodes": len(topology.nodes),
+              "directed_links": len(topology.links), "metadata": topology.raw_metadata}
+    return raw, topology_document(topology), status
+
+
+@pytest.mark.parametrize("complete_after", [1, 2])
+def test_collector_publication_retry_reads_an_entire_coherent_generation(
+    tmp_path: Path, monkeypatch, complete_after: int,
+) -> None:
+    config, captured = _publish(tmp_path)
+    raw, feed, status = _next_collector_publication(config, captured)
+    config.bgpls_raw_path.write_text(json.dumps(raw))
+    waits: list[float] = []
+    reads: list[Path] = []
+    store = DashboardStore(config)
+    original_load = store._load
+
+    def load(path, **options):
+        reads.append(path)
+        return original_load(path, **options)
+
+    def finish_publication(delay):
+        waits.append(delay)
+        config.topology_path.write_text(json.dumps(feed))
+        if len(waits) == complete_after:
+            write_state(config.bgpls_status_path, status)
+
+    monkeypatch.setattr(store, "_load", load)
+    monkeypatch.setattr(dashboard.time, "sleep", finish_publication)
+    snapshot = store.snapshot(now=captured + timedelta(seconds=1))
+    assert _source(snapshot, "topology")["state"] == _source(snapshot, "bgpls")["state"] == "fresh"
+    assert _source(snapshot, "topology")["timestamp"] == raw["captured_at"]
+    assert snapshot["summary"]["nodes"] == 6 and snapshot["summary"]["directed_links"] == 16
+    assert len(waits) == complete_after and sum(waits) <= 0.1
+    assert reads[:3 * (complete_after + 1)] == [
+        config.topology_path, config.bgpls_status_path, config.bgpls_raw_path,
+    ] * (complete_after + 1)
+
+
+def test_persistent_mixed_collector_publication_stays_nonfresh_after_bounded_retry(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    config, captured = _publish(tmp_path)
+    raw, _, _ = _next_collector_publication(config, captured)
+    config.bgpls_raw_path.write_text(json.dumps(raw))
+    waits: list[float] = []
+    monkeypatch.setattr(dashboard.time, "sleep", waits.append)
+    snapshot = DashboardStore(config).snapshot(now=captured + timedelta(seconds=1))
+    assert _source(snapshot, "bgpls")["state"] != "fresh"
+    assert _source(snapshot, "topology")["state"] != "fresh"
+    assert len(waits) == 2 and sum(waits) <= 0.1
+    assert not any(peer["protocol"] == "BGP-LS" and peer["fresh"] for peer in snapshot["peers"])
+
+
+@pytest.mark.parametrize("collector_state", ["stopped", "unavailable"])
+def test_collector_failure_during_publication_retry_is_not_hidden(
+    tmp_path: Path, monkeypatch, collector_state: str,
+) -> None:
+    config, captured = _publish(tmp_path)
+    raw, _, _ = _next_collector_publication(config, captured)
+    config.bgpls_raw_path.write_text(json.dumps(raw))
+    waits: list[float] = []
+
+    def stop_collector(delay):
+        waits.append(delay)
+        write_state(config.bgpls_status_path, {"status": collector_state, "observed_at": captured.timestamp()})
+
+    monkeypatch.setattr(dashboard.time, "sleep", stop_collector)
+    snapshot = DashboardStore(config).snapshot(now=captured + timedelta(seconds=1))
+    assert _source(snapshot, "bgpls")["state"] == "unavailable"
+    assert _source(snapshot, "topology")["state"] != "fresh"
+    assert len(waits) == 1
+
+
+@pytest.mark.parametrize("changed", ["graph_size", "feed_metric"])
+def test_completed_publication_retry_still_validates_graph_and_counts(
+    tmp_path: Path, monkeypatch, changed: str,
+) -> None:
+    config, captured = _publish(tmp_path)
+    raw, feed, status = _next_collector_publication(config, captured)
+    config.bgpls_raw_path.write_text(json.dumps(raw))
+    if changed == "graph_size":
+        status["directed_links"] -= 1
+    else:
+        feed["links"][0]["metric"] += 1
+
+    def finish_publication(_delay):
+        config.topology_path.write_text(json.dumps(feed))
+        write_state(config.bgpls_status_path, status)
+
+    monkeypatch.setattr(dashboard.time, "sleep", finish_publication)
+    snapshot = DashboardStore(config).snapshot(now=captured + timedelta(seconds=1))
+    assert _source(snapshot, "bgpls")["state"] == _source(snapshot, "topology")["state"] == "invalid"
+    assert snapshot["summary"]["nodes"] == 0
+
+
+@pytest.mark.parametrize("explicit_clock", [False, True])
+def test_publication_retry_refreshes_only_implicit_request_clock(
+    tmp_path: Path, monkeypatch, explicit_clock: bool,
+) -> None:
+    config, captured = _publish(tmp_path)
+    raw, feed, status = _next_collector_publication(config, captured)
+    config.bgpls_raw_path.write_text(json.dumps(raw))
+    later = captured + timedelta(seconds=1)
+    ticks = iter([captured, later])
+
+    class RequestClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert not explicit_clock, "An explicitly supplied replay clock must not read wall time"
+            return next(ticks)
+
+    def finish_publication(_delay):
+        config.topology_path.write_text(json.dumps(feed))
+        write_state(config.bgpls_status_path, status)
+
+    monkeypatch.setattr(dashboard, "datetime", RequestClock)
+    monkeypatch.setattr(dashboard.time, "sleep", finish_publication)
+    snapshot = DashboardStore(config).snapshot(now=captured if explicit_clock else None)
+    assert snapshot["generated_at"] == (captured if explicit_clock else later).isoformat()
+    expected_state = "invalid" if explicit_clock else "fresh"
+    assert _source(snapshot, "topology")["state"] == _source(snapshot, "bgpls")["state"] == expected_state
+
+
+@pytest.mark.parametrize("malformed", ["missing_feed", "raw_json", "status_checksum", "feed_timestamp"])
+def test_publication_retry_does_not_wait_on_unreadable_or_malformed_observations(
+    tmp_path: Path, monkeypatch, malformed: str,
+) -> None:
+    config, captured = _publish(tmp_path)
+    raw, _, _ = _next_collector_publication(config, captured)
+    config.bgpls_raw_path.write_text(json.dumps(raw))
+    if malformed == "missing_feed":
+        config.topology_path.unlink()
+    elif malformed == "raw_json":
+        config.bgpls_raw_path.write_text("{")
+    elif malformed == "status_checksum":
+        status = json.loads(config.bgpls_status_path.read_text())
+        status["checksum"] = "invalid"
+        config.bgpls_status_path.write_text(json.dumps(status))
+    else:
+        feed = json.loads(config.topology_path.read_text())
+        feed["metadata"]["timestamp"] = {"invalid": "timestamp"}
+        config.topology_path.write_text(json.dumps(feed))
+
+    def forbid_retry(_delay):
+        raise AssertionError("Unreadable or malformed observations must fail closed immediately")
+
+    monkeypatch.setattr(dashboard.time, "sleep", forbid_retry)
+    snapshot = DashboardStore(config).snapshot(now=captured + timedelta(seconds=1))
+    assert _source(snapshot, "bgpls")["state"] != "fresh"
+    assert _source(snapshot, "topology")["state"] != "fresh"

@@ -67,6 +67,14 @@ lab network, or the authenticated HTTPS proxy below for public access.
   verifies checksums where present, and matches the normalized topology against
   the corresponding BGP-LS capture and collector status. File modification time
   does not make an old observation current.
+  PCEP capture age tracks the listener's observation freshness; a synchronized
+  PCC and its unchanged LSP reports remain current until the listener's session
+  deadline. Quiet intervals between keepalives do not expire a healthy session
+  at the generic file-age limit. Stale captures and expired sessions still lose
+  their current status.
+  Mixed generations during BGP-LS publication trigger a bounded reread of all
+  three collector files. A persistent mismatch remains unavailable; previously
+  cached data never substitutes for a coherent current observation.
 - **ACTIVE** is the PCC's reported state, not independent evidence of forwarding.
   Stale reports retain their last reported state but lose their current status.
 - Selecting an LSP highlights a route only when its ERO resolves unambiguously to
@@ -210,9 +218,12 @@ trusted. A certificate from another CA can also use the same local paths.
 
 ## Validation
 
-The branch passes the repository's 655 tests, Ruff and mypy. The 72 dashboard tests
+Validation includes the repository tests, Ruff and mypy. Dashboard tests
 include historical BGP-LS/PCEP fixture projections, stale and invalid inputs,
 retained reservation resources, strict/loose ERO metadata and HTTP boundaries.
+They also cover healthy quiet PCEP sessions, expired session deadlines, stale
+listener captures and concurrent BGP-LS publication without hiding persistent
+collector errors.
 Chrome checks cover both themes, keyboard selection, filtering, source/API failure,
 recovery, reduced motion, unavailable browser storage and widths from 320 to
 1,440 pixels. The wheel includes all three UI assets.

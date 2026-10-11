@@ -6,6 +6,7 @@ import math
 import os
 import stat
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -143,6 +144,7 @@ class DashboardStore:
             return None, "invalid"
 
     def snapshot(self, now: datetime | None = None) -> dict[str, Any]:
+        refresh_clock = now is None
         now = now or datetime.now(timezone.utc)
         if now.tzinfo is None:
             raise ValueError("Dashboard clock requires a timezone")
@@ -155,7 +157,8 @@ class DashboardStore:
             "peers": [], "lsps": [], "computations": [], "events": [],
             "reservations": {"configured": False, "state": "unconfigured", "holds": 0, "entries": []},
         }
-        self._topology(result, now)
+        now = self._topology(result, now, refresh_clock=refresh_clock)
+        result["generated_at"] = now.isoformat()
         self._pcep(result, now)
         self._ledger(result, now)
         result["events"] = sorted(result["events"], key=lambda item: item["timestamp"])[-MAX_EVENTS:]
@@ -169,19 +172,32 @@ class DashboardStore:
         }
         return result
 
-    def _topology(self, result: dict[str, Any], now: datetime) -> None:
+    def _topology(self, result: dict[str, Any], now: datetime, *, refresh_clock: bool = False) -> datetime:
         config = self.config
-        feed, feed_error = self._load(config.topology_path)
-        status, status_error = self._load(config.bgpls_status_path, checksummed=True)
-        raw, raw_error = self._load(config.bgpls_raw_path)
-        metadata = feed.get("metadata", {}) if feed else {}
-        if not isinstance(metadata, dict):
-            metadata, feed_error = {}, "invalid"
+        for attempt in range(3):
+            feed, feed_error = self._load(config.topology_path)
+            status, status_error = self._load(config.bgpls_status_path, checksummed=True)
+            raw, raw_error = self._load(config.bgpls_raw_path)
+            metadata = feed.get("metadata", {}) if feed else {}
+            if not isinstance(metadata, dict):
+                metadata, feed_error = {}, "invalid"
+            status_metadata = status.get("metadata", {}) if status else {}
+            if not isinstance(status_metadata, dict):
+                status_metadata, status_error = {}, "invalid"
+            stamps = (metadata.get("timestamp"), status_metadata.get("timestamp"),
+                      raw.get("captured_at") if raw else None)
+            mixed_generation = all(_time(stamp) is not None for stamp in stamps) and not (
+                stamps[0] == stamps[1] == stamps[2])
+            if (attempt == 2 or feed_error or status_error or raw_error or not status or
+                    status.get("status") != "ok" or not mixed_generation):
+                break
+            # The collector atomically replaces three files in succession. Retry
+            # a mixed generation, never a cached bundle, with at most 50 ms delay.
+            time.sleep(0.025)
+        if refresh_clock:
+            now = datetime.now(timezone.utc)
         topology_source = _source("topology", "Topology", feed, now, config.max_age_seconds,
                                   metadata.get("timestamp"), feed_error)
-        status_metadata = status.get("metadata", {}) if status else {}
-        if not isinstance(status_metadata, dict):
-            status_metadata, status_error = {}, "invalid"
         bgpls_source = _source("bgpls", "BGP-LS collector", status, now, config.max_age_seconds,
                               status_metadata.get("timestamp"), status_error)
         observed = _time(status.get("observed_at")) if status else None
@@ -248,6 +264,7 @@ class DashboardStore:
                                             "synchronized": False, "last_seen": bgpls_source["timestamp"],
                                             "capabilities": ["BGP-LS"], "reports": 0})
         result["sources"].extend([topology_source, bgpls_source])
+        return now
 
     def _pcep(self, result: dict[str, Any], now: datetime) -> None:
         capture, error = self._load(self.config.pcep_path, checksummed=True)
@@ -289,8 +306,11 @@ class DashboardStore:
               now: datetime) -> None:
         last = _time(peer.get("last_received_at"))
         deadline = _time(peer.get("valid_until"))
+        # Capture age measures the observer's health. An idle synchronized PCC
+        # stays current until the listener's session deadline, which may exceed
+        # the generic file-age limit between otherwise healthy keepalives.
         fresh = bool(capture_fresh and peer.get("fresh") is True and peer.get("state") == "ESTABLISHED" and
-                     last and 0 <= (now - last).total_seconds() <= self.config.max_age_seconds and
+                     last and last <= now and
                      deadline and now < deadline)
         synchronized = peer.get("synchronized") is True
         reports = _mapping(peer.get("reports", {}))
