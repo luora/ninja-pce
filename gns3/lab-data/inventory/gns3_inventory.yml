@@ -1,10 +1,14 @@
-# Edit management_ip and platform values to match your GNS3 router images.
-# Preview is the default. A push requires ninja-pce --execute --approve and
-# the referenced password environment variable.
+# Legacy mixed XR/Junos sample; private addresses and admin are lab placeholders.
+# This is not the live six-router IOS XE 16.9.7 inventory. Edit values for your
+# own qualified images. Preview is default; CLI writes require --execute
+# --approve --approved-plan-id plus external credentials and all delivery gates.
+# auto-apply is an optional policy tag, not evidence of platform qualification
+# or source authority. All delivery commands must share one persistent ledger.
 
 devices:
   PE1:
     role: headend
+    tags: [auto-apply, gns3-headend]
     platform: cisco_xr
     management_ip: 172.16.100.101
     username: admin

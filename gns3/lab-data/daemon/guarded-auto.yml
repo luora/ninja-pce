@@ -1,0 +1,38 @@
+# Optional policy example, not a qualified autonomous lab deployment.
+# The bundled manual TED lacks authoritative observation evidence, so guarded
+# writes remain blocked. Never fabricate authority metadata to enable this file.
+# Interactive delivery for this network must share the state_dir below.
+topology_feed:
+  type: file
+  path: ../topologies/gns3_multiarea.yml
+  max_age_seconds: 30
+
+demands:
+  type: directory
+  path: ../demands
+
+inventory: ../inventory/gns3_inventory.yml
+output_dir: /outputs/daemon
+state_dir: /outputs/daemon-state
+poll_interval: 5
+
+approval_policy:
+  mode: guarded-auto
+  max_commands: 50
+  min_residual_bw_mbps: 10
+  allow_warnings: false
+  allowed_output_formats:
+    - iosxr
+    - iosxe
+    - junos
+  allowed_device_tags:
+    - auto-apply
+  allowed_demand_names:
+    - CUSTOMER_A_PE1_PE3_50M
+    - CUSTOMER_A_PE1_PE3_50M_AVOID_PE1_P3
+    - CUSTOMER_B_PE1_PE3_120M
+
+health:
+  host: 127.0.0.1
+  port: 8080
+  enabled: true

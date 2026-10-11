@@ -1,19 +1,26 @@
 # ninja-pce GNS3 lab guide
 
-> For the current addressing plan, safe configuration sequence, T01–T15 runner
-> and evidence rules, follow [GNS3 validation](gns3_validation.md). Earlier examples
-> below require the current [schema](input_schema.md) and [reconciliation gates](reconciliation.md).
-> No vendor-image integration tests have been executed during remediation.
+> This guide describes the optional Docker wrapper and synthetic sample inputs.
+> For the qualified Ubuntu/six-router lab, follow [live protocol setup](live_protocol_setup.md)
+> and [initial PCEP computation results](live_pcep_computation_validation.md).
+> The [T01–T15 runner](gns3_validation.md) distinguishes offline assertions from
+> actual device evidence; T02–T15 remain unexecuted end to end.
 
 This guide turns `ninja-pce` from an offline CSPF script into a usable GNS3 demo appliance.
 
-The first GNS3 version is still deliberately safe:
+The Docker wrapper retains these boundaries:
 
-- no PCEP controller behavior
 - no automatic push by default
 - no RSVP-TE signaling from FRR
 - dry-run outputs first
-- human approval before any Netmiko/NETCONF action
+- exact-plan approval before manual Netmiko delivery
+- guarded-auto mode is opt-in and needs authoritative evidence
+- the supplied static multi-area topology cannot authorize guarded writes
+
+The separate GoBGP/PCEP services implement live observation and bounded initial
+paths; they are not an autonomous failover integration in this wrapper. NETCONF
+delivery is not implemented. Docker image execution and the mixed XR/Junos sample
+are not established by the Cisco IOS XE 16.9.7 live qualification.
 
 ## Lab story
 
@@ -40,14 +47,14 @@ Minimum useful lab:
 
 | Node | Type | Purpose |
 |---|---|---|
-| PE1 | IOS XRv / CSR / vMX / RouterOS capable router | RSVP-TE head-end |
+| PE1 | Separately qualified IOS XR, IOS XE or Junos image | RSVP-TE head-end |
 | P1 | router | core transit |
 | P2 | router | core transit |
 | P3 | router | core transit / alternate path |
 | P4 | router | core transit / alternate path |
 | PE3 | router | RSVP-TE tail-end |
 | ninja-pce | Docker container | computes CSPF and renders configs |
-| FRR-LISTENER | optional Docker/FRR node | Phase 2 topology listener |
+| FRR-LISTENER | optional experimental Docker/FRR node | Future collector experiments |
 
 ## Build the ninja-pce Docker image
 
@@ -77,6 +84,8 @@ In GNS3:
 8. Console type: Telnet.
 
 When the node starts, it opens a shell and seeds `/lab` with sample topology, demands, and inventory.
+It also seeds `/lab/daemon/guarded-auto.yml`, an optional policy example. Existing
+seeded volumes receive that file only if missing; operator edits are preserved.
 
 ## Inside the ninja-pce node
 
@@ -160,10 +169,15 @@ ninja-pce push \
   --topology /lab/topologies/gns3_multiarea.yml \
   --demand /lab/demands/customer-a-50m.yml \
   --inventory /lab/inventory/gns3_inventory.yml \
-  --output-dir /outputs/base
+  --output-dir /outputs/base \
+  --state-dir /outputs/daemon-state
 ```
 
-This is preview-only unless you add both `--execute --approve`.
+This is preview-only. Delivery additionally requires the exact reviewed
+`--approved-plan-id`, external credentials and qualified platform checks.
+Use `--state-dir /outputs/daemon-state` for every delivery command sharing this
+lab, matching the daemon's persistent ledger directory. Addresses and usernames
+in the inventory are private lab examples, not reachable operator endpoints.
 
 To reconcile whenever the topology YAML changes:
 
@@ -173,12 +187,89 @@ ninja-pce reconcile \
   --demand /lab/demands/customer-a-50m.yml \
   --inventory /lab/inventory/gns3_inventory.yml \
   --output-dir /outputs/reconcile \
+  --state-dir /outputs/daemon-state \
   --watch
 ```
 
+## Optional guarded daemon policy
+
+The daemon polls topology and demand files and maintains reconciliation state.
+Guarded delivery needs a fresh, complete authoritative TED plus every approval,
+command, credential and release gate. The supplied static topology lacks that
+evidence; the current live BGP-LS feed is also non-authoritative for automatic
+CLI delivery. Do not invent authority metadata or update a file timestamp to
+bypass that boundary. This example does not enable PCEP service recovery.
+
+The seeded daemon config is:
+
+```text
+/lab/daemon/guarded-auto.yml
+```
+
+The legacy mixed XR/Junos inventory marks `PE1` with an optional `auto-apply`
+tag. The policy requires that tag; a tag is not platform qualification or source
+authority. Actual IOS XE 16.9.7 automatic CLI writes remain blocked.
+
+Inspect the policy with writes explicitly disabled:
+
+```bash
+NINJA_PCE_PREVIEW_ONLY=1 ninja-pce daemon --config /lab/daemon/guarded-auto.yml
+```
+
+For a container that starts the daemon automatically on boot, set this
+environment variable in the GNS3 Docker template:
+
+```bash
+NINJA_PCE_GNS3_AUTORUN=1
+```
+
+The kill switch is:
+
+```bash
+NINJA_PCE_PREVIEW_ONLY=1
+```
+
+The kill switch refuses router writes. Valid fresh input can still produce
+previews and audit state; stale input stops before planning. Automatic startup
+does not make the static sample authoritative. Source age is bounded to 30
+seconds in this policy example. The health listener binds only to loopback.
+
+Useful endpoints in continuous mode:
+
+```bash
+curl http://127.0.0.1:8080/healthz
+curl http://127.0.0.1:8080/metrics
+```
+
+Autonomous mode reads topology from:
+
+```text
+/lab/topologies/gns3_multiarea.yml
+```
+
+It reads demands from:
+
+```text
+/lab/demands/
+```
+
+It writes rendered configs, JSON summaries, persistent reservation state and
+audit events under:
+
+```text
+/outputs/daemon
+/outputs/daemon-state
+```
+
+Interactive `push`/`reconcile` commands must use `--state-dir /outputs/daemon-state`.
+If you choose another directory, update the daemon YAML too; daemon state is
+selected by its configuration. Dashboard ledger inspection must use the same
+directory. Keep this volume across restarts rather than deleting uncertain holds.
+
 ## Optional FRR listener
 
-Use `gns3/frr-listener` when moving toward Phase 2.
+`gns3/frr-listener` is an experimental example, not the implemented live ingestion
+path. Current live collection uses [GoBGP](../gns3/controller/gobgp/README.md).
 
 The FRR listener should:
 
@@ -187,7 +278,8 @@ The FRR listener should:
 - export or expose LSDB/topology data later
 - not become the RSVP-TE tunnel head-end
 
-Start with manual YAML first. Add FRR only after the demo path computation is stable.
+Any future collector must retain directional identity, freshness and unknown
+attributes. It must not turn missing evidence into authorization for delivery.
 
 ## Operator demo flow
 
@@ -198,9 +290,9 @@ Start with manual YAML first. Add FRR only after the demo path computation is st
 5. Show selected feasible path.
 6. Open generated IOS XR/Junos config.
 7. Open generated verification commands.
-8. Explain that the tool is still dry-run and approval-based.
+8. Explain exact-plan approval and demonstrate why the static sample cannot authorize guarded writes.
 9. Optional: simulate failure/maintenance using `customer-a-50m-avoid-pe1-p3.yml`.
-10. Optional: show FRR listener as the future BGP-LS/topology ingestion step.
+10. Compare the synthetic sample with recorded GoBGP/PCEP live evidence; label each scope explicitly.
 
 ## Practical reminder
 
