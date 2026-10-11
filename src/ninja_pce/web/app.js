@@ -165,7 +165,7 @@
       const prefix = typeof hop.prefix_length === "number" ? `/${hop.prefix_length}` : " · prefix unknown";
       const routeType = hop.loose === true ? "Loose" : hop.loose === false ? "Strict" : "Strictness unknown";
       const label = `${routeType}${prefix}`;
-      const options = exactHost && current ? links.filter((link) => link.source === current.id && link.remote_address === address) : [];
+      const options = exactHost && current && sourceState(source("topology")) === "fresh" ? links.filter((link) => link.source === current.id && link.remote_address === address) : [];
       if (options.length !== 1) { result.hops.push({ address, node: "Unresolved hop", label }); result.unresolved = true; current = null; continue; }
       const link = options[0]; result.links.push(link);
       current = nodes.find((node) => node.id === link.target);
@@ -195,23 +195,70 @@
   }
 
   const topologyLayouts = new Map();
+  const topologyConnections = new Map();
+  const lastTopologyScopes = new Map();
   const nodeIdentity = (node) => JSON.stringify([node.id, node.loopback || ""]);
+  function rememberedNode(identity) {
+    try {
+      const value = JSON.parse(identity);
+      if (Array.isArray(value) && value.length === 2 && value.every((part) => typeof part === "string" && part.length <= 512) && value[0]) return { id: value[0], loopback: value[1], area: "", retained: true };
+    } catch { /* Ignore malformed historical identities. */ }
+    return null;
+  }
+  function topologyScope(nodes) {
+    const mode = state.data?.mode;
+    if (!mode) return null;
+    const pointer = `ninja-pce.topology-last.v1:${mode}`;
+    if (!nodes.length && sourceState(source("topology")) !== "fresh") {
+      let previous = lastTopologyScopes.get(mode);
+      try { previous ||= localStorage.getItem(pointer); } catch { /* Storage is optional. */ }
+      if (previous) {
+        try {
+          const value = JSON.parse(previous);
+          if (Array.isArray(value) && value.length === 2 && value[0] === mode && typeof value[1] === "string" && value[1].length <= 512) return previous;
+        } catch { /* Use the current scope when no valid previous scope exists. */ }
+      }
+    }
+    const scope = JSON.stringify([mode, state.data.topology.name]);
+    if (nodes.length && lastTopologyScopes.get(mode) !== scope) {
+      lastTopologyScopes.set(mode, scope);
+      try { localStorage.setItem(pointer, scope); } catch { /* The open page still remembers its topology. */ }
+    }
+    return scope;
+  }
   function topologyLayout(nodes, links) {
-    const ordered = [...nodes].sort((a, b) => String(a.id).localeCompare(String(b.id)));
-    const scope = JSON.stringify([state.data.mode, state.data.topology.name]);
+    const ordered = nodes.filter((node) => node && rememberedNode(nodeIdentity(node))).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    const scope = topologyScope(nodes);
+    if (!scope) return { points: new Map(), nodes: [], links: [] };
     const storageKey = `ninja-pce.topology-layout.v1:${scope}`;
     if (!topologyLayouts.has(scope)) {
-      let entries = [];
+      let entries = [], connections = [];
       try {
         const saved = JSON.parse(localStorage.getItem(storageKey));
         if (saved?.version === 1 && Array.isArray(saved.points) && saved.points.length <= 512) {
-          entries = saved.points.filter((entry) => Array.isArray(entry) && entry.length === 2 && typeof entry[0] === "string" && entry[0].length <= 1024 &&
-            entry[1] && Number.isFinite(entry[1].x) && Number.isFinite(entry[1].y) && entry[1].x >= 65 && entry[1].x <= 585 && entry[1].y >= 45 && entry[1].y <= 223);
+          entries = saved.points.filter((entry) => Array.isArray(entry) && entry.length === 2 && typeof entry[0] === "string" && entry[0].length <= 8192 && rememberedNode(entry[0]) &&
+            entry[1] && Number.isFinite(entry[1].x) && Number.isFinite(entry[1].y) && entry[1].x >= 65 && entry[1].x <= 585 && entry[1].y >= 45 && entry[1].y <= 223)
+            .map(([identity, point]) => [nodeIdentity(rememberedNode(identity)), { x: point.x, y: point.y }]);
+          if (Array.isArray(saved.links) && saved.links.length <= 4096) {
+            connections = saved.links.filter((link) => link && ["id", "source", "target", "local_address", "remote_address"].every((key) => typeof link[key] === "string" && link[key].length <= 512))
+              .map((link) => [link.id, { id: link.id, source: link.source, target: link.target, local_address: link.local_address, remote_address: link.remote_address, retained: true }]);
+          }
         }
       } catch { /* Keep the map stable in memory when storage is unavailable. */ }
       topologyLayouts.set(scope, new Map(entries));
+      topologyConnections.set(scope, new Map(connections));
     }
-    const saved = topologyLayouts.get(scope), identities = new Set(ordered.map(nodeIdentity));
+    const saved = topologyLayouts.get(scope), connections = topologyConnections.get(scope), identities = new Set(ordered.map(nodeIdentity));
+    let changed = false;
+    // Reused names with new addresses must not inherit former connection history.
+    for (const identity of saved.keys()) {
+      const previous = rememberedNode(identity);
+      if (!previous) { saved.delete(identity); changed = true; continue; }
+      if (ordered.some((node) => node.id === previous.id && nodeIdentity(node) !== identity)) {
+        saved.delete(identity); changed = true;
+        for (const [id, link] of connections) if (link.source === previous.id || link.target === previous.id) connections.delete(id);
+      }
+    }
     // Absent routers keep their slots so that a flap does not rearrange the map.
     const missing = ordered.filter((node) => !saved.has(nodeIdentity(node)));
     if (missing.length) {
@@ -237,9 +284,30 @@
         if (saved.size <= 512) break;
         if (!identities.has(identity)) saved.delete(identity);
       }
-      try { localStorage.setItem(storageKey, JSON.stringify({ version: 1, points: [...saved] })); } catch { /* In-memory positions remain available. */ }
+      changed = true;
     }
-    return new Map(ordered.map((node) => [node.id, saved.get(nodeIdentity(node))]));
+    for (const link of links) {
+      // History contains identity and geometry only, never bandwidth or metrics.
+      const previous = connections.get(link.id);
+      const record = { id: link.id, source: link.source, target: link.target, local_address: link.local_address || "", remote_address: link.remote_address || "", retained: true };
+      if (!previous || Object.keys(record).some((key) => previous[key] !== record[key])) { connections.set(link.id, record); changed = true; }
+    }
+    const currentLinks = new Set(links.map((link) => link.id));
+    for (const id of connections.keys()) {
+      if (connections.size <= 4096) break;
+      if (!currentLinks.has(id)) { connections.delete(id); changed = true; }
+    }
+    if (changed) {
+      try { localStorage.setItem(storageKey, JSON.stringify({ version: 1, points: [...saved], links: [...connections.values()] })); } catch { /* In-memory history remains available. */ }
+    }
+    const displayed = new Map(ordered.map((node) => [node.id, node])), points = new Map();
+    for (const identity of saved.keys()) {
+      const node = rememberedNode(identity);
+      if (node && !displayed.has(node.id)) displayed.set(node.id, node);
+    }
+    for (const node of displayed.values()) points.set(node.id, saved.get(nodeIdentity(node)));
+    const retainedLinks = [...connections.values()].filter((link) => !currentLinks.has(link.id) && displayed.has(link.source) && displayed.has(link.target));
+    return { points, nodes: [...displayed.values()], links: [...links, ...retainedLinks] };
   }
 
   function reservation(link) {
@@ -251,17 +319,22 @@
   const reservationText = (percent) => percent === null ? "Unknown" : `${percent.toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
 
   function renderTopology() {
-    const graph = $("topology-svg"), nodes = list(state.data?.topology?.nodes), links = list(state.data?.topology?.links), lsp = selectedLsp();
+    const graph = $("topology-svg"), observedNodes = list(state.data?.topology?.nodes), observedLinks = list(state.data?.topology?.links), lsp = selectedLsp();
+    const display = topologyLayout(observedNodes, observedLinks), { points, nodes, links } = display;
+    state.topologyDisplay = display;
+    const topologyFresh = sourceState(source("topology")) === "fresh" && !state.paused;
+    const observation = (item) => !topologyFresh ? "Observation unavailable" : item.retained ? "Not advertised" : "Currently advertised";
     graph.replaceChildren(); graph.toggleAttribute("hidden", !nodes.length); $("topology-empty").hidden = !!nodes.length;
     $("topology-name").textContent = string(state.data?.topology?.name, "Awaiting data");
     $("topology-freshness").textContent = titleCase(sourceState(source("topology")));
     if (!nodes.length) { $("topology-caption").textContent = "Topology is unavailable; no route is inferred."; renderInspector(); return; }
-    const points = topologyLayout(nodes, links), paths = new Map(), pairs = new Map();
+    const paths = new Map(), pairs = new Map();
     for (const link of links) { const key = [link.source, link.target].sort().join("\u0000"); if (!pairs.has(key)) pairs.set(key, []); pairs.get(key).push(link); }
     for (const pair of pairs.values()) pair.sort((a, b) => String(a.id).localeCompare(String(b.id)));
     const defs = svg("defs");
     const marker = svg("marker", { id: "link-arrow", viewBox: "0 0 10 10", refX: 8, refY: 5, markerWidth: 4, markerHeight: 4, orient: "auto" }); marker.append(svg("path", { d: "M 0 0 L 10 5 L 0 10 Z", class: "link-arrow" })); defs.append(marker); graph.append(defs);
     for (const link of links) {
+      const unavailable = link.retained || !topologyFresh;
       const a = points.get(link.source), b = points.get(link.target); if (!a || !b) continue;
       const pair = pairs.get([link.source, link.target].sort().join("\u0000"));
       const index = pair.indexOf(link), offset = pair.length === 1 ? 0 : (index - (pair.length - 1) / 2) * 19;
@@ -270,10 +343,10 @@
       const mx = (a.x + b.x) / 2 - dy / distance * offset * direction, my = (a.y + b.y) / 2 + dx / distance * offset * direction;
       const start = { x: a.x + dx / distance * 22, y: a.y + dy / distance * 22 }, end = { x: b.x - dx / distance * 24, y: b.y - dy / distance * 24 };
       const d = `M${start.x},${start.y} Q${mx},${my} ${end.x},${end.y}`; paths.set(link.id, d);
-      const group = svg("g", { class: `link-group${state.inspected?.kind === "link" && state.inspected.id === link.id ? " selected" : ""}`, tabindex: 0, role: "button", "aria-label": `${link.source} to ${link.target}, ${reservationText(reservation(link))} RSVP reserved`, "data-focus-key": `link-${link.id}` });
-      group.append(svg("title", {}, `${link.source} → ${link.target}: ${reservationText(reservation(link))} reserved; ${bandwidth(link.available_bw_bps)} available; receiving ${string(link.remote_address)}`));
-      group.append(svg("path", { d, class: `topology-link ${reservationClass(reservation(link))}`, "marker-end": "url(#link-arrow)" }), svg("path", { d, class: "link-hit" }));
-      group.append(svg("text", { x: (start.x + 2 * mx + end.x) / 4, y: (start.y + 2 * my + end.y) / 4 - 7, class: "link-label" }, reservationText(reservation(link))));
+      const group = svg("g", { class: `link-group${unavailable ? " unavailable" : ""}${state.inspected?.kind === "link" && state.inspected.id === link.id ? " selected" : ""}`, tabindex: 0, role: "button", "aria-label": `${link.source} to ${link.target}, ${unavailable ? observation(link) : `${reservationText(reservation(link))} RSVP reserved`}`, "data-focus-key": `link-${link.id}` });
+      group.append(svg("title", {}, unavailable ? `${link.source} → ${link.target} · ${observation(link)} · last observed connection; current bandwidth unknown` : `${link.source} → ${link.target}: ${reservationText(reservation(link))} reserved; ${bandwidth(link.available_bw_bps)} available; receiving ${string(link.remote_address)}`));
+      group.append(svg("path", { d, class: `topology-link ${unavailable ? "unavailable" : reservationClass(reservation(link))}`, "marker-end": "url(#link-arrow)" }), svg("path", { d, class: "link-hit" }));
+      if (!unavailable) group.append(svg("text", { x: (start.x + 2 * mx + end.x) / 4, y: (start.y + 2 * my + end.y) / 4 - 7, class: "link-label" }, reservationText(reservation(link))));
       const inspect = () => preserveFocus(() => { state.inspected = { kind: "link", id: link.id }; renderTopology(); });
       group.addEventListener("click", inspect); group.addEventListener("keydown", (event) => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); inspect(); } }); graph.append(group);
     }
@@ -281,23 +354,29 @@
     const activeFresh = lsp && isActive(lsp) && fresh(lsp) && sourceState(source("topology")) === "fresh" && !state.paused;
     for (const link of route.links) if (paths.has(link.id)) graph.append(svg("path", { d: paths.get(link.id), class: `selected-path ${!fresh(lsp) || state.paused ? "stale" : isActive(lsp) ? activeFresh ? "flow" : "" : reported.toUpperCase() === "DOWN" ? "down" : "pending"}` }));
     for (const node of nodes) {
-      const point = points.get(node.id), edge = /^PE/i.test(node.id), group = svg("g", { class: `node-group${state.inspected?.kind === "node" && state.inspected.id === node.id ? " selected" : ""}`, tabindex: 0, role: "button", "aria-label": `${node.id}, ${string(node.loopback, "address unknown")}`, "data-focus-key": `node-${node.id}` });
-      group.append(svg("title", {}, `${node.id} · ${string(node.loopback)} · area ${string(node.area)}`), svg("circle", { cx: point.x, cy: point.y, r: edge ? 20 : 15, class: `topology-node${edge ? " edge" : ""}` }));
+      const unavailable = node.retained || !topologyFresh;
+      const point = points.get(node.id), edge = /^PE/i.test(node.id), group = svg("g", { class: `node-group${unavailable ? " unavailable" : ""}${state.inspected?.kind === "node" && state.inspected.id === node.id ? " selected" : ""}`, tabindex: 0, role: "button", "aria-label": `${node.id}, ${string(node.loopback, "address unknown")}${unavailable ? `, ${observation(node)}` : ""}`, "data-focus-key": `node-${node.id}` });
+      group.append(svg("title", {}, `${node.id} · ${string(node.loopback)} · ${observation(node)} · area ${string(node.area)}`), svg("circle", { cx: point.x, cy: point.y, r: edge ? 20 : 15, class: `topology-node${edge ? " edge" : ""}` }));
       group.append(svg("path", { d: `M${point.x - 7},${point.y - 3}h14 M${point.x - 4},${point.y - 6}l-3,3 3,3 M${point.x + 4},${point.y}l3,3 -3,3 M${point.x - 7},${point.y + 3}h14`, class: "node-symbol" }));
       group.append(svg("text", { x: point.x, y: point.y + (edge ? 36 : 30), class: "node-label" }, node.id), svg("text", { x: point.x, y: point.y + (edge ? 50 : 44), class: "node-address" }, string(node.loopback)));
+      if (unavailable) group.append(svg("text", { x: point.x, y: point.y + (edge ? 64 : 58), class: "node-status" }, observation(node)));
       const inspect = () => preserveFocus(() => { state.inspected = { kind: "node", id: node.id }; renderTopology(); });
       group.addEventListener("click", inspect); group.addEventListener("keydown", (event) => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); inspect(); } }); graph.append(group);
     }
     $("topology-caption").textContent = !lsp ? "Select an LSP to inspect its reported ERO. Select a node or directed link for details." : !route.hops.length ? "Selected LSP has no explicit route; no path is inferred." : route.unresolved ? "Reported ERO is partly unresolved or ambiguous in this topology. Only exact directed matches are drawn." : `${isActive(lsp) ? "Reported" : "Intended"} ERO · ${string(lsp.name, lsp.id)}${!fresh(lsp) || state.paused ? " · retained snapshot" : ""}. Forwarding is not verified here.`;
+    const retained = nodes.filter((node) => node.retained).length;
+    if (!topologyFresh) $("topology-caption").textContent += " Last observed map; current topology observation is unavailable.";
+    else if (retained || links.some((link) => link.retained)) $("topology-caption").textContent += ` ${retained ? `${retained} retained router${retained === 1 ? "" : "s"}; ` : ""}dashed outlines are not currently advertised.`;
     renderInspector();
   }
 
   function renderInspector() {
     const container = $("topology-inspector"); container.replaceChildren(); container.hidden = !state.inspected;
     if (!state.inspected) return;
-    const item = state.inspected.kind === "node" ? list(state.data?.topology?.nodes).find((node) => node.id === state.inspected.id) : list(state.data?.topology?.links).find((link) => link.id === state.inspected.id);
+    const item = state.inspected.kind === "node" ? list(state.topologyDisplay?.nodes).find((node) => node.id === state.inspected.id) : list(state.topologyDisplay?.links).find((link) => link.id === state.inspected.id);
     if (!item) { container.hidden = true; return; }
-    const description = state.inspected.kind === "node" ? `${item.id} · ${string(item.loopback)} · area ${string(item.area)}` : `${item.source} → ${item.target} · ${bandwidth(item.reserved_bw_bps)} reserved / ${bandwidth(item.reservable_bw_bps)} reservable · ${bandwidth(item.available_bw_bps)} available · metric ${string(item.metric)}`;
+    const status = sourceState(source("topology")) !== "fresh" || state.paused ? "Observation unavailable" : item.retained ? "Not advertised" : "Currently advertised";
+    const description = state.inspected.kind === "node" ? `${item.id} · ${string(item.loopback)} · ${status} · area ${string(item.area)}` : item.retained || status === "Observation unavailable" ? `${item.source} → ${item.target} · ${status} · last observed connection; current bandwidth unknown` : `${item.source} → ${item.target} · ${bandwidth(item.reserved_bw_bps)} reserved / ${bandwidth(item.reservable_bw_bps)} reservable · ${bandwidth(item.available_bw_bps)} available · metric ${string(item.metric)}`;
     container.append(el("span", "mono", description));
     const close = el("button", "button", "Close"); close.dataset.focusKey = "inspector-close";
     close.addEventListener("click", () => { const key = `${state.inspected.kind}-${state.inspected.id}`; state.inspected = null; renderTopology(); Array.from(document.querySelectorAll("[data-focus-key]")).find((node) => node.dataset.focusKey === key)?.focus({ preventScroll: true }); }); container.append(close);

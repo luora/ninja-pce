@@ -70,13 +70,19 @@ lab network, or the authenticated HTTPS proxy below for public access.
 - **ACTIVE** is the PCC's reported state, not independent evidence of forwarding.
   Stale reports retain their last reported state but lose their current status.
 - Selecting an LSP highlights a route only when its ERO resolves unambiguously to
-  directed links in the displayed topology. Unresolved routes remain visible as
+  directed links in the fresh observed topology. Unresolved routes remain visible as
   addresses rather than a guessed path.
 - Router positions stay fixed when tunnels reroute, links change or an LSP is
   selected. The browser remembers positions for each topology and mode across
   page reloads; temporarily absent routers reuse their positions when they return.
   With browser storage unavailable, positions remain stable for the open page.
-  Only current observed links and resolved tunnel overlays are drawn.
+  Previously observed routers remain visible when their advertisements disappear,
+  labelled **Not advertised** in a fresh snapshot. Previously observed connections
+  remain as muted dashed outlines, with no current bandwidth values or route
+  eligibility. Source failures instead label the retained map **Observation
+  unavailable**. Current counts and tables still describe the observed TED.
+  Browser history cannot supply routers or links that were never observed; older
+  position-only history can recover router identities, but has no link history.
 - Link bandwidth shows advertised RSVP reservation data, not measured traffic.
   Local ledger holds are separate controller accounting and can remain after a
   peer observation expires.
@@ -216,6 +222,10 @@ link withdrawal/restoration, selection of another headend, shuffled input order,
 unavailable snapshots, router disappearance/reappearance, new routers and page
 reloads during a failure. Disabled or malformed browser storage is handled without
 preventing the map from rendering.
+Retained-map checks cover PE3 withdrawal, browser reload while PE3 is absent,
+restoration, position-only cache migration and directional link withdrawal.
+Fresh omissions are distinguished from unavailable/stale sources; historical
+connections supply neither bandwidth values nor resolved ERO hops.
 
 Browser interaction checks use explicit synthetic demo data and a view with absent
 input files. The isolated dashboard service also reads the running GNS3 controller:
