@@ -2,7 +2,8 @@
 
 The default profile observes RSVP LSP reports. Explicitly configured responders
 can answer PCReq or provision an initial, authorized empty-ERO delegation using
-PCUpd. There is no PCInitiate or automatic rerouting of active LSPs. Captures
+PCUpd. An additional opt-in profile recovers one delegated tunnel after a
+validated topology withdrawal. There is no PCInitiate. Captures
 are evidence, not a TED or reservation confirmation. Plain TCP provides no
 cryptographic peer identity.
 """
@@ -13,18 +14,21 @@ import copy
 import ipaddress
 import json
 import math
+import os
 import struct
 import time
 import uuid
 from collections import deque
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
+from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from .pcep_compute import PcepPathComputer
     from .pcep_delegation import DelegatedPathComputer
+    from .pcep_failover import FailureRecoveryPlanner
 
 from .state import load_state, write_state
 
@@ -358,20 +362,33 @@ class PcepServer:
 
     def __init__(self, config: PcepServerConfig, *, capture_path: Path | None = None,
                  path_computer: PcepPathComputer | None = None,
-                 delegated_computer: DelegatedPathComputer | None = None):
+                 delegated_computer: DelegatedPathComputer | None = None,
+                 failover: FailureRecoveryPlanner | None = None):
         self.config = config
         self.capture_path = capture_path
         self.path_computer = path_computer
         self.delegated_computer = delegated_computer
+        self.failover = failover
         if delegated_computer is not None and (
                 path_computer is None or not config.keepalive or
                 not set(delegated_computer.allowed_tunnels) <= set(config.allowed_peers) or
                 set(delegated_computer.allowed_tunnels) & set(config.stateless_peers)):
             raise ValueError("Delegation requires computation and allowed stateful PCCs")
+        if failover is not None and (
+                delegated_computer is None or path_computer is not failover.computer or
+                failover.tunnel_id not in delegated_computer.allowed_tunnels.get(failover.peer, ())):
+            raise ValueError("Failure recovery requires the same computer and an authorized delegated tunnel")
+        if failover is not None:
+            inputs = [failover.computer.raw_path, failover.computer.status_path, failover.computer.topology_path]
+            if capture_path is not None:
+                inputs.append(capture_path)
+            if failover.path.resolve() in {path.resolve() for path in inputs}:
+                raise ValueError("Failure recovery journal must be distinct from observation files")
         self._compute_slots = asyncio.Semaphore(config.max_computations)
         self._workers: set[asyncio.Task[Any]] = set()
         self._server: asyncio.Server | None = None
         self._serving_task: asyncio.Task[None] | None = None
+        self._failover_task: asyncio.Task[None] | None = None
         self._connections: dict[str, _Connection] = {}
         self._tasks: set[asyncio.Task[None]] = set()
         self._peers: dict[str, dict[str, Any]] = {}
@@ -419,6 +436,7 @@ class PcepServer:
                              "path_computation": self.path_computer is not None},
             "stateless_peers": list(self.config.stateless_peers),
             "capture_error": self._capture_error, "rejected_connections": self._rejected,
+            "failure_recovery": self.failover.snapshot() if self.failover is not None else None,
             "peers": peers, "events": list(self._events),
         }
 
@@ -452,6 +470,8 @@ class PcepServer:
             await self._server.wait_closed()
             self._server = None
             raise
+        if self.failover is not None:
+            self._failover_task = asyncio.create_task(self._watch_failover())
 
     async def serve_forever(self) -> None:
         if self._server is None:
@@ -465,6 +485,10 @@ class PcepServer:
 
     async def close(self) -> None:
         self._closing = True
+        if self._failover_task is not None:
+            self._failover_task.cancel()
+            await asyncio.gather(self._failover_task, return_exceptions=True)
+            self._failover_task = None
         server, self._server = self._server, None
         if server is not None:
             server.close()
@@ -487,10 +511,14 @@ class PcepServer:
             self._serving_task = None
         self._persist()
 
-    async def _send(self, peer: str, connection: _Connection, raw: bytes) -> None:
+    async def _send(self, peer: str, connection: _Connection, raw: bytes, *,
+                    guard: Callable[[], bool] | None = None,
+                    prepare: Callable[[], None] | None = None) -> None:
         async with connection.send_lock:
-            if connection.terminal:
+            if connection.terminal or guard is not None and not guard():
                 return
+            if prepare is not None:
+                prepare()
             connection.writer.write(raw)
             await asyncio.wait_for(connection.writer.drain(), timeout=self.config.handshake_timeout)
             connection.last_tx = time.monotonic()
@@ -557,6 +585,13 @@ class PcepServer:
             key = report_key(report)
             if not report["delegate"] or report["removed"]:
                 continue
+            recovery_state = self.failover.snapshot() if self.failover is not None else {}
+            if self.failover is not None and self.failover.matches(peer, report) and (
+                    report["ero"] or recovery_state.get("baseline") or recovery_state.get("pending")):
+                # The opt-in recovery policy validates/adopts the existing
+                # path independently. Do not return its delegation merely
+                # because it was not initially provisioned in this session.
+                continue
             if connection.owned_plsps.get(report["plsp_id"]) == ownership_key(report) and report["ero"]:
                 report["delegation_accepted"] = True
                 continue
@@ -578,6 +613,145 @@ class PcepServer:
         connection.request_body = None
         connection.computation = asyncio.create_task(self._compute_delegations(peer, connection, reports, srps))
         connection.computation.add_done_callback(lambda task: self._delegation_done(peer, connection, task))
+
+    def _recovery_report(self, peer: str, connection: _Connection) -> dict[str, Any] | None:
+        if self.failover is None:
+            return None
+        reports = [report for report in connection.state["reports"].values()
+                   if self.failover.matches(peer, report)]
+        # Prefer the latest report, including revocation. An older ACTIVE
+        # incarnation must not conceal a newer DOWN or undelegated report.
+        if not reports:
+            return None
+        pending = self.failover.snapshot().get("pending")
+        if pending:
+            def priority(report: dict[str, Any]) -> tuple[bool, bool, float]:
+                recent = report.get("received_at", 0) >= pending["created_at"]
+                addresses = [hop.get("address") for hop in report["ero"]]
+                return (recent and addresses == pending["ero"],
+                        recent and report["srp_id"] == pending["srp_id"], report.get("received_at", 0))
+            return max(reports, key=priority)
+        return max(reports, key=lambda report: report.get("received_at", 0))
+
+    def _recovery_session_fresh(self, connection: _Connection) -> bool:
+        ttl = min(connection.remote_deadtimer or self.config.observation_ttl,
+                  self.config.observation_ttl)
+        return bool(not self._closing and not connection.terminal and
+                    connection.state["state"] == "ESTABLISHED" and
+                    connection.state["synchronized"] and
+                    (connection.state.get("peer_open", {}).get("stateful_flags") or 0) & 1 and
+                    time.monotonic() - connection.last_rx < ttl)
+
+    def _recovery_failed(self, reason: str) -> None:
+        if self.failover is None:
+            return
+        try:
+            self.failover.failed(reason)
+        except (OSError, ValueError) as exc:
+            # Journal errors stop the monitor without bypassing transport
+            # cleanup or masking the original session failure.
+            self._capture_error = f"Failure journal unavailable: {exc}"
+
+    async def _watch_failover(self) -> None:
+        """Watch topology independently of incoming PCRpt and keepalive traffic."""
+        assert self.failover is not None
+        try:
+            while not self._closing:
+                await asyncio.sleep(1)
+                if self._capture_error is not None:
+                    self._recovery_failed("capture_unavailable")
+                    return
+                peer = self.failover.peer
+                connection = self._connections.get(peer)
+                if connection is None or not self._recovery_session_fresh(connection):
+                    self._recovery_failed("session_unavailable_or_stale")
+                    continue
+                if connection.computation is not None and not connection.computation.done():
+                    continue
+                report = self._recovery_report(peer, connection)
+                if report is None:
+                    self._recovery_failed("controlled_tunnel_unavailable")
+                    continue
+                self.failover.observe(peer, report, fresh=True, synchronized=True)
+                if not report["delegate"] or not report["administrative_up"] or report["removed"]:
+                    self._persist()
+                    continue
+                connection.computation = asyncio.create_task(self._compute_failure(peer, connection, report))
+                connection.computation.add_done_callback(
+                    partial(self._recovery_task_done, peer, connection))
+        except (OSError, ValueError, RuntimeError) as exc:
+            self._recovery_failed(f"recovery_monitor_failed:{type(exc).__name__}")
+            self._capture_error = f"Failure recovery stopped: {exc}"
+
+    def _recovery_task_done(self, peer: str, connection: _Connection, task: asyncio.Task[None]) -> None:
+        if not task.cancelled() and task.exception() is not None:
+            self._recovery_failed("recovery_task_failed")
+            self._capture_error = f"Failure recovery stopped: {task.exception()}"
+        elif not self._closing and not connection.terminal and self._connections.get(peer) is connection:
+            self._schedule_delegations(peer, connection)
+
+    async def _compute_failure(self, peer: str, connection: _Connection,
+                               report: dict[str, Any]) -> None:
+        from .pcep_delegation import ownership_key, report_fingerprint
+
+        recovery = self.failover
+        assert recovery is not None
+        if self._compute_slots.locked() or connection.srp_sequence >= 0xFFFFFFFE:
+            return
+        original = copy.deepcopy(report)
+        srp = connection.srp_sequence + 1
+        await self._compute_slots.acquire()
+        worker = asyncio.create_task(asyncio.to_thread(recovery.compute, peer, original, srp))
+        self._workers.add(worker)
+
+        def finished(task: asyncio.Task[Any]) -> None:
+            self._workers.discard(task)
+            self._compute_slots.release()
+            if not task.cancelled():
+                task.exception()
+
+        worker.add_done_callback(finished)
+        try:
+            reply = await asyncio.wait_for(asyncio.shield(worker), self.config.computation_timeout)
+        except (asyncio.TimeoutError, ValueError, RuntimeError, OSError):
+            self._recovery_failed("recovery_computation_failed")
+            return
+        if reply is None:
+            self._persist()
+            return
+        current = self._recovery_report(peer, connection)
+        if (self._connections.get(peer) is not connection or not self._recovery_session_fresh(connection) or
+                current is None or report_fingerprint(current) != report_fingerprint(original)):
+            return
+        if os.environ.get("NINJA_PCE_PREVIEW_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}:
+            return
+        if not recovery.computer.validate_reply(reply):
+            return
+        def authorized() -> bool:
+            latest = self._recovery_report(peer, connection)
+            return bool(self._capture_error is None and self._connections.get(peer) is connection and
+                        self._recovery_session_fresh(connection) and latest is not None and
+                        report_fingerprint(latest) == report_fingerprint(original) and
+                        os.environ.get("NINJA_PCE_PREVIEW_ONLY", "").strip().lower() not in
+                        {"1", "true", "yes", "on"} and recovery.computer.validate_reply(reply))
+
+        def prepare() -> None:
+            # This runs inside the send lock, immediately before writer.write.
+            # Persist uncertainty before exposing bytes to the transport.
+            recovery.prepare_send(peer, current, reply)
+            connection.srp_sequence = srp
+            outcome = reply.outcomes[0]
+            connection.state["updates"][str(srp)] = {
+                **outcome, "sent_at": time.time(), "acknowledged": False,
+                "plsp_id": current["plsp_id"], "srp_id": srp,
+                "sender": current["identifiers"]["sender"],
+                "endpoint": current["identifiers"]["endpoint"],
+                "tunnel_id": current["identifiers"]["tunnel_id"],
+                "ownership_key": list(ownership_key(current)), "topology_digest": reply.topology_digest,
+            }
+            connection.owned_plsps[current["plsp_id"]] = ownership_key(current)
+
+        await self._send(peer, connection, reply.messages[0], guard=authorized, prepare=prepare)
 
     async def _compute_delegations(self, peer: str, connection: _Connection,
                                    reports: list[dict[str, Any]], srps: tuple[int, ...]) -> None:
@@ -621,16 +795,28 @@ class PcepServer:
             current = connection.state["reports"].get(report_key(original))
             if current is None or report_fingerprint(current) != report_fingerprint(original):
                 continue  # Revoked, changed, or removed while the worker ran.
-            srp = str(outcome["srp_id"])
-            connection.state["updates"][srp] = {**outcome, "sent_at": time.time(), "acknowledged": False,
-                                               "ownership_key": list(ownership_key(original)),
-                                               "topology_digest": reply.topology_digest}
-            if outcome["status"] == "INITIAL_PATH":
-                connection.owned_plsps[original["plsp_id"]] = ownership_key(original)
-                current["delegation_accepted"] = True
-            else:
-                connection.owned_plsps.pop(original["plsp_id"], None)
-            await self._send(peer, connection, message)
+            if os.environ.get("NINJA_PCE_PREVIEW_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}:
+                continue
+            def authorized_initial() -> bool:
+                latest = connection.state["reports"].get(report_key(original))
+                return bool(self._capture_error is None and self._connections.get(peer) is connection and
+                            self._recovery_session_fresh(connection) and latest is not None and
+                            report_fingerprint(latest) == report_fingerprint(original) and
+                            os.environ.get("NINJA_PCE_PREVIEW_ONLY", "").strip().lower() not in
+                            {"1", "true", "yes", "on"} and computer.validate_reply(reply))
+
+            def prepare_initial() -> None:
+                srp = str(outcome["srp_id"])
+                connection.state["updates"][srp] = {**outcome, "sent_at": time.time(), "acknowledged": False,
+                                                   "ownership_key": list(ownership_key(original)),
+                                                   "topology_digest": reply.topology_digest}
+                if outcome["status"] == "INITIAL_PATH":
+                    connection.owned_plsps[original["plsp_id"]] = ownership_key(original)
+                    current["delegation_accepted"] = True
+                else:
+                    connection.owned_plsps.pop(original["plsp_id"], None)
+
+            await self._send(peer, connection, message, guard=authorized_initial, prepare=prepare_initial)
 
     def _acknowledge_updates(self, connection: _Connection, reports: list[dict[str, Any]]) -> None:
         from .pcep_delegation import ownership_key
@@ -789,6 +975,9 @@ class PcepServer:
                             update = state["updates"].get(srp)
                             if update is not None:
                                 update.update(acknowledged=True, status="PCC_ERROR", errors=state["last_peer_errors"])
+                                if self.failover is not None and self.failover.peer == peer and (
+                                        update.get("tunnel_id") == self.failover.tunnel_id):
+                                    self._recovery_failed("pcc_error")
                                 connection.owned_plsps.pop(update["plsp_id"], None)
                 elif message_type == PCRPT:
                     if not remote["stateful"] or not local_stateful:
@@ -798,6 +987,20 @@ class PcepServer:
                     self._apply_reports(state, reports)
                     if allow_delegation:
                         self._acknowledge_updates(connection, reports)
+                        if self.failover is not None:
+                            revoked = any(self.failover.matches(peer, item) and not item["removed"] and
+                                          (not item["delegate"] or not item["administrative_up"])
+                                          for item in reports)
+                            current = self._recovery_report(peer, connection)
+                            if revoked:
+                                self._recovery_failed("delegation_revoked_or_administratively_disabled")
+                            elif current is not None:
+                                self.failover.observe(peer, current, fresh=True,
+                                                      synchronized=state["synchronized"])
+                            elif any(item["removed"] and (self.failover.matches(peer, item) or
+                                     item["plsp_id"] == (self.failover.snapshot().get("baseline") or {}).get("plsp_id"))
+                                     for item in reports):
+                                self._recovery_failed("controlled_tunnel_removed")
                         self._schedule_delegations(peer, connection)
                 elif message_type == PCREQ and self.path_computer is not None:
                     if connection.computation is not None and not connection.computation.done():
@@ -859,6 +1062,8 @@ class PcepServer:
                 keepalive_task.cancel()
                 await asyncio.gather(keepalive_task, return_exceptions=True)
             self._connections.pop(peer, None)
+            if self.failover is not None and self.failover.peer == peer:
+                self._recovery_failed("pcep_session_disconnected")
             state.update(state="DISCONNECTED", fresh=False, synchronized=False, disconnected_at=time.time(),
                          stale_reason="server_shutdown" if self._closing else reason)
             writer.close()

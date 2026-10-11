@@ -360,6 +360,13 @@ class PcepPathComputer:
         except (ValueError, OSError, RuntimeError, RecursionError):
             return False
 
+    def validated_snapshot(self) -> tuple[Topology, str]:
+        """Return the same fresh, internally consistent graph used for computation.
+
+        This is observation evidence, not per-LSP ownership or admission proof.
+        """
+        return self._snapshot()
+
     def __call__(self, peer: str, body: bytes) -> PathReply:
         try:
             groups = _groups(body)
@@ -442,5 +449,6 @@ class PcepPathComputer:
             source=request.source, destination=request.destination, bandwidth_bps=request.bandwidth_bps,
             setup_priority=request.setup_priority, hold_priority=request.hold_priority,
             path_nodes=list(result.path_nodes), ero=[str(address) for address in addresses],
+            path_link_ids=[link.id for link in result.path_links],
             total_metric=result.total_metric, topology_timestamp=topology.raw_metadata["timestamp"],
         )

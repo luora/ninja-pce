@@ -205,3 +205,37 @@ def test_valid_delegation_binds_only_explicit_headend_and_tunnels(
     assert offline_server["config"].stateless_peers == (SECOND_PEER,)
     assert offline_server["started"] and offline_server["closed"]
     assert not (tmp_path / "pcep.json").exists()
+
+
+@pytest.mark.parametrize("option", ["--failover-tunnel", "--failover-state"])
+def test_failure_recovery_needs_both_explicit_options(tmp_path, offline_server, option):
+    value = f"{PEER}=100" if option == "--failover-tunnel" else str(tmp_path / "recovery.json")
+    assert main([*base_args(tmp_path), option, value]) == 1
+    assert not offline_server
+
+
+@pytest.mark.parametrize("binding", [f"{PEER}=101", f"{SECOND_PEER}=100", f"{PEER}=-1", "invalid"])
+def test_failure_recovery_requires_exact_existing_authorization(tmp_path, offline_server, binding):
+    assert main([*base_args(tmp_path), *flatten(compute_options(tmp_path)),
+                 "--compute-delegated-tunnel", f"{PEER}=100",
+                 "--failover-tunnel", binding, "--failover-state", str(tmp_path / "recovery.json")]) == 1
+    assert not offline_server
+
+
+@pytest.mark.parametrize("filename", ["pcep.json", "raw.json", "status.json", "topology.json", "nodes.json"])
+def test_failure_journal_cannot_replace_observations(tmp_path, offline_server, filename):
+    assert main([*base_args(tmp_path), *flatten(compute_options(tmp_path)),
+                 "--compute-delegated-tunnel", f"{PEER}=100",
+                 "--failover-tunnel", f"{PEER}=100", "--failover-state", str(tmp_path / filename)]) == 1
+    assert not offline_server
+
+
+def test_failure_recovery_is_explicit_and_defaults_to_bounded_policy(tmp_path, offline_server):
+    assert main([*base_args(tmp_path), *flatten(compute_options(tmp_path)),
+                 "--compute-delegated-tunnel", f"{PEER}=100",
+                 "--failover-tunnel", f"{PEER}=100", "--failover-state", str(tmp_path / "recovery.json")]) == 0
+    planner = offline_server["options"]["failover"]
+    assert planner.peer == PEER and planner.tunnel_id == 100
+    assert planner.max_attempts == 3 and planner.debounce == 5 and planner.cooldown == 30
+    assert planner.path == (tmp_path / "recovery.json").resolve()
+    assert not planner.path.exists()

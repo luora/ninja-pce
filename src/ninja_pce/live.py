@@ -50,6 +50,8 @@ def add_live_commands(subparsers: Any) -> None:
                       help="Authorized PCC-IP=source-loopback; repeatable")
     pcep.add_argument("--compute-delegated-tunnel", action="append", default=[],
                       help="Opt in to initial delegated path provision for PCC-IP=tunnel-ID; repeatable")
+    pcep.add_argument("--failover-tunnel", help="Opt in to recovery of one delegated PCC-IP=tunnel-ID")
+    pcep.add_argument("--failover-state", help="Persistent failure-recovery journal; required with --failover-tunnel")
 
 
 def _positive(value: float, label: str) -> None:
@@ -202,6 +204,29 @@ async def _serve_pcep(args: argparse.Namespace) -> int:
                 raise ValueError("Delegated tunnel ID must be decimal")
             allowed_tunnels[peer] = (*allowed_tunnels.get(peer, ()), int(tunnel))
         server_options["delegated_computer"] = DelegatedPathComputer(computer, allowed_tunnels)
+    if bool(args.failover_tunnel) != bool(args.failover_state):
+        raise ValueError("Failure recovery requires both --failover-tunnel and --failover-state")
+    if args.failover_tunnel:
+        delegated = server_options.get("delegated_computer")
+        if computer is None or delegated is None:
+            raise ValueError("Failure recovery requires computation and explicit delegated tunnel authorization")
+        if args.failover_tunnel.count("=") != 1:
+            raise ValueError("Failure recovery binding must be PCC-IP=tunnel-ID")
+        address, tunnel = args.failover_tunnel.split("=")
+        peer = str(ipaddress.IPv4Address(address))
+        if not tunnel.isascii() or not tunnel.isdecimal():
+            raise ValueError("Failure recovery tunnel ID must be decimal")
+        tunnel_id = int(tunnel)
+        if tunnel_id not in delegated.allowed_tunnels.get(peer, ()):
+            raise ValueError("Failure recovery tunnel must already be explicitly authorized for delegation")
+        journal = Path(args.failover_state).resolve()
+        if journal in paths:
+            raise ValueError("Failure recovery journal must be distinct from capture and live input files")
+        from .pcep_failover import FailureRecoveryPlanner
+
+        server_options["failover"] = FailureRecoveryPlanner(
+            computer, peer=peer, tunnel_id=tunnel_id, journal_path=journal,
+        )
     server = PcepServer(
         PcepServerConfig(
             listen_host=args.listen_host, port=args.port, allowed_peers=tuple(args.allow_peer),
