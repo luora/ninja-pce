@@ -174,8 +174,8 @@
     return result;
   }
 
-  function topologyLayout(nodes, links) {
-    const root = nodes.find((node) => node.id === selectedLsp()?.source || node.loopback === selectedLsp()?.source) || nodes.find((node) => /^PE1$/i.test(node.id)) || nodes[0];
+  function initialTopologyLayout(nodes, links) {
+    const root = nodes.find((node) => /^PE1$/i.test(node.id)) || nodes.find((node) => /^PE/i.test(node.id)) || nodes[0];
     const levels = new Map([[root.id, 0]]), queue = [root.id];
     while (queue.length) {
       const id = queue.shift();
@@ -194,6 +194,54 @@
     return points;
   }
 
+  const topologyLayouts = new Map();
+  const nodeIdentity = (node) => JSON.stringify([node.id, node.loopback || ""]);
+  function topologyLayout(nodes, links) {
+    const ordered = [...nodes].sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    const scope = JSON.stringify([state.data.mode, state.data.topology.name]);
+    const storageKey = `ninja-pce.topology-layout.v1:${scope}`;
+    if (!topologyLayouts.has(scope)) {
+      let entries = [];
+      try {
+        const saved = JSON.parse(localStorage.getItem(storageKey));
+        if (saved?.version === 1 && Array.isArray(saved.points) && saved.points.length <= 512) {
+          entries = saved.points.filter((entry) => Array.isArray(entry) && entry.length === 2 && typeof entry[0] === "string" && entry[0].length <= 1024 &&
+            entry[1] && Number.isFinite(entry[1].x) && Number.isFinite(entry[1].y) && entry[1].x >= 65 && entry[1].x <= 585 && entry[1].y >= 45 && entry[1].y <= 223);
+        }
+      } catch { /* Keep the map stable in memory when storage is unavailable. */ }
+      topologyLayouts.set(scope, new Map(entries));
+    }
+    const saved = topologyLayouts.get(scope), identities = new Set(ordered.map(nodeIdentity));
+    // Absent routers keep their slots so that a flap does not rearrange the map.
+    const missing = ordered.filter((node) => !saved.has(nodeIdentity(node)));
+    if (missing.length) {
+      const seeded = saved.size > 0;
+      const initial = initialTopologyLayout(ordered, links);
+      const candidates = [];
+      for (let row = 0; row < 3; row++) for (let column = 0; column < 9; column++) candidates.push({ x: 65 + column * 65, y: 65 + row * 79 });
+      for (const node of missing) {
+        const preferred = initial.get(node.id), occupied = [...saved.values()];
+        // Preserve the initial automatic layout; newcomers use an unoccupied slot.
+        const clearance = (point) => occupied.length ? Math.min(...occupied.map((other) => Math.hypot(point.x - other.x, point.y - other.y))) : Infinity;
+        let point = preferred;
+        if (seeded && clearance(point) < 60) {
+          point = [...candidates].sort((a, b) => {
+            const aFree = clearance(a) >= 60, bFree = clearance(b) >= 60;
+            if (aFree !== bFree) return aFree ? -1 : 1;
+            return aFree ? Math.hypot(a.x - preferred.x, a.y - preferred.y) - Math.hypot(b.x - preferred.x, b.y - preferred.y) : clearance(b) - clearance(a);
+          })[0];
+        }
+        saved.set(nodeIdentity(node), point);
+      }
+      for (const identity of saved.keys()) {
+        if (saved.size <= 512) break;
+        if (!identities.has(identity)) saved.delete(identity);
+      }
+      try { localStorage.setItem(storageKey, JSON.stringify({ version: 1, points: [...saved] })); } catch { /* In-memory positions remain available. */ }
+    }
+    return new Map(ordered.map((node) => [node.id, saved.get(nodeIdentity(node))]));
+  }
+
   function reservation(link) {
     const capacity = number(link.reservable_bw_bps), reserved = number(link.reserved_bw_bps);
     if (capacity === null || capacity === 0 || reserved === null) return null;
@@ -210,6 +258,7 @@
     if (!nodes.length) { $("topology-caption").textContent = "Topology is unavailable; no route is inferred."; renderInspector(); return; }
     const points = topologyLayout(nodes, links), paths = new Map(), pairs = new Map();
     for (const link of links) { const key = [link.source, link.target].sort().join("\u0000"); if (!pairs.has(key)) pairs.set(key, []); pairs.get(key).push(link); }
+    for (const pair of pairs.values()) pair.sort((a, b) => String(a.id).localeCompare(String(b.id)));
     const defs = svg("defs");
     const marker = svg("marker", { id: "link-arrow", viewBox: "0 0 10 10", refX: 8, refY: 5, markerWidth: 4, markerHeight: 4, orient: "auto" }); marker.append(svg("path", { d: "M 0 0 L 10 5 L 0 10 Z", class: "link-arrow" })); defs.append(marker); graph.append(defs);
     for (const link of links) {

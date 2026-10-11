@@ -72,6 +72,11 @@ lab network, or the authenticated HTTPS proxy below for public access.
 - Selecting an LSP highlights a route only when its ERO resolves unambiguously to
   directed links in the displayed topology. Unresolved routes remain visible as
   addresses rather than a guessed path.
+- Router positions stay fixed when tunnels reroute, links change or an LSP is
+  selected. The browser remembers positions for each topology and mode across
+  page reloads; temporarily absent routers reuse their positions when they return.
+  With browser storage unavailable, positions remain stable for the open page.
+  Only current observed links and resolved tunnel overlays are drawn.
 - Link bandwidth shows advertised RSVP reservation data, not measured traffic.
   Local ledger holds are separate controller accounting and can remain after a
   peer observation expires.
@@ -205,6 +210,12 @@ retained reservation resources, strict/loose ERO metadata and HTTP boundaries.
 Chrome checks cover both themes, keyboard selection, filtering, source/API failure,
 recovery, reduced motion, unavailable browser storage and widths from 320 to
 1,440 pixels. The wheel includes all three UI assets.
+
+Topology layout checks also confirm unchanged router coordinates across reroutes,
+link withdrawal/restoration, selection of another headend, shuffled input order,
+unavailable snapshots, router disappearance/reappearance, new routers and page
+reloads during a failure. Disabled or malformed browser storage is handled without
+preventing the map from rendering.
 
 Browser interaction checks use explicit synthetic demo data and a view with absent
 input files. The isolated dashboard service also reads the running GNS3 controller:
