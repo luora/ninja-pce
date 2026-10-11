@@ -30,7 +30,7 @@ ninja-pce = "ninja_pce.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-ninja_pce = ["templates/*.j2"]
+ninja_pce = ["templates/*.j2", "web/*.html", "web/*.css", "web/*.js"]
 
 [tool.ruff]
 target-version = "py310"

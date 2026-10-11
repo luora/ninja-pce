@@ -108,6 +108,17 @@ def build_parser() -> argparse.ArgumentParser:
     daemon.add_argument("--health-host", help="Override health endpoint host")
     daemon.add_argument("--health-port", type=int, help="Override health endpoint port")
     daemon.add_argument("--no-health", action="store_true", help="Disable the health/metrics HTTP server")
+    dashboard = sub.add_parser("dashboard", help="Serve a read-only controller web dashboard")
+    dashboard.add_argument("--host", default="127.0.0.1", help="Bind address; default is loopback only")
+    dashboard.add_argument("--port", type=int, default=8088, help="Dashboard HTTP port (default: 8088)")
+    dashboard.add_argument("--topology", default="build/live/topology.json", help="Normalized live topology JSON")
+    dashboard.add_argument("--bgpls-status", default="build/live/bgpls-status.json", help="Collector health JSON")
+    dashboard.add_argument("--bgpls-raw", default="build/live/bgpls-raw.json", help="Raw collector JSON")
+    dashboard.add_argument("--pcep", default="build/live/pcep.json", help="Checksummed PCEP observation JSON")
+    dashboard.add_argument("--state-dir", default="build/state", help="Existing shared reservation directory")
+    dashboard.add_argument("--max-age", type=float, default=30.0, help="Observation freshness limit in seconds")
+    dashboard.add_argument("--refresh", type=float, default=5.0, help="Browser polling interval in seconds")
+    dashboard.add_argument("--demo", action="store_true", help="Use labelled synthetic examples, without live files")
     add_live_commands(sub)
     return parser
 
@@ -496,6 +507,29 @@ def cmd_daemon(args: argparse.Namespace) -> int:
             server.shutdown()
 
 
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    from .dashboard import DashboardConfig, create_dashboard_server
+
+    config = DashboardConfig(
+        topology_path=Path(args.topology), bgpls_status_path=Path(args.bgpls_status),
+        bgpls_raw_path=Path(args.bgpls_raw), pcep_path=Path(args.pcep), state_dir=Path(args.state_dir),
+        host=args.host, port=args.port, max_age_seconds=args.max_age, refresh_seconds=args.refresh, demo=args.demo,
+    )
+    try:
+        server = create_dashboard_server(config)
+    except OSError as exc:
+        raise ValueError(f"Cannot bind dashboard listener: {exc}") from exc
+    print(f"Ninja-PCE dashboard: http://{config.host}:{server.server_address[1]}/", flush=True)
+    print("Synthetic demo data" if config.demo else "Read-only controller observations", flush=True)
+    try:
+        server.serve_forever(poll_interval=0.25)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -517,6 +551,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_gns3_demo(args)
         if args.command == "daemon":
             return cmd_daemon(args)
+        if args.command == "dashboard":
+            return cmd_dashboard(args)
         if args.command == "bgpls-collect":
             return collect_bgpls(args)
         if args.command == "pcep-listen":
