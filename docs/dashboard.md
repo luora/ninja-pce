@@ -55,9 +55,8 @@ to the controller's private lab address, for example:
 .venv/bin/ninja-pce dashboard --host 172.16.100.10 --port 8088
 ```
 
-This first version has no authentication or TLS. Keep it on a trusted lab network
-or use SSH forwarding; the controller's Internet-facing interface is not the
-intended bind address.
+The dashboard process has no authentication or TLS. Use SSH forwarding, a trusted
+lab network, or the authenticated HTTPS proxy below for public access.
 
 ## Interpret the display
 
@@ -101,7 +100,102 @@ journalctl -u ninja-dashboard -n 50 --no-pager
 ```
 
 The unit listens on loopback and reads the default live paths. Use SSH forwarding
-to inspect it from another machine.
+or Nginx to inspect it from another machine.
+
+## Public access through Nginx
+
+Keep the dashboard on `127.0.0.1:8088`. Nginx listens on the IPv4 address assigned
+to the Internet interface `ens3`: HTTPS on port 443 and an HTTP-to-HTTPS redirect
+on port 80. The private lab interface continues carrying BGP-LS/PCEP.
+
+From the checkout containing the dashboard deployment files, install the proxy
+prerequisites and run the [setup script](../tools/setup_dashboard_nginx.sh):
+
+```bash
+sudo apt-get update
+sudo env NEEDRESTART_MODE=l apt-get -o DPkg::Lock::Timeout=300 install nginx apache2-utils gettext-base openssl
+sudo bash tools/setup_dashboard_nginx.sh
+```
+
+`NEEDRESTART_MODE=l` lists services needing an update restart so the package
+installation does not automatically recycle active PCEP sessions.
+
+On a fresh Nginx installation, its stock welcome site can remain enabled. To bind
+only the public interface, back up and disable that stock site. Moving from its
+wildcard port-80 listener to an address-specific listener can require a one-time
+`sudo systemctl restart nginx`; validate the configuration first. Preserve other
+sites on an existing Nginx deployment.
+
+The script selects the single global IPv4 address on `ens3` by default and keeps
+existing credentials and certificates. It checks the certificate identity and
+expiry, validates Nginx, and reloads the proxy. Use `--interface` or `--public-ip`
+only when changing the intended interface or selecting its assigned address.
+It checks the HTTPS authentication challenge after reloading and restores the
+previous site if that check fails.
+
+The [Nginx template](../gns3/controller/ubuntu-24.04/nginx/ninja-dashboard.conf.template)
+uses `${PUBLIC_IP}` as its only deployment placeholder. Set that value locally
+to the current `ens3` IPv4 address; do not commit the rendered configuration,
+public IP, passwords or private keys. When rendering with `envsubst`, restrict
+substitution to `'${PUBLIC_IP}'` so Nginx variables remain intact. If the DHCP
+address changes, update the bind configuration and certificate identity.
+
+The proxy mounts the dashboard at `/` and allows only `/`, `/index.html`,
+`/styles.css`, `/app.js`, `/api/controller` and `/healthz`. Every dashboard route
+requires HTTP Basic authentication over TLS. The proxy permits GET/HEAD, disables
+caching and removes the authentication header before forwarding to the dashboard.
+The API and health check receive the same protection as the page.
+
+Deployment files stay on the Ubuntu controller:
+
+| File | Purpose |
+|---|---|
+| `/etc/nginx/ninja-dashboard/fullchain.pem` | TLS certificate and chain |
+| `/etc/nginx/ninja-dashboard/privkey.pem` | TLS private key; root access only |
+| `/etc/nginx/ninja-dashboard/htpasswd` | Password hashes readable by Nginx |
+| `/home/ubuntu/.config/ninja-dashboard/initial-password` | Initial credential, available through the controller console |
+
+The bootstrap account is `dashboard`. Retrieve its generated password from the
+controller console with `sudo cat ~/.config/ninja-dashboard/initial-password`.
+The bootstrap certificate is self-signed, valid for 30 days, and includes the
+actual public IP as an IP subject alternative name. Before entering credentials,
+verify its SHA-256 fingerprint against the controller console and explicitly trust
+that certificate in the browser, or replace it with a publicly trusted certificate:
+
+```bash
+sudo openssl x509 -in /etc/nginx/ninja-dashboard/fullchain.pem -noout -sha256 -fingerprint
+```
+
+For an isolated dashboard checkout at `/home/ubuntu/ninja-dashboard`, reuse the
+existing controller virtual environment while reading its existing live files.
+Create this service override with `sudo systemctl edit ninja-dashboard`:
+
+```ini
+[Service]
+Environment=PYTHONPATH=/home/ubuntu/ninja-dashboard/src
+WorkingDirectory=/home/ubuntu/ninja-pce
+ExecStart=
+ExecStart=/home/ubuntu/ninja-pce/.venv/bin/python -m ninja_pce.cli dashboard --host 127.0.0.1 --port 8088
+```
+
+Then run `sudo systemctl daemon-reload` and `sudo systemctl restart ninja-dashboard`.
+
+After installing the proxy configuration, run `sudo nginx -t` before reloading
+Nginx. Verify that unauthenticated page/API requests return 401, authenticated
+requests succeed, unknown paths return 404, and port 8088 is bound only to
+loopback. Keep the previous configuration available for rollback and preserve
+the existing BGP-LS/PCEP firewall rules.
+
+A publicly trusted certificate can replace the bootstrap certificate. Let's
+Encrypt supports IP certificates through Certbot 5.4 or later using the
+`shortlived` profile and a webroot challenge. IP certificates expire after six
+days, so configure automatic renewal and a deploy hook that updates the files
+above, validates Nginx, and reloads it. The template serves only ACME challenge
+files from `/var/lib/ninja-dashboard/acme` without authentication on port 80;
+other HTTP requests redirect to HTTPS. Use that directory as the webroot and
+follow the [official IP certificate instructions](https://letsencrypt.org/2026/03/11/shorter-certs-certbot.html)
+and review the CA terms during setup. Staging certificates are not publicly
+trusted. A certificate from another CA can also use the same local paths.
 
 ## Validation
 
@@ -112,6 +206,12 @@ Chrome checks cover both themes, keyboard selection, filtering, source/API failu
 recovery, reduced motion, unavailable browser storage and widths from 320 to
 1,440 pixels. The wheel includes all three UI assets.
 
-Browser checks use explicit synthetic demo data and a live view with absent input
-files. This dashboard has not yet been exercised against the running GNS3
-controller in this branch.
+Browser interaction checks use explicit synthetic demo data and a view with absent
+input files. The isolated dashboard service also reads the running GNS3 controller:
+six topology nodes, sixteen directed links and one reported active LSP, with fresh
+BGP-LS and PCEP sources. The existing protocol service processes were preserved.
+The public Nginx deployment passes certificate-pinned external HTTPS checks,
+HTTP redirect checks and an external check that port 8088 is unreachable.
+Authenticated page, API and asset requests succeed; unauthenticated requests are
+challenged, mutation methods are denied, and arbitrary file/traversal routes are
+rejected. Re-running setup preserves the certificate and credentials.
