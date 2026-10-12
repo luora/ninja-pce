@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import time
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from test_pcep_creation_server import (
@@ -23,7 +25,8 @@ from test_pcep_creation_server import (
 from test_tunnel_creation import hold, manager, report, sent
 
 from ninja_pce.pcep import parse_objects, parse_reports
-from ninja_pce.pcep_initiation import encode_owned_update
+from ninja_pce.pcep_initiation import encode_delete, encode_initiate, encode_owned_update
+from ninja_pce.reservations import ReservationLedger
 from ninja_pce.state import load_state, write_state
 
 
@@ -270,3 +273,159 @@ def test_completion_correlated_removal_cannot_apply_or_refund_without_owned_clea
     assert restored["reported"] is None and restored["cleanup"] is None and restored["verified"] is False
     assert not restored["completion"].get("acknowledged")
     assert hold(tmp_path, op)["status"] == "ROLLBACK_REQUIRED"
+
+
+def _released_unacknowledged_completion(controller):
+    """Persist the recovered lab history without pretending it was acknowledged."""
+    op = controller.plan(PRINCIPAL, "historical-completion", **INTENT)
+    op = controller.mark_sending(op["id"], "historical-session", 1, "a" * 64)
+    controller.bind_owned_candidate(op["id"], report(op))
+    controller.uncertain(op["id"], "bandwidth was not applied")
+    controller.mark_completion(op["id"], "historical-session", 2, "b" * 64)
+    pcc = {"peer_ip": op["peer"], "state": "ESTABLISHED", "fresh": True, "synchronized": True,
+           "valid_until": time.time() + 60, "reports": {}}
+    evidence = {"router_reservations": {node: "c" * 64 for node in op["path_nodes"]},
+                "headend_configuration": "d" * 64, "observed_at": time.time()}
+    return controller.confirmed_absence(op["id"], pcc, evidence, resources_released=True)
+
+
+def test_released_completion_history_does_not_kill_monitor_or_block_next_creation(tmp_path, monkeypatch):
+    async def scenario():
+        lab = _lab(tmp_path, monkeypatch, update_ack_timeout=0.01)
+        server, creation, controller, _ = lab
+        historical = _released_unacknowledged_completion(controller)
+        rejected = controller.plan(PRINCIPAL, "historical-rejection", **INTENT)
+        rejected = controller.reject_before_send(rejected["id"], "rejected before delivery")
+        assert historical["status"] == "ROLLED_BACK" and not historical["completion"].get("acknowledged")
+        assert ReservationLedger(controller.state_dir).entries == {}
+
+        async with _running(lab):
+            reader, writer = await _connect(server)
+            original_list = controller.list
+            monitor_passes = 0
+
+            def counted_list():
+                nonlocal monitor_passes
+                monitor_passes += 1
+                return original_list()
+
+            monkeypatch.setattr(controller, "list", counted_list)
+            await _eventually(lambda: monitor_passes > 0, seconds=2)
+            assert server._capture_error is None and not creation.monitor.done()
+            assert controller.get(historical["id"]) == historical
+            assert controller.get(rejected["id"]) == rejected
+            assert ReservationLedger(controller.state_dir).entries == {}
+
+            fresh = await creation.create(PRINCIPAL, "after-recovery", INTENT)
+            assert fresh["status"] == "PUSHING" and (await _read(reader))[1] == 12
+            # Skipping released history must not disable timeouts or refund a
+            # current unacknowledged operation's reservation.
+            await _eventually(lambda: controller.get(fresh["id"])["status"] == "ROLLBACK_REQUIRED", seconds=2)
+            assert controller.get(fresh["id"])["reason"] == "acknowledgment_timeout_reconciliation_required"
+            assert _held(controller, fresh)["status"] == "ROLLBACK_REQUIRED"
+            assert server._capture_error is None and not creation.monitor.done()
+            writer.close()
+            await writer.wait_closed()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("removed", [False, True])
+def test_delayed_report_for_released_completion_cannot_reopen_history_or_poison_writer(
+    tmp_path, monkeypatch, removed,
+):
+    server, creation, controller, _ = _lab(tmp_path, monkeypatch)
+    creation.server = server
+    historical = _released_unacknowledged_completion(controller)
+    delayed = report(historical, srp=2, removed=removed)
+    fresh = controller.plan(PRINCIPAL, "after-recovery", **INTENT)
+    fresh = controller.mark_sending(fresh["id"], "current-session", 1, "e" * 64)
+
+    # Retain ownership suppression for old identities, so a late report cannot
+    # reach the separate preconfigured-tunnel writer.
+    assert creation.owns(PEER, delayed)
+    creation.observe(PEER, [delayed])
+    assert server._capture_error is None
+    assert controller.get(historical["id"]) == historical
+    assert historical["reservation_id"] not in ReservationLedger(controller.state_dir).entries
+    assert controller.get(fresh["id"]) == fresh and _held(controller, fresh)["status"] == "PUSHING"
+
+
+def test_unacknowledged_current_completion_still_times_out_and_retains_hold(tmp_path, monkeypatch):
+    async def scenario():
+        async with _running(_lab(tmp_path, monkeypatch, update_ack_timeout=0.01)) as lab:
+            server, creation, controller, _ = lab
+            reader, writer = await _connect(server)
+            op = await creation.create(PRINCIPAL, "pending-completion", INTENT)
+            await _read(reader)
+            writer.write(_report(op))
+            await writer.drain()
+            await _eventually(lambda: controller.get(op["id"])["status"] == "APPLIED_UNVERIFIED")
+            pending = await creation.complete_owned(PRINCIPAL, op["id"])
+            assert pending["status"] == "APPLIED_UNVERIFIED" and (await _read(reader))[1] == 11
+            await _eventually(lambda: controller.get(op["id"])["status"] == "ROLLBACK_REQUIRED", seconds=2)
+            timed_out = controller.get(op["id"])
+            assert timed_out["reason"] == "owned_completion_acknowledgment_timeout"
+            assert not timed_out["completion"].get("acknowledged")
+            assert _held(controller, op)["status"] == "ROLLBACK_REQUIRED"
+            assert server._capture_error is None and not creation.monitor.done()
+            writer.close()
+            await writer.wait_closed()
+    asyncio.run(scenario())
+
+
+def test_diagnostic_owned_delete_removal_has_old_srp_and_cannot_release_hold(tmp_path, monkeypatch):
+    fixtures = Path(__file__).parent / "fixtures/pcep-iosxe-16.9.7"
+    hashes = {
+        "create": "c1968d000e6ca9ce81e56406f3bbcfd9a209fa32f0ed0c71762e8cb0241024ba",
+        "active-zero-bandwidth": "c9635ecf22ca68823f959ded794d76dbc2e08019761bcb3ce6764a57fa815892",
+        "delete": "f1d7f5e950d0347116025f099d936adb6396bba99cda6290ef5ce1d1ea432b4b",
+        "removal": "c3314bc120e5b4d2c385ee2eabfd6b88244d1b0b2b33f6d116f2476f35fac440",
+    }
+    frames = {}
+    for name, expected in hashes.items():
+        frames[name] = bytes.fromhex((fixtures / f"diagnostic-004-{name}-sanitized.hex").read_text())
+        assert hashlib.sha256(frames[name]).hexdigest() == expected
+    create = parse_objects(frames["create"][4:])
+    delete = parse_objects(frames["delete"][4:])
+    active = parse_reports(frames["active-zero-bandwidth"][4:], allow_delegation=True)[0]
+    removed = parse_reports(frames["removal"][4:], allow_delegation=True)[0]
+    assert frames["create"][1] == frames["delete"][1] == 12
+    assert frames["active-zero-bandwidth"][1] == frames["removal"][1] == 10
+    assert int.from_bytes(create[0].body[4:8], "big") == active["srp_id"] == removed["srp_id"] == 1
+    assert int.from_bytes(delete[0].body[:4], "big") == 1
+    assert int.from_bytes(delete[0].body[4:8], "big") == 2
+    assert active["created"] and active["delegate"] and active["operational_state"] == "ACTIVE"
+    assert next(obj.body.hex() for obj in create if obj.object_class == 5) == "47f42400"
+    observed_bandwidth = next(attr["body_hex"] for attr in active["attributes"]
+                              if attr["class"] == 5 and attr["type"] == 1)
+    assert observed_bandwidth == "00000000"
+    assert removed["created"] and removed["removed"] and not removed["delegate"]
+    assert removed["operational_state"] == "DOWN" and removed["attributes"] == []
+    assert active["plsp_id"] == removed["plsp_id"] == 586624
+    assert active["identifiers"] == removed["identifiers"]
+    assert active["symbolic_name_hex"] == removed["symbolic_name_hex"]
+
+    # Offline replay only: use a simulated current session and receive times,
+    # preserving captured SRP IDs, identity, flags and attributes unchanged.
+    _, _, controller, _ = _lab(tmp_path, monkeypatch)
+    monkeypatch.setattr("ninja_pce.tunnel_creation.uuid.uuid4", lambda: UUID(int=4))
+    op = controller.plan(PRINCIPAL, "diagnostic-cleanup-replay", **INTENT)
+    assert encode_initiate(1, op["symbolic_name"], op["source_ip"], op["destination_ip"],
+                           tuple(op["ero"]), op["bandwidth_bps"]) == frames["create"]
+    op = controller.mark_sending(op["id"], "simulated-replay-session", 1, hashes["create"])
+    active.update(session_id=op["send"]["session_id"], received_at=time.time(), stale=False)
+    controller.bind_owned_candidate(op["id"], active)
+    with pytest.raises(ValueError, match="bandwidth"):
+        controller.observe(op["id"], active)
+    controller.uncertain(op["id"], "captured report ignored requested bandwidth")
+    assert encode_delete(2, active["plsp_id"], op["symbolic_name"]) == frames["delete"]
+    controller.mark_removing(op["id"], op["send"]["session_id"], 2, hashes["delete"])
+    removed.update(session_id=op["send"]["session_id"], received_at=time.time(), stale=False)
+    with pytest.raises(ValueError, match="cleanup boundary"):
+        controller.record_removal(op["id"], removed)
+    with pytest.raises(ValueError, match="independent resource-release"):
+        controller.confirmed_removal(op["id"], removed, resources_released=True)
+    unresolved = controller.get(op["id"])
+    assert unresolved["status"] == "ROLLBACK_REQUIRED" and unresolved["reported"] is None
+    assert unresolved["cleanup"]["srp_id"] == 2 and "report_digest" not in unresolved["cleanup"]
+    assert _held(controller, op)["status"] == "ROLLBACK_REQUIRED"

@@ -76,6 +76,55 @@ This is not automatically invoked or enabled through the public API.
 See [fixture provenance](../tests/fixtures/pcep-iosxe-16.9.7/README.md) for the
 sanitized request and explicitly reconstructed response regression fixture.
 
+## Captured diagnostic repeat — 2026-10-12 UTC
+
+A preliminary request was rejected before transmission. Loading the recovered
+history exposed a controller bug: the timeout monitor tried to mark a fully
+`ROLLED_BACK` operation's old, unacknowledged completion uncertain. The manager
+correctly refused to reopen a released operation, but the resulting monitor
+error closed the creation write gate. Released operations are now skipped by
+the monitor and report observer. Historical ownership suppression remains in
+place, and unresolved operations still retain their holds and timeout handling.
+Regression tests cover restart history, delayed ACTIVE/removal reports and
+current-operation timeouts. This fix does not resolve the bandwidth mismatch.
+
+After that fix, one new 1 Mbps PCInitiate was captured with PE1's supported
+`debug pce client`, `error`, `obj`, `lsp` and `pak` categories, P2P auto-tunnel
+events/state, and detailed TE tunnel errors. Debugging lasted about 26 seconds;
+the original logging and debug settings were restored. The computed strict
+route was PE1 → P3 → P4 → PE3, using remote addresses `10.0.13.3`, `10.0.34.4`
+and `10.0.46.6`. Tunnel100 stayed on the upper route at 50 Mbps.
+
+The router's own incoming packet decode shows BANDWIDTH class 5/type 1 and
+`Requested BW: 125000` bytes/s: exactly **1 Mbps**, matching the controller's
+wire bytes `47f42400`. Immediately afterward, PE1's local auto-tunnel/PCC path
+construction already supplies bandwidth type 1 and type 5 as zero. Its tunnel
+configuration, RSVP TSpec/FSpec, sender table and reservation table all show
+zero. The new LSP was ACTIVE with the requested route, but failed bandwidth
+qualification. No completion PCUpd was sent for this experimental LSP.
+
+This localizes the loss to this router's handling of the supplied attributes
+between PCEP decoding and tunnel setup. It rules out a transport or bytes/s
+conversion error, and a merely incorrect dashboard/PCRpt display, for this
+captured request. It does not distinguish an image limitation, implementation
+bug or configuration-dependent behavior, and does not establish that native
+RSVP initiation is impossible on other images or configurations.
+
+One exact-owned PCInitiate delete used SRP 2 and the allocated PLSP-ID. PE1
+removed the auto-tunnel, but its matching-identity removal report reused the
+original creation SRP 1. The controller therefore did not accept it as a
+correlated cleanup acknowledgment and retained the hold. Fresh synchronized
+PCC absence and independent reservation/configuration checks on all six routers
+then confirmed that only Tunnel100 remained; only then was the hold released
+and the operation marked `ROLLED_BACK`. This is observed deletion with an
+uncorrelated report, not qualification of the correlated deletion profile.
+
+The allocator was restored to disabled and the original non-initiation failover
+listener restored. BGP-LS, PCEP, dashboard and Nginx services were healthy.
+Public dashboard creation remains disabled. Raw console logs and controller
+snapshots are private, ignored artifacts; sanitized wire fixtures and their
+provenance are recorded alongside the existing regression evidence.
+
 ## Operator flow
 
 The operator selects **headend**, **destination** and **bandwidth in Mbps**,

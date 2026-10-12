@@ -172,7 +172,8 @@ class CreationSession:
                 if report["end_of_sync"] or report["sync"] or not self.owns(peer, report):
                     continue
                 for op in self.manager.list():
-                    if op["peer"] != peer or report.get("symbolic_name_hex") != op["symbolic_name"].encode().hex():
+                    if (op["status"] in {"REJECTED", "ROLLED_BACK"} or op["peer"] != peer or
+                            report.get("symbolic_name_hex") != op["symbolic_name"].encode().hex()):
                         continue
                     if report["session_id"] != op.get("owner_session", op["send"]["session_id"]):
                         continue
@@ -298,6 +299,10 @@ class CreationSession:
             while True:
                 await asyncio.sleep(1)
                 for op in self.manager.list():
+                    # Released history remains audit evidence. Late reports or
+                    # unanswered historical updates cannot reopen its hold.
+                    if op["status"] in {"REJECTED", "ROLLED_BACK"}:
+                        continue
                     completion = op.get("completion")
                     if completion and not completion.get("acknowledged") and op["status"] != "ROLLBACK_REQUIRED" and (
                             time.time() - datetime.fromisoformat(completion["attempted_at"]).timestamp() >
