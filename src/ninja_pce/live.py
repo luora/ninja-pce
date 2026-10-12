@@ -52,6 +52,11 @@ def add_live_commands(subparsers: Any) -> None:
                       help="Opt in to initial delegated path provision for PCC-IP=tunnel-ID; repeatable")
     pcep.add_argument("--failover-tunnel", help="Opt in to recovery of one delegated PCC-IP=tunnel-ID")
     pcep.add_argument("--failover-state", help="Persistent failure-recovery journal; required with --failover-tunnel")
+    pcep.add_argument("--creation-state", help="Opt in to private lab creation with a durable state directory")
+    pcep.add_argument("--creation-socket", help="Owner-only Unix console socket; required for lab creation")
+    pcep.add_argument("--creation-headend", action="append", default=[], help="Authorized node-name=PCC-IP")
+    pcep.add_argument("--creation-destination", action="append", default=[], help="Authorized destination node name")
+    pcep.add_argument("--creation-max-bandwidth", type=int, default=1_000_000, help="Lab creation cap in bits/s")
 
 
 def _positive(value: float, label: str) -> None:
@@ -227,6 +232,25 @@ async def _serve_pcep(args: argparse.Namespace) -> int:
         server_options["failover"] = FailureRecoveryPlanner(
             computer, peer=peer, tunnel_id=tunnel_id, journal_path=journal,
         )
+    creation_args = [args.creation_state, args.creation_socket, args.creation_headend, args.creation_destination]
+    if any(creation_args):
+        if not all(creation_args) or computer is None:
+            raise ValueError("Private creation requires state, socket, endpoints and live computation options")
+        from .pcep_creation import CreationSession
+        from .tunnel_creation import CreationManager
+
+        creation_headends = {}
+        for binding in args.creation_headend:
+            if binding.count("=") != 1:
+                raise ValueError("Creation headend binding must be node-name=PCC-IP")
+            name, address = binding.split("=")
+            if name in creation_headends:
+                raise ValueError("Creation headends must be distinct")
+            creation_headends[name] = str(ipaddress.IPv4Address(address))
+        server_options["creation"] = CreationSession(CreationManager(
+            computer, Path(args.creation_state), creation_headends, tuple(args.creation_destination),
+            max_bandwidth_bps=args.creation_max_bandwidth,
+        ), Path(args.creation_socket))
     server = PcepServer(
         PcepServerConfig(
             listen_host=args.listen_host, port=args.port, allowed_peers=tuple(args.allow_peer),

@@ -518,7 +518,7 @@ def _request(server, path: str, *, method: str = "GET"):
         client.close()
 
 
-@pytest.mark.parametrize("path", ["/", "/index.html", "/app.js", "/styles.css", "/api/controller", "/healthz"])
+@pytest.mark.parametrize("path", ["/", "/index.html", "/app.js", "/styles.css", "/api/controller", "/api/tunnel-options", "/healthz"])
 def test_http_serves_only_fixed_resources_with_security_headers(dashboard_http, path: str) -> None:
     status, headers, body = _request(dashboard_http, path)
     assert status == 200 and body
@@ -549,6 +549,15 @@ def test_http_head_has_no_response_body(dashboard_http) -> None:
     status, headers, body = _request(dashboard_http, "/api/controller", method="HEAD")
     assert status == 200 and body == b""
     assert int(headers["Content-Length"]) > 0
+
+
+def test_default_dashboard_creation_is_explicitly_disabled_and_has_no_mutation_route(dashboard_http):
+    status, _headers, body = _request(dashboard_http, "/api/tunnel-options")
+    options = json.loads(body)
+    assert status == 200 and options["enabled"] is False
+    assert "demo" in options["reason"] and options["policy"]["read_only"] is True
+    assert options["headends"] == [] and options["destinations"] == []
+    assert _request(dashboard_http, "/api/tunnels", method="POST")[0] == 405
 
 
 def test_cli_defaults_to_loopback_live_mode_and_closes_on_interrupt(monkeypatch) -> None:

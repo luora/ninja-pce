@@ -1,10 +1,80 @@
 # Dashboard tunnel creation design
 
-Status: proposed; tunnel creation is not implemented. The current
-[dashboard](dashboard.md) is read-only, rejects mutation methods and has no
-Create action. Ninja-PCE advertises initiation capability clear and sends no
-PCInitiate. This document defines the next feature and its qualification gate;
-it does not authorize a router change.
+Status: experimental implementation; public creation remains disabled pending
+platform qualification. The [dashboard](dashboard.md) has a Create tunnel form,
+and its default read-only server reports the qualification gate through
+`GET /api/tunnel-options`. It continues to reject mutation methods. The separate
+operator HTTP service uses a permissioned Unix socket, verified proxy UID and
+principal, bounded sessions, same-origin checks and CSRF protection; it defaults
+to unqualified and is not yet wired into the public deployment.
+
+The private lab session can send guarded PCInitiate with durable holds and
+idempotency, correlate owned reports, and attempt one explicit owned PCUpd or
+cleanup. Initiation remains clear unless the creation options are configured.
+Offline tests do not establish device support. See the live result below.
+
+## First live result — CSR1000v 16.9.7
+
+The operator-authorized 2026-10-11 UTC test negotiated both initiation flags,
+enabled PE1's P2P auto-tunnel allocator and sent one strict RSVP PCInitiate for
+PE1 to PE3 at **1 Mbps**, priorities 7/7, with no affinity constraint. The route
+was PE1 → P1 → P2 → PE3. Tunnel100 and its explicit fallback were preserved.
+
+PE1 allocated auto-tunnel **62336**, PLSP-ID **586624**, RSVP LSP-ID **1**, and
+echoed the creation SRP with C=1/D=1, PST 0 and the requested strict ERO. The
+new object became operationally ACTIVE. However, requested and used bandwidth
+were both **zero**, and LSPA exclude-any became `0x0000ffff` instead of the
+requested zero. Independent `show ip rsvp reservation` also showed a zero-bit
+reservation for this object, while Tunnel100 retained its 50 Mbps reservation.
+The manager correctly retained its local hold and marked `ROLLBACK_REQUIRED`.
+This result **does not qualify bandwidth-aware dashboard creation**.
+
+The lab subsequently restarted. PE1 showed only Tunnel100, with the P2P
+allocator disabled, and Ubuntu returned to its login prompt. On 2026-10-12 UTC,
+controller access was recovered. Fresh synchronized PCC absence plus independent
+headend and all five other routers' reservation/configuration checks confirmed
+the old object and its reservations were gone. Only then was its saved hold
+released. Restart alone was not treated as release evidence.
+
+A second 1 Mbps PCInitiate reproduced the zero-bandwidth result, with the same
+strict upper route and a separately persisted owned identity. One explicit
+owned PCUpd requested the original bandwidth, priorities and affinity. PE1
+returned a correlated SRP 2 PCRpt with C/D/R set for the old incarnation;
+the experimental tunnel became down without a 1 Mbps RSVP reservation. The
+controller kept `ROLLBACK_REQUIRED` and its hold. An R report caused by completion
+is neither an applied creation nor acknowledgment of a requested cleanup.
+Tunnel100 remained up at 50 Mbps with its configuration and explicit fallback
+unchanged. This second result also fails qualification; no public delivery
+profile is enabled, and no automatic update retry is introduced.
+
+The second experimental object was allowed to expire during a bounded 75-second
+PCEP pause with automatic service restart. PE1 then showed zero auto-tunnels;
+its allocator was restored to disabled. Fresh synchronized PCC state and
+independent checks on all six routers confirmed only Tunnel100 and its 50 Mbps
+reservations remained. The second saved hold was released only after those
+checks, and both operations are `ROLLED_BACK`. This is observed orphan expiry,
+not qualification of the private PCInitiate deletion path. The original
+non-initiation failover listener was restored; its PCEP session is fresh and
+synchronized. The read-only dashboard form is deployed with creation disabled.
+
+Controller recovery corrected a private control socket left in a persistent
+home directory, which had blocked startup after reboot. Private qualification
+uses a systemd-managed `/run` directory. Missing GoBGP/grpcurl executables were
+restored from the existing pinned, checksum-verified archives. A separately
+approved lab-interface firewall rule restored PE1 PCEP; the BGP-LS peer returned
+with 45 routes. These repairs did not change Ubuntu account credentials.
+
+The bounded private completion experiment now has offline tests: it requires
+the exact persisted owned identity, fresh synchronized session and current
+directed capacity, records a new session-scoped SRP before writing, and sends
+only one PCUpd. Attribute failure can bind ownership for safe cleanup without
+claiming application. A new RSVP incarnation is accepted only on the exact
+outstanding completion SRP for the same PLSP/tunnel/name/endpoints. Restart
+reconciliation records a new session binding without replaying creation.
+This is not automatically invoked or enabled through the public API.
+
+See [fixture provenance](../tests/fixtures/pcep-iosxe-16.9.7/README.md) for the
+sanitized request and explicitly reconstructed response regression fixture.
 
 ## Operator flow
 
@@ -69,8 +139,10 @@ deletion/reclamation grammar; see the
 
 ## Proposed API and execution boundary
 
-These endpoints do not exist yet. The current proxy also permits only read
-methods and would require an intentional security-reviewed update.
+The separate `TunnelAPI` implements these endpoints behind an explicitly
+configured Unix listener. The default dashboard serves only disabled options;
+the current proxy permits only read methods. Public operator routing and an
+exact qualified device profile remain deployment gates.
 
 | Endpoint | Proposed behavior |
 |---|---|
@@ -104,9 +176,9 @@ writer lock immediately before sending. Recompute/reject if those inputs
 change before the write; never send an old
 plan. Unknown bandwidth, ambiguous hop identity, incomplete sources or another
 writer's unresolved operation block admission. The current live BGP-LS feed is
-not an authoritative reservation ledger: connecting it to durable creation
-accounting and defining its admission policy remain implementation work.
-Use directed advertised bandwidth-priority vectors and conservative holds;
+not an authoritative reservation ledger. `CreationManager` combines its fresh
+directed bandwidth-priority vectors with a shared durable ledger, conservatively
+subtracting all controller holds. Do not grant unproven self-credit;
 do not infer spare capacity by summing LSP reports or grant unproven self-credit.
 The PCC's RSVP admission remains the final network admission decision.
 
@@ -163,12 +235,11 @@ Reported ACTIVE alone cannot reach VERIFIED. MPLS OAM and any traffic test appea
 as separate dated evidence: RSVP reservation does not prove payload throughput,
 and the lab's license limits preclude a 50 Mbps throughput claim.
 
-## Next experiment on CSR1000v 16.9.7
+## Qualification procedure on CSR1000v 16.9.7
 
-This is a future operator-authorized lab experiment, not a command sequence
-implemented by the current listener. First build and test a bounded PCInitiate
-codec, response correlation, durable holds and owned-object cleanup/recovery.
-Keep initiation clear in normal operation until that handler exists.
+The first creation attempt above exercised the private listener. Complete the
+remaining checks before enabling any public creation profile. Initiation is
+opt-in, scoped to explicitly configured creation headends.
 
 1. Snapshot PE1 configuration, OPEN capability bytes, existing LSP names/IDs,
    Tunnel100 and its fallback, and fresh directed BGP-LS/RSVP availability.
@@ -202,3 +273,36 @@ If RSVP PCInitiate is rejected or bandwidth is ignored, keep creation disabled
 for this profile. A qualified newer image/vendor or a separately qualified
 configuration-based provisioner is an alternative project milestone; the
 existing preconfigured-tunnel PCUpd workflow must retain its distinct label.
+
+## Private lab execution options
+
+`pcep-listen` requires all existing live computation options plus these
+explicit creation arguments; they are absent from normal service templates:
+
+```text
+--creation-state /home/ubuntu/ninja-pce/build/state/creations
+--creation-socket /run/ninja-creation/control.sock
+--creation-headend PE1=10.255.0.1
+--creation-destination PE3
+--creation-max-bandwidth 1000000
+```
+
+Use a process-owned mode0700 socket directory. A systemd deployment should
+prepare it with `RuntimeDirectory=ninja-creation` and
+`RuntimeDirectoryMode=0700`, so service shutdown/reboot removes stale sockets.
+The listener refuses to overwrite an existing socket. Reconcile any old
+process and durable operation before removing its socket or restarting.
+Creation state belongs on persistent storage and must survive restarts.
+
+The private mode0600 console accepts one bounded JSON line per connection:
+`create`, `get`, `list`, `complete-owned`, `reconcile-owned` and `remove-owned`.
+Create requires an idempotency key and exactly the three intent fields above.
+The other mutation experiments require the authenticated local principal's
+existing operation ID. There is no arbitrary command, wildcard delete, public
+cleanup route, automatic completion or automatic creation retry.
+
+`NINJA_PCE_PREVIEW_ONLY=1` blocks creation, completion and cleanup at the
+execution boundary. Unknown delivery retains its entire directed hold. Manual
+absence recovery requires a fresh complete PCC session and independently
+checked headend/configuration and transit reservation-release evidence; neither
+browser disappearance nor a removal report alone refunds capacity.

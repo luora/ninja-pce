@@ -3,7 +3,7 @@
 The default profile observes RSVP LSP reports. Explicitly configured responders
 can answer PCReq or provision an initial, authorized empty-ERO delegation using
 PCUpd. An additional opt-in profile recovers one delegated tunnel after a
-validated topology withdrawal. There is no PCInitiate. Captures
+validated topology withdrawal. Private lab initiation is separately opt-in. Captures
 are evidence, not a TED or reservation confirmation. Plain TCP provides no
 cryptographic peer identity.
 """
@@ -27,17 +27,18 @@ from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from .pcep_compute import PcepPathComputer
+    from .pcep_creation import CreationSession
     from .pcep_delegation import DelegatedPathComputer
     from .pcep_failover import FailureRecoveryPlanner
 
 from .state import load_state, write_state
 
 OPEN, KEEPALIVE, PCREQ, PCREP, NOTIFICATION, ERROR, CLOSE = range(1, 8)
-PCRPT, PCUPD = 10, 11
+PCRPT, PCUPD, PCINITIATE = 10, 11, 12
 MESSAGE_NAMES = {
     OPEN: "OPEN", KEEPALIVE: "KEEPALIVE", PCREQ: "PCReq", PCREP: "PCRep",
     NOTIFICATION: "PCNtf", ERROR: "PCErr", CLOSE: "CLOSE", PCRPT: "PCRpt",
-    PCUPD: "PCUpd",
+    PCUPD: "PCUpd", PCINITIATE: "PCInitiate",
 }
 
 
@@ -74,14 +75,18 @@ def encode_message(message_type: int, body: bytes = b"") -> bytes:
 
 
 def encode_open(keepalive: int = 30, deadtimer: int = 120, sid: int = 0, *, stateful: bool = True,
-                updates: bool = False) -> bytes:
+                updates: bool = False, initiation: bool = False) -> bytes:
     for value in (keepalive, deadtimer, sid):
         if type(value) is not int or not 0 <= value <= 255:
             raise ValueError("OPEN fields must be unsigned octets")
     if updates and not stateful:
         raise ValueError("LSP updates require stateful capability")
-    # U is opt-in for the bounded initial-delegation adapter; I stays clear.
-    capability = struct.pack("!HHI", 16, 4, int(updates)) if stateful else b""
+    if type(initiation) is not bool or initiation and (not stateful or not updates):
+        raise ValueError("LSP initiation requires explicit stateful update capability")
+    # U and I remain opt-in. Initiation advertises only RSVP (PST 0), not SR.
+    capability = struct.pack("!HHI", 16, 4, int(updates) | (4 if initiation else 0)) if stateful else b""
+    if initiation:
+        capability += struct.pack("!HH", 34, 5) + bytes((0, 0, 0, 1, 0, 0, 0, 0))
     return encode_message(OPEN, encode_object(1, bytes((0x20, keepalive, deadtimer, sid)) + capability))
 
 
@@ -181,7 +186,7 @@ def _lsp(obj: PcepObject) -> dict[str, Any]:
     tlvs = parse_tlvs(obj.body[4:])
     data: dict[str, Any] = {
         "plsp_id": bits >> 12, "delegate": bool(bits & 1), "sync": bool(bits & 2),
-        "removed": bool(bits & 4), "administrative_up": bool(bits & 8),
+        "removed": bool(bits & 4), "administrative_up": bool(bits & 8), "created": bool(bits & 128),
         "operational_code": (bits >> 4) & 7,
         "tlvs": [{"type": kind, "value_hex": value.hex()} for kind, value in tlvs],
     }
@@ -363,12 +368,19 @@ class PcepServer:
     def __init__(self, config: PcepServerConfig, *, capture_path: Path | None = None,
                  path_computer: PcepPathComputer | None = None,
                  delegated_computer: DelegatedPathComputer | None = None,
-                 failover: FailureRecoveryPlanner | None = None):
+                 failover: FailureRecoveryPlanner | None = None,
+                 creation: CreationSession | None = None):
         self.config = config
         self.capture_path = capture_path
         self.path_computer = path_computer
         self.delegated_computer = delegated_computer
         self.failover = failover
+        self.creation = creation
+        if creation is not None and (
+                path_computer is not creation.manager.computer or not config.keepalive or
+                not set(creation.manager.headends.values()) <= set(config.allowed_peers) or
+                set(creation.manager.headends.values()) & set(config.stateless_peers)):
+            raise ValueError("Creation requires the same computer and explicitly allowed stateful PCCs")
         if delegated_computer is not None and (
                 path_computer is None or not config.keepalive or
                 not set(delegated_computer.allowed_tunnels) <= set(config.allowed_peers) or
@@ -432,7 +444,8 @@ class PcepServer:
             "mode": "request_computation" if self.path_computer else "passive_stateful",
             "authoritative": False, "complete": False,
             "capabilities": {"stateful": bool(set(self.config.allowed_peers) - set(self.config.stateless_peers)),
-                             "lsp_update": self.delegated_computer is not None, "lsp_initiation": False,
+                             "lsp_update": self.delegated_computer is not None or self.creation is not None,
+                             "lsp_initiation": self.creation is not None,
                              "path_computation": self.path_computer is not None},
             "stateless_peers": list(self.config.stateless_peers),
             "capture_error": self._capture_error, "rejected_connections": self._rejected,
@@ -465,7 +478,11 @@ class PcepServer:
                                                  limit=self.config.max_message_bytes + 4, backlog=32)
         try:
             self._persist()
-        except OSError:
+            if self.creation is not None:
+                await self.creation.start(self)
+        except (OSError, ValueError):
+            if self.creation is not None:
+                await self.creation.close()
             self._server.close()
             await self._server.wait_closed()
             self._server = None
@@ -485,6 +502,8 @@ class PcepServer:
 
     async def close(self) -> None:
         self._closing = True
+        if self.creation is not None:
+            await self.creation.close()
         if self._failover_task is not None:
             self._failover_task.cancel()
             await asyncio.gather(self._failover_task, return_exceptions=True)
@@ -584,6 +603,8 @@ class PcepServer:
         for report in connection.state["reports"].values():
             key = report_key(report)
             if not report["delegate"] or report["removed"]:
+                continue
+            if self.creation is not None and self.creation.owns(peer, report):
                 continue
             recovery_state = self.failover.snapshot() if self.failover is not None else {}
             if self.failover is not None and self.failover.matches(peer, report) and (
@@ -901,10 +922,14 @@ class PcepServer:
         reason = "transport_closed"
         try:
             local_stateful = peer not in self.config.stateless_peers
-            local_updates = self.delegated_computer is not None and peer in self.delegated_computer.allowed_tunnels
+            local_initiation = self.creation is not None and self.creation.allows(peer)
+            local_updates = local_initiation or (
+                self.delegated_computer is not None and peer in self.delegated_computer.allowed_tunnels)
             state["local_stateful"] = local_stateful
+            state["local_initiation"] = local_initiation
             await self._send(peer, connection, encode_open(
-                self.config.keepalive, self.config.deadtimer, self._sid, stateful=local_stateful, updates=local_updates))
+                self.config.keepalive, self.config.deadtimer, self._sid, stateful=local_stateful,
+                updates=local_updates, initiation=local_initiation))
             raw = await asyncio.wait_for(self._read(reader), self.config.handshake_timeout)
             self._event(peer, "rx", raw)
             if raw[1] != OPEN:
@@ -972,6 +997,8 @@ class PcepServer:
                     for obj in objects:
                         if obj.object_class == 33 and obj.object_type == 1 and len(obj.body) >= 8:
                             srp = str(int.from_bytes(obj.body[4:8], "big"))
+                            if self.creation is not None:
+                                self.creation.peer_error(peer, state["session_id"], int(srp), state["last_peer_errors"])
                             update = state["updates"].get(srp)
                             if update is not None:
                                 update.update(acknowledged=True, status="PCC_ERROR", errors=state["last_peer_errors"])
@@ -985,6 +1012,8 @@ class PcepServer:
                     allow_delegation = bool(local_updates and (remote["stateful_flags"] or 0) & 1)
                     reports = parse_reports(raw[4:], allow_delegation=allow_delegation)
                     self._apply_reports(state, reports)
+                    if self.creation is not None:
+                        self.creation.observe(peer, reports)
                     if allow_delegation:
                         self._acknowledge_updates(connection, reports)
                         if self.failover is not None:
@@ -1062,6 +1091,8 @@ class PcepServer:
                 keepalive_task.cancel()
                 await asyncio.gather(keepalive_task, return_exceptions=True)
             self._connections.pop(peer, None)
+            if self.creation is not None:
+                self.creation.disconnected(peer)
             if self.failover is not None and self.failover.peer == peer:
                 self._recovery_failed("pcep_session_disconnected")
             state.update(state="DISCONNECTED", fresh=False, synchronized=False, disconnected_at=time.time(),
@@ -1124,14 +1155,19 @@ class PcepServer:
                 if previous_name is None:
                     raise PcepProtocolError("Initial report missing symbolic path name")
                 report.update(symbolic_name=previous_name["name"], symbolic_name_hex=previous_name["hex"])
-            if previous_name and previous_name["hex"] != report["symbolic_name_hex"]:
+            if (previous_name and previous_name["hex"] != report["symbolic_name_hex"] and
+                    any(item["plsp_id"] == report["plsp_id"] for item in working.values())):
                 raise PcepProtocolError("PLSP-ID symbolic path name changed during session")
+            # Retain omitted-name support across RSVP path removal, but allow
+            # explicit PLSP allocator reuse once all old incarnations are gone.
             if any(value["hex"] == report["symbolic_name_hex"] and other != plsp
                    for other, value in names.items()):
                 raise PcepProtocolError("Symbolic path name maps to multiple PLSP-IDs")
             names[plsp] = {"name": report["symbolic_name"], "hex": report["symbolic_name_hex"]}
             if len(names) > self.config.max_reports_per_peer:
                 raise PcepProtocolError("LSP name binding storage limit exceeded")
+            report.update(received_at=time.time(), source=state["source"], session_id=state["session_id"],
+                          authoritative=False, delegation_accepted=False)
             if report["removed"]:
                 if identifiers["all_zero"]:
                     working = {name: value for name, value in working.items()
@@ -1139,8 +1175,6 @@ class PcepServer:
                 else:
                     working.pop(key, None)
                 continue
-            report.update(received_at=time.time(), source=state["source"], session_id=state["session_id"],
-                          authoritative=False, delegation_accepted=False)
             working[key] = report
             if len(working) > self.config.max_reports_per_peer:
                 raise PcepProtocolError("Report storage limit exceeded")

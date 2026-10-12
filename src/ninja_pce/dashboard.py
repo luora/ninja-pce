@@ -511,6 +511,13 @@ def create_dashboard_server(config: DashboardConfig) -> ThreadingHTTPServer:
                 self._respond(200, files("ninja_pce").joinpath("web").joinpath(name).read_bytes(), content_type)
             elif path == "/api/controller":
                 self._respond(200, json.dumps(store.snapshot(), allow_nan=False).encode())
+            elif path == "/api/tunnel-options":
+                self._respond(200, json.dumps({
+                    "enabled": False, "headends": [], "destinations": [], "max_bandwidth_bps": 0,
+                    "reason": ("Tunnel creation is disabled in the demo workspace." if config.demo else
+                               "RSVP bandwidth creation has not been qualified for this controller."),
+                    "policy": {"read_only": True},
+                }).encode())
             elif path == "/healthz":
                 self._respond(200, json.dumps({"status": "ok", "read_only": True,
                                               "mode": "demo" if config.demo else "live"}).encode())

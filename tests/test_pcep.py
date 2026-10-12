@@ -103,6 +103,20 @@ def test_ios_xe_16_9_captured_open_and_empty_database_sync() -> None:
     assert state["synchronized"] and state["reports"] == {} and state["lsp_names"] == {}
 
 
+def test_removed_plsp_can_be_reused_after_all_incarnations_are_gone():
+    server = PcepServer(PcepServerConfig(("127.0.0.1",)))
+    state = {"reports": {}, "lsp_names": {}, "synchronized": True,
+             "session_id": "test-session", "source": "pcep:127.0.0.1"}
+    server._apply_reports(state, parse_reports(_report(sync=False, name=b"old-name")))
+    server._apply_reports(state, parse_reports(_report(sync=False, name=b"old-name", lsp_id=8)))
+    server._apply_reports(state, parse_reports(_report(sync=False, name=b"old-name", flags=4)))
+    assert state["lsp_names"]["1"]["name"] == "old-name"
+    server._apply_reports(state, parse_reports(_report(sync=False, name=b"old-name", lsp_id=8, flags=4)))
+    assert state["reports"] == {} and state["lsp_names"]["1"]["name"] == "old-name"
+    server._apply_reports(state, parse_reports(_report(sync=False, name=b"new-name", lsp_id=9)))
+    assert state["lsp_names"]["1"]["name"] == "new-name"
+
+
 @pytest.mark.parametrize("body", [b"\x01", b"\x01\x10\x00\x00", b"\x01\x10\x00\x06xx",
                                   b"\x01\x10\x00\x0c1234", b"\x01\x00\x00\x04"])
 def test_invalid_objects_rejected(body: bytes) -> None:

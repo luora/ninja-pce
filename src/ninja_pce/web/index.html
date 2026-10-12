@@ -45,6 +45,7 @@
         <div class="topbar-location"><span class="breadcrumb">Controller</span><span class="breadcrumb-divider">/</span><h1 id="page-title">Overview</h1></div>
         <span class="connection-status" id="connection-status"><span class="dot unknown"></span><span>Connecting</span></span>
         <div class="spacer"></div>
+        <button class="button compact" id="create-tunnel-button">Create tunnel</button>
         <button class="button compact" id="poll-toggle" aria-pressed="false" title="Pause automatic refresh">Pause</button>
         <button class="button primary compact" id="refresh-button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 17.9 17"/></svg><span>Refresh</span></button>
       </header>
@@ -90,6 +91,19 @@
       </div>
     </main>
   </div>
-  <dialog id="info-dialog" aria-labelledby="info-heading"><div class="dialog-heading"><h2 id="info-heading">Controller information</h2><button class="button compact" id="info-close">Close</button></div><p>This dashboard reads local controller snapshots. It cannot configure routers, reoptimize paths or remove LSPs.</p><dl class="kv"><dt>Endpoint</dt><dd class="mono">GET /api/controller</dd><dt>Refresh</dt><dd id="info-refresh">Waiting for snapshot</dd><dt>Mode</dt><dd id="info-mode">Unknown</dd></dl><p class="muted">A reported ACTIVE LSP, a PCUpd acknowledgment and advertised reserved bandwidth are separate observations. None alone proves forwarding.</p><div id="info-sources"></div></dialog>
+  <dialog id="info-dialog" aria-labelledby="info-heading"><div class="dialog-heading"><h2 id="info-heading">Controller information</h2><button class="button compact" id="info-close">Close</button></div><p>This dashboard reads local controller snapshots. Tunnel creation requires separate operator access and a qualified headend. There is no public teardown control.</p><dl class="kv"><dt>Endpoint</dt><dd class="mono">GET /api/controller</dd><dt>Refresh</dt><dd id="info-refresh">Waiting for snapshot</dd><dt>Mode</dt><dd id="info-mode">Unknown</dd></dl><p class="muted">A reported ACTIVE LSP, a PCUpd acknowledgment and advertised reserved bandwidth are separate observations. None alone proves forwarding.</p><div id="info-sources"></div></dialog>
+  <dialog id="create-tunnel-dialog" aria-labelledby="create-tunnel-heading">
+    <div class="dialog-heading"><h2 id="create-tunnel-heading">Create tunnel</h2><button class="button compact" id="create-tunnel-close" type="button">Close</button></div>
+    <p class="muted">Create an RSVP-TE LSP between two routers. Customer traffic steering is configured separately.</p>
+    <p id="creation-policy" class="creation-policy">Checking operator access and headend support…</p>
+    <form id="create-tunnel-form">
+      <fieldset id="creation-fields" disabled>
+        <div class="creation-grid"><label>Headend<select id="creation-headend" required></select></label><label>Destination<select id="creation-destination" required></select></label></div>
+        <label class="creation-bandwidth">Bandwidth <span class="muted">Mbps</span><input id="creation-bandwidth" type="number" min="0.001" step="0.001" value="1" required inputmode="decimal"></label>
+      </fieldset>
+      <div id="creation-status" class="creation-status" role="status" aria-live="polite"></div>
+      <div class="creation-actions"><button class="button" id="creation-check" type="button" hidden>Check status</button><button class="button primary" id="creation-submit" type="submit" disabled>Create tunnel</button></div>
+    </form>
+  </dialog>
 </body>
 </html>

@@ -71,3 +71,38 @@ not make historical evidence fresh or confer current authority.
 separate directional reservation change. Independent router/RSVP/MPLS OAM
 evidence is described in
 [the live qualification report](../../../docs/live_pcep_computation_validation.md).
+
+## Creation attribute mismatch regression
+
+The 2026-10-11 UTC private PCInitiate experiment allocated an RSVP auto-tunnel
+but ignored the requested 1 Mbps BANDWIDTH and changed LSPA exclude-any to
+`0x0000ffff`. The controller rejected attribute application and retained its
+hold. This is a negative qualification result, despite the ACTIVE report.
+
+- `creation-request-sanitized.hex` reproduces the transmitted request with
+  its 45-byte generated symbolic name replaced by a same-length placeholder.
+  All endpoints, ERO, priorities, SRP/PST and bandwidth bytes match the observed
+  request. It is not an unchanged raw wire capture.
+- `creation-zero-bandwidth-reconstructed.hex` is **re-encoded from the parsed
+  live ACTIVE report**, including the observed identity, flags, ERO, LSPA,
+  BANDWIDTH, used bandwidth, TE metric and Binding SID. It is explicitly a
+  reconstructed regression fixture, not evidence of original receive-byte
+  ordering or SRP reserved bits. Its symbolic name uses the same placeholder.
+
+No public addresses, credentials, actual generated name or session UUID are
+included. Independent PE1 output showed tunnel62336/RSVP LSP1 at zero bandwidth
+and the unchanged Tunnel100 at50Mbps.
+
+The 2026-10-12 UTC repeat added two original wire frames with only the
+same-length symbolic-name substitution described above:
+
+- `creation-update-sanitized.hex`: the one owned PCUpd, SRP 2, requesting
+  1 Mbps for the original allocated identity and strict upper ERO.
+- `creation-update-removal-sanitized.hex`: PE1's correlated SRP 2 PCRpt,
+  C=1/D=1/R=1, for that same identity. It contains no bandwidth attributes.
+
+Independent headend inspection found the experimental auto-tunnel down with
+zero configured bandwidth, no reservation for it, and Tunnel100 still up at
+50 Mbps. These frames record a failed completion experiment. The R flag is not
+an application acknowledgment or proof of owned cleanup/resource release.
+Owned cleanup remains a separate qualification step.

@@ -88,7 +88,7 @@
   }));
   $("lsp-search").addEventListener("input", (event) => { state.search = event.target.value.toLowerCase(); renderLsps(); });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "/" && !event.ctrlKey && !event.metaKey && !event.altKey && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName) && !$("info-dialog").open) {
+    if (event.key === "/" && !event.ctrlKey && !event.metaKey && !event.altKey && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName) && !document.querySelector("dialog[open]")) {
       event.preventDefault();
       if (!["overview", "lsps"].includes(state.view)) navigate("lsps");
       $("lsp-search").focus();
@@ -97,6 +97,110 @@
   });
   $("info-toggle").addEventListener("click", () => $("info-dialog").showModal());
   $("info-close").addEventListener("click", () => $("info-dialog").close());
+
+  const creation = { options: null, pending: null, busy: false, timer: null };
+  try { creation.pending = JSON.parse(sessionStorage.getItem("ninja-pce-creation") || "null"); } catch { /* No automatic resubmission. */ }
+  if (creation.pending && (typeof creation.pending.key !== "string" || !creation.pending.intent || (creation.pending.id && !/^[0-9a-f]{32}$/.test(creation.pending.id)))) creation.pending = null;
+  function saveCreation() {
+    try { sessionStorage.setItem("ninja-pce-creation", JSON.stringify(creation.pending)); } catch { /* In-memory idempotency remains intact. */ }
+  }
+  function creationMessage(message, operation = null) {
+    const target = $("creation-status"); target.replaceChildren(el("p", "", message));
+    if (operation) {
+      target.append(el("span", "mono", `Operation ${operation.id}`));
+      if (operation.reported?.operational_state) target.append(el("p", "", `Router reports ${operation.reported.operational_state}. Forwarding remains unverified.`));
+      if (operation.reason) target.append(el("p", "", String(operation.reason)));
+      if (Array.isArray(operation.path_nodes)) target.append(el("p", "mono", operation.path_nodes.join(" → ")));
+    }
+  }
+  function creationControls() {
+    const held = Boolean(creation.pending);
+    $("creation-fields").disabled = creation.busy || held || creation.options?.enabled !== true;
+    $("creation-submit").disabled = creation.busy || Boolean(creation.pending?.id) || creation.options?.enabled !== true;
+    $("creation-submit").hidden = Boolean(creation.pending?.id);
+    $("creation-submit").textContent = creation.busy ? "Submitting…" : held ? "Retry same request" : "Create tunnel";
+    $("creation-check").hidden = !creation.pending?.id;
+    $("creation-check").disabled = creation.busy;
+  }
+  async function creationFetch(path, options = {}) {
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(path, { cache: "no-store", credentials: "same-origin", signal: controller.signal, ...options, headers: { Accept: "application/json", ...options.headers } });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || (response.status === 401 || response.status === 403 ? "Operator access is required." : `Creation service unavailable (${response.status}).`));
+      return data;
+    } finally { clearTimeout(timeout); }
+  }
+  function showOperation(operation) {
+    if (!operation || !/^[0-9a-f]{32}$/.test(operation.id) || typeof operation.status !== "string") throw new Error("Unsupported operation response.");
+    creation.pending.id = operation.id; saveCreation();
+    const messages = {
+      PLANNED: "Path admitted. Waiting for delivery.", PUSHING: "Request sent. Waiting for the router’s response.",
+      APPLIED_UNVERIFIED: "Router acknowledged the new LSP. Independent verification is pending.",
+      ROLLBACK_REQUIRED: "Delivery needs reconciliation. Capacity remains held; this request will not be sent again.",
+      REJECTED: "Request rejected before delivery. No tunnel was created by this operation.",
+      ROLLED_BACK: "Owned tunnel removal and resource release were confirmed.",
+      VERIFIED: "Tunnel independently verified.", VERIFICATION_FAILED: "Tunnel verification failed. Capacity remains held.",
+    };
+    creationMessage(messages[operation.status] || `Operation state: ${operation.status}`, operation);
+    if (["REJECTED", "ROLLED_BACK"].includes(operation.status)) { creation.pending = null; saveCreation(); }
+    clearTimeout(creation.timer);
+    if ((["PLANNED", "PUSHING"].includes(operation.status) || operation.status === "APPLIED_UNVERIFIED" && !["ACTIVE", "UP"].includes(operation.reported?.operational_state)) && $("create-tunnel-dialog").open) creation.timer = setTimeout(checkCreation, 2000);
+    creationControls();
+  }
+  async function checkCreation() {
+    if (!creation.pending?.id || creation.busy) return;
+    try { showOperation((await creationFetch(`/api/tunnel-operations/${creation.pending.id}`)).operation); }
+    catch (error) { creationMessage(`${error.message} Keep this operation ID for reconciliation: ${creation.pending.id}`); }
+  }
+  async function openCreation() {
+    $("create-tunnel-dialog").showModal();
+    if (!creation.pending) $("creation-status").replaceChildren();
+    creation.options = null; creationControls();
+    if (state.data?.mode === "demo") { $("creation-policy").textContent = "Tunnel creation is disabled in the demo workspace."; return; }
+    $("creation-policy").textContent = "Checking operator access and headend support…";
+    try {
+      const options = await creationFetch("/api/tunnel-options");
+      if (!options || !Array.isArray(options.headends) || !Array.isArray(options.destinations) || typeof options.enabled !== "boolean") throw new Error("Unsupported creation policy.");
+      creation.options = options;
+      for (const [id, names] of [["creation-headend", options.headends], ["creation-destination", options.destinations]]) {
+        $(id).replaceChildren(...names.filter((name) => typeof name === "string").map((name) => { const option = el("option", "", name); option.value = name; return option; }));
+      }
+      if (number(options.max_bandwidth_bps) !== null) $("creation-bandwidth").max = String(options.max_bandwidth_bps / 1e6);
+      $("creation-policy").textContent = options.enabled ? `RSVP-TE · strict IPv4 hops · minimum TE metric · priorities 7/7 · maximum ${bandwidth(options.max_bandwidth_bps)}` : String(options.reason || "Tunnel creation is unavailable for this headend.");
+      if (creation.pending) {
+        $("creation-headend").value = creation.pending.intent.headend;
+        $("creation-destination").value = creation.pending.intent.destination;
+        $("creation-bandwidth").value = String(creation.pending.intent.bandwidth_bps / 1e6);
+        if (creation.pending.id) await checkCreation();
+        else creationMessage("A previous submission has an unknown outcome. Retry the same request to recover its operation; do not submit a different intent.");
+      }
+    } catch (error) { $("creation-policy").textContent = error.message; }
+    creationControls();
+  }
+  $("create-tunnel-button").addEventListener("click", openCreation);
+  $("create-tunnel-close").addEventListener("click", () => $("create-tunnel-dialog").close());
+  $("create-tunnel-dialog").addEventListener("close", () => clearTimeout(creation.timer));
+  $("creation-check").addEventListener("click", checkCreation);
+  $("create-tunnel-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (creation.busy || creation.options?.enabled !== true || creation.pending?.id) return;
+    if (!creation.pending) {
+      const amount = $("creation-bandwidth").value;
+      if (!/^\d+(?:\.\d{1,6})?$/.test(amount)) { creationMessage("Enter a positive bandwidth with up to six decimal places."); return; }
+      const [whole, fraction = ""] = amount.split(".");
+      const bps = Number(BigInt(whole) * 1000000n + BigInt(fraction.padEnd(6, "0")));
+      if (!Number.isSafeInteger(bps) || bps <= 0 || bps > creation.options.max_bandwidth_bps) { creationMessage("Bandwidth exceeds the operator policy."); return; }
+      creation.pending = { key: crypto.randomUUID(), intent: { headend: $("creation-headend").value, destination: $("creation-destination").value, bandwidth_bps: bps } };
+      saveCreation();
+    }
+    creation.busy = true; creationControls(); creationMessage("Computing and admitting the requested path…");
+    try {
+      const result = await creationFetch("/api/tunnels", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": creation.options.csrf_token, "Idempotency-Key": creation.pending.key }, body: JSON.stringify(creation.pending.intent) });
+      showOperation(result.operation);
+    } catch (error) { creationMessage(`${error.message} The outcome is unknown. Retry the same request to recover its operation.`); }
+    finally { creation.busy = false; creationControls(); }
+  });
 
   function renderChrome() {
     const data = state.data;

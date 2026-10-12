@@ -231,3 +231,16 @@ dialog .kv{border-top:1px solid var(--border);border-bottom:1px solid var(--bord
   .card-footer{flex-wrap:wrap;gap:4px}
 }
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
+/* Operator intent dialog; topology rendering remains independent of creation. */
+#create-tunnel-dialog { width: min(520px, calc(100vw - 32px)); }
+.creation-policy { border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 13px; }
+#creation-fields { border: 0; margin: 18px 0; padding: 0; }
+.creation-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+#creation-fields label { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+#creation-fields select, #creation-fields input { width: 100%; box-sizing: border-box; border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 6px; padding: 10px; font: inherit; }
+#creation-fields select:focus-visible, #creation-fields input:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.creation-bandwidth { margin-top: 18px; max-width: 180px; }
+.creation-status { overflow-wrap: anywhere; font-size: 13px; line-height: 1.6; }
+.creation-status .mono { display: block; margin: 8px 0; font-size: 11px; }
+.creation-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+@media (max-width: 600px) { .creation-grid { grid-template-columns: 1fr; } #create-tunnel-button { padding: 6px 9px; font-size: 11px; } }
