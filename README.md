@@ -7,7 +7,8 @@
 > The [read-only dashboard](docs/dashboard.md) displays local controller evidence.
 > [Opt-in withdrawal recovery](docs/pcep_failure_recovery.md) passed
 > [one IOS XE 16.9.7 lab trial](docs/pcep_failure_recovery_validation.md). Dashboard
-> [three-field tunnel creation](docs/dashboard_tunnel_creation.md) is proposed.
+> [three-field tunnel provisioning](docs/dashboard_tunnel_creation.md) has an
+> exact-plan router configuration backend, disabled until private qualification.
 
 > Reliability remediation: current behavior and migration rules are documented in
 > [input schema](docs/input_schema.md), [reconciliation safety](docs/reconciliation.md),
@@ -28,7 +29,8 @@ with Netmiko. A separate live GoBGP adapter and bounded PCEP listener support
 observation, constrained path requests and opt-in initial delegated paths.
 A separate opt-in profile can replace one authorized tunnel's path after a
 validated link withdrawal. General active optimization, PCReq reoptimization
-and controller-initiated LSPs remain unimplemented.
+remain unimplemented. Experimental native PCInitiate remains unqualified for
+RSVP bandwidth creation on the tested image.
 
 ## What problem this solves
 
@@ -79,13 +81,18 @@ This repository is now beyond the first MVP, but still intentionally safe:
 - Done: passive stateful PCEP, bounded PCReq/PCRep and opt-in initial PCUpd
 - Done: opt-in one-tunnel withdrawal recovery, qualified for one IOS XE 16.9.7 lab scenario
 - Done: read-only local controller dashboard, with explicitly labelled demo mode
-- Not implemented: general active optimization, PCReq reoptimization,
-  PCInitiate, dashboard tunnel creation or durable delegated ownership
+- Done: gated dashboard configuration previews, exact-plan delivery, shared
+  reservation holds and independently checked initial PCEP control
+- Experimental: native PCInitiate, disabled for the tested RSVP bandwidth profile
+- Not implemented: general active optimization, PCReq reoptimization or durable
+  delegated ownership across controller restarts
 
 Rendering and mock-tested operational parsers cover IOS XR 7.9.x, IOS XE
 17.12.x and Junos 23.4R candidate dialects. Actual live qualification is currently
-limited to CSR1000v IOS XE 16.9.7 BGP-LS/PCEP and RSVP forwarding observations;
-16.9.7 automated CLI writes remain blocked. See [platform support](docs/platform_support.md).
+limited to CSR1000v IOS XE 16.9.7 BGP-LS/PCEP and RSVP forwarding observations.
+The exact 16.9.7 CLI dialect is recognized; dashboard delivery still requires
+separate live qualification. See [platform support](docs/platform_support.md) and
+the [disabled deployment examples](docs/dashboard_provisioning_deployment.md).
 
 ## Technical overview
 

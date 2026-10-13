@@ -142,6 +142,60 @@ def test_delegation_cannot_enable_computation_implicitly(
     assert not offline_server
 
 
+def test_configuration_provisioning_cannot_enable_computation_implicitly(tmp_path, offline_server):
+    assert main([*base_args(tmp_path), "--provisioning-state", str(tmp_path / "owned.json")]) == 1
+    assert not offline_server
+
+
+def test_configuration_provisioning_has_exact_journal_policy_without_numeric_range(tmp_path, offline_server):
+    from ninja_pce.pcep_provisioning import JournalProvisioningAuthorization
+
+    journal = tmp_path / "owned.json"
+    assert main([*base_args(tmp_path), *flatten(compute_options(tmp_path)),
+                 "--provisioning-state", str(journal)]) == 0
+    delegated = offline_server["options"]["delegated_computer"]
+    assert delegated.allowed_tunnels == {}
+    assert delegated.authorized_peers == {PEER}
+    assert isinstance(delegated.provisioning_authorizer, JournalProvisioningAuthorization)
+    snapshot = offline_server["server"].snapshot()
+    assert snapshot["capabilities"]["configuration_provisioning"] is True
+    assert snapshot["capabilities"]["lsp_initiation"] is False
+    assert snapshot["provisioning_policy_digest"] == delegated.provisioning_authorizer.policy_digest
+    assert not journal.exists()
+
+
+@pytest.mark.parametrize("input_index", [None, 0, 1, 2, 4])
+def test_configuration_journal_cannot_alias_capture_or_live_input(tmp_path, offline_server, input_index):
+    options = compute_options(tmp_path)
+    journal = tmp_path / "pcep.json" if input_index is None else Path(options[input_index][1])
+    assert main([*base_args(tmp_path), *flatten(options), "--provisioning-state", str(journal)]) == 1
+    assert not offline_server
+
+
+def test_configuration_provisioning_keeps_static_failover_authorization(tmp_path, offline_server):
+    assert main([*base_args(tmp_path), *flatten(compute_options(tmp_path)),
+                 "--compute-delegated-tunnel", f"{PEER}=100", "--failover-tunnel", f"{PEER}=100",
+                 "--failover-state", str(tmp_path / "failover.json"),
+                 "--provisioning-state", str(tmp_path / "owned.json")]) == 0
+    options = offline_server["options"]
+    assert options["delegated_computer"].allowed_tunnels == {PEER: (100,)}
+    assert options["failover"].tunnel_id == 100
+
+
+def test_configuration_journal_cannot_alias_failure_recovery_journal(tmp_path, offline_server):
+    journal = str(tmp_path / "same.json")
+    assert main([*base_args(tmp_path), *flatten(compute_options(tmp_path)),
+                 "--compute-delegated-tunnel", f"{PEER}=100", "--failover-tunnel", f"{PEER}=100",
+                 "--failover-state", journal, "--provisioning-state", journal]) == 1
+    assert not offline_server
+
+
+def test_configuration_provisioning_cannot_authorize_stateless_pcc(tmp_path, offline_server):
+    assert main([*base_args(tmp_path), *flatten(compute_options(tmp_path)), "--stateless-peer", PEER,
+                 "--provisioning-state", str(tmp_path / "owned.json")]) == 1
+    assert not offline_server
+
+
 @pytest.mark.parametrize("binding", [f"{SECOND_PEER}=101", f"{PEER}=0", f"{PEER}=65536",
                                       f"{PEER}=-1", f"{PEER}=101.0", f"{PEER}=１０１", "invalid"])
 def test_invalid_delegation_authorization_cannot_start_listener(

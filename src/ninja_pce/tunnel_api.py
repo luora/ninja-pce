@@ -16,7 +16,7 @@ import struct
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, cast
 from urllib.parse import urlsplit
 
 from .cspf import CspfNoPath, CspfSearchLimit
@@ -30,6 +30,8 @@ _KEY = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
 _PRINCIPAL = re.compile(r"[A-Za-z0-9_.@-]{1,128}\Z")
 _HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+\Z")
 _OPERATION = re.compile(r"/api/tunnel-operations/([0-9a-f]{32})\Z")
+_PLAN = re.compile(r"[0-9a-f]{64}\Z")
+_RSVP_CHECKS = {"identity", "destination", "bandwidth", "ero", "signaling"}
 _REASONS = {200: "OK", 202: "Accepted", 400: "Bad Request", 403: "Forbidden", 404: "Not Found",
             405: "Method Not Allowed", 408: "Request Timeout", 409: "Conflict", 413: "Payload Too Large",
             415: "Unsupported Media Type", 431: "Request Header Fields Too Large", 503: "Service Unavailable"}
@@ -39,6 +41,38 @@ class _HTTPError(Exception):
     def __init__(self, status: int, message: str):
         self.status, self.message = status, message
         super().__init__(message)
+
+
+class ProvisioningManager(Protocol):
+    headends: dict[str, str]
+    allowed_destinations: tuple[str, ...]
+    max_bandwidth_bps: int
+    max_outstanding: int
+    policy_digest: str
+
+    def list(self, principal: str | None = None) -> list[dict[str, Any]]: ...
+
+
+class ProvisioningBackend(Protocol):
+    """An explicitly qualified backend with bounded generated plans.
+
+    No method accepts operator-supplied CLI. Independent verification concerns
+    headend RSVP signaling, never traffic forwarding or end-to-end delivery.
+    """
+
+    requires_plan: bool
+    backend_name: str
+    independent_verification: bool
+
+    @property
+    def manager(self) -> ProvisioningManager: ...
+
+    def readiness(self, headend: str | None = None) -> tuple[bool, str]: ...
+
+    async def preview(self, principal: str, intent: dict[str, Any]) -> dict[str, Any]: ...
+
+    async def create(self, principal: str, key: str, intent: dict[str, Any], *,
+                     approved_plan_id: str) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)
@@ -66,7 +100,7 @@ class TunnelAPI:
     console; enabling this API never bypasses the session writer's own guards.
     """
 
-    def __init__(self, creation: CreationSession, socket_path: Path, allowed_proxy_uid: int,
+    def __init__(self, creation: CreationSession | ProvisioningBackend, socket_path: Path, allowed_proxy_uid: int,
                  origin: str, allowed_operator: tuple[str, ...], qualified: bool = False):
         parsed = urlsplit(origin)
         if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or
@@ -141,22 +175,47 @@ class TunnelAPI:
         self._unlink_owned()
         self._sessions.clear()
 
+    def _uses_plan(self) -> bool:
+        return getattr(self.creation, "requires_plan", False) is True
+
     def _ready(self, headend: str | None = None) -> tuple[bool, str]:
         if not self.qualified:
-            return False, "RSVP creation has not been qualified on this headend."
-        manager = self.creation.manager
+            return False, ("Router provisioning has not been qualified on this headend." if self._uses_plan()
+                           else "RSVP creation has not been qualified on this headend.")
+        if self._uses_plan():
+            try:
+                return cast(ProvisioningBackend, self.creation).readiness(headend)
+            except (ValueError, OSError, RuntimeError):
+                return False, "Provisioning observation or controller policy is unavailable."
+        creation = cast(CreationSession, self.creation)
+        manager = creation.manager
         try:
             manager.computer.validated_snapshot()
             names = [headend] if headend is not None else list(manager.headends)
             for name in names:
                 try:
-                    self.creation._connection(manager.headends[name])
+                    creation._connection(manager.headends[name])
                     return True, "Qualified lab creation is available; forwarding remains unverified."
                 except (ValueError, KeyError):
                     continue
         except (ValueError, OSError, RuntimeError):
             return False, "Fresh, consistent topology is unavailable."
         return False, "A fresh synchronized enabled RSVP-initiation session is unavailable."
+
+    def _checked_operation(self, operation: dict[str, Any]) -> dict[str, Any]:
+        if operation.get("status") == "VERIFIED" or operation.get("verified") is True:
+            proof = operation.get("verification")
+            if (not self._uses_plan() or
+                    getattr(self.creation, "independent_verification", False) is not True or
+                    not isinstance(proof, dict) or proof.get("independent") is not True or
+                    proof.get("scope") != "headend-rsvp" or
+                    proof.get("pcep_control") is not True or
+                    not isinstance(proof.get("checks"), list) or
+                    len(proof["checks"]) != len(_RSVP_CHECKS) or
+                    any(not isinstance(check, str) for check in proof["checks"]) or
+                    set(proof["checks"]) != _RSVP_CHECKS):
+                raise _HTTPError(503, "Creation acknowledgment cannot establish independent RSVP verification.")
+        return operation
 
     def _cookie_session(self, headers: dict[str, str], principal: str) -> tuple[str, _Session] | None:
         tokens = []
@@ -235,11 +294,17 @@ class TunnelAPI:
             enabled, reason = self._ready()
             token, session = self._session(headers, principal)
             manager = self.creation.manager
+            uses_plan = self._uses_plan()
             options = {"headends": list(manager.headends), "destinations": list(manager.allowed_destinations),
                        "max_bandwidth_bps": manager.max_bandwidth_bps, "enabled": enabled, "reason": reason,
-                       "policy": {"revision": manager.policy_digest, "max_outstanding": 1,
+                       "backend": getattr(self.creation, "backend_name", "pcep-initiation"),
+                       "requires_plan": uses_plan,
+                       "policy": {"revision": manager.policy_digest,
+                                  "max_outstanding": getattr(manager, "max_outstanding", 1),
                                   "setup_priority": 7, "hold_priority": 7, "read_only": not enabled,
-                                  "forwarding_verification": "unverified"}, "csrf_token": session.csrf}
+                                  "forwarding_verification": "unverified",
+                                  "operational_verification": "headend-rsvp" if uses_plan else "unverified"},
+                       "csrf_token": session.csrf}
             cookie = f"{_COOKIE}={token}; Path=/; Max-Age=900; Secure; HttpOnly; SameSite=Strict"
             return 200, options, cookie
         match = _OPERATION.fullmatch(path)
@@ -248,10 +313,9 @@ class TunnelAPI:
             operation = next((item for item in operations if item["id"] == match.group(1)), None)
             if operation is None:
                 raise _HTTPError(404, "Unknown tunnel operation.")
-            if operation.get("status") == "VERIFIED" or operation.get("verified") is True:
-                raise _HTTPError(503, "Creation acknowledgment cannot establish forwarding verification.")
-            return 200, {"operation": operation}, None
-        if path != "/api/tunnels":
+            return 200, {"operation": self._checked_operation(operation)}, None
+        is_preview = path == "/api/tunnel-plans" and self._uses_plan()
+        if path != "/api/tunnels" and not is_preview:
             raise _HTTPError(404, "Unknown API route.")
         if method != "POST":
             raise _HTTPError(405, "Tunnel creation requires POST.")
@@ -265,7 +329,7 @@ class TunnelAPI:
         if headers.get("content-type", "").lower() != "application/json":
             raise _HTTPError(415, "Creation requires application/json.")
         key = headers.get("idempotency-key", "")
-        if not _KEY.fullmatch(key):
+        if not is_preview and not _KEY.fullmatch(key):
             raise _HTTPError(400, "A bounded Idempotency-Key is required.")
         try:
             intent = json.loads(body.decode("utf-8"), object_pairs_hook=_object,
@@ -273,26 +337,50 @@ class TunnelAPI:
         except (ValueError, UnicodeError, RecursionError) as exc:
             raise _HTTPError(400, "Malformed or duplicate-field JSON intent.") from exc
         manager = self.creation.manager
-        if (not isinstance(intent, dict) or set(intent) != {"headend", "destination", "bandwidth_bps"} or
+        fields = {"headend", "destination", "bandwidth_bps"}
+        uses_plan = self._uses_plan()
+        if uses_plan and not is_preview:
+            fields.add("approved_plan_id")
+        if (not isinstance(intent, dict) or set(intent) != fields or
                 not isinstance(intent["headend"], str) or intent["headend"] not in manager.headends or
                 not isinstance(intent["destination"], str) or intent["destination"] not in manager.allowed_destinations or
                 intent["headend"] == intent["destination"] or type(intent["bandwidth_bps"]) is not int or
                 not 0 < intent["bandwidth_bps"] <= manager.max_bandwidth_bps):
             raise _HTTPError(400, "Intent must use authorized headend, destination and positive integer bandwidth.")
+        plan_id = intent.get("approved_plan_id")
+        if uses_plan and not is_preview and (not isinstance(plan_id, str) or not _PLAN.fullmatch(plan_id)):
+            raise _HTTPError(400, "Creation requires the exact generated plan identifier.")
+        intent = {name: intent[name] for name in ("headend", "destination", "bandwidth_bps")}
+        if uses_plan and not is_preview:
+            # Recovery is an authenticated read, not new delivery authority.
+            # Do this before readiness so a lost response can be recovered
+            # while the PCC/TED is unavailable or qualification is withdrawn.
+            previous = [op for op in manager.list(principal) if op.get("idempotency_key") == key]
+            if previous:
+                if (len(previous) != 1 or previous[0].get("intent") != intent or
+                        previous[0].get("plan_id") != plan_id):
+                    raise _HTTPError(409, "Idempotency key is already bound to another exact intent and plan.")
+                return 202, {"operation": self._checked_operation(previous[0])}, None
         enabled, reason = self._ready(intent["headend"])
         if not enabled:
             raise _HTTPError(503, reason)
         try:
-            operation = await asyncio.wait_for(self.creation.create(principal, key, intent), 10)
+            if uses_plan:
+                backend = cast(ProvisioningBackend, self.creation)
+                if is_preview:
+                    plan = await asyncio.wait_for(backend.preview(principal, intent), 10)
+                    return 200, {"plan": plan}, None
+                operation = await asyncio.wait_for(backend.create(principal, key, intent,
+                                                                  approved_plan_id=cast(str, plan_id)), 10)
+            else:
+                operation = await asyncio.wait_for(cast(CreationSession, self.creation).create(principal, key, intent), 10)
         except CspfNoPath as exc:
             raise _HTTPError(409, "No admissible directed path has sufficient bandwidth.") from exc
         except CspfSearchLimit as exc:
             raise _HTTPError(503, "Path admission could not establish a bounded result.") from exc
         except ValueError as exc:
             raise _HTTPError(409, str(exc)[:256]) from exc
-        if operation.get("status") == "VERIFIED" or operation.get("verified") is True:
-            raise _HTTPError(503, "Creation acknowledgment cannot establish forwarding verification.")
-        return 202, {"operation": operation}, None
+        return 202, {"operation": self._checked_operation(operation)}, None
 
     @staticmethod
     async def _respond(writer: asyncio.StreamWriter, status: int, document: dict[str, Any],

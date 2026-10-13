@@ -13,6 +13,62 @@ idempotency, correlate owned reports, and attempt one explicit owned PCUpd or
 cleanup. Initiation remains clear unless the creation options are configured.
 Offline tests do not establish device support. See the live result below.
 
+## Configuration-based provisioning profile
+
+The dashboard also supports a separately qualified **router configuration +
+PCEP path control** backend. This does not enable or qualify native PCInitiate.
+`CliProvisioner` admits a bounded managed tunnel, delivers generated IOS XE
+configuration through the existing southbound adapter, and authorizes the
+existing PCEP writer for that exact newly configured tunnel. Both the backend
+and operator API default to unqualified. Qualification and deployment of this
+profile must be recorded separately from the negative initiation results below.
+
+After the operator chooses headend, destination and bandwidth, the page
+automatically requests a configuration preview. The preview displays the
+computed route, actual RSVP bandwidth, exact generated router configuration
+and expiry. IOS XE bandwidth rounds upward to whole kilobits/s; the preview
+discloses any difference from the requested bits/s. Previewing creates neither
+a tunnel nor a bandwidth hold and sends no router commands.
+
+One explicit **Create tunnel** click approves the displayed plan's SHA256
+identifier together with the original intent and idempotency key. Changing a
+field invalidates the preview immediately. An expired preview is refreshed,
+and Create remains disabled until a current plan is displayed. The service
+revalidates admission, policy, topology and ownership before delivering the
+exact approved plan; an altered or expired plan cannot authorize a new write.
+An uncertain browser result retains the original key, intent and approved plan
+across reload. Reload never resubmits automatically, and retry must recover
+the existing operation rather than allocate another tunnel.
+An authenticated retry with the same intent, key and approved plan can recover
+an existing configuration operation even while new delivery is disabled or its
+PCC/TED is unavailable. This lookup performs no backend creation or router
+write. A changed intent or plan conflicts; an unknown key still requires full
+qualification and readiness. The page permits only this explicit pending
+request recovery while new creation is unavailable.
+
+Generated configuration contains RSVP bandwidth and priorities, a dynamic PCE
+path option, and the computed strict explicit path as fallback. It does not
+enable customer traffic steering. Tunnel100 and its explicit fallback remain
+outside the new operation's ownership. The initial profile admits one managed
+tunnel at a time; no generic command, public deletion or arbitrary tunnel-ID
+endpoint is exposed.
+
+The configuration backend reaches `VERIFIED` only after independent headend
+checks of identity, destination, bandwidth, ordered ERO and RSVP signaling,
+plus evidence that the controller's initial PCEP path control completed. The
+API requires the full explicit proof with scope `headend-rsvp`; the page labels
+this **RSVP verified on the headend**. This does not prove payload forwarding,
+end-to-end OAM, transit reservations or throughput. A PCRpt acknowledgment alone
+cannot establish this state. Newly configured tunnels receive bounded
+authorization for initial PCEP path control only. General automatic failure
+recovery and reoptimization of dashboard-created tunnels require a separate
+implementation and qualification; Tunnel100's existing recovery remains a
+distinct workflow.
+
+Sanitized private runtime policy, strict SSH host-key handling, systemd and
+authenticated Unix proxy examples are in the
+[configuration provisioning deployment guide](dashboard_provisioning_deployment.md).
+
 ## First live result — CSR1000v 16.9.7
 
 The operator-authorized 2026-10-11 UTC test negotiated both initiation flags,
@@ -128,7 +184,8 @@ provenance are recorded alongside the existing regression evidence.
 ## Operator flow
 
 The operator selects **headend**, **destination** and **bandwidth in Mbps**,
-then clicks **Create** once. Headends come from a server-side, qualified PCC
+reviews the generated configuration preview when using the configuration
+backend, then clicks **Create** once. Headends come from a server-side, qualified PCC
 allowlist; destinations come from known topology nodes. For example, PE1
 `10.255.0.1` to PE3 `10.255.0.6` with `1` Mbps. Free-form router addresses,
 commands and arbitrary filesystem paths are not accepted.
@@ -136,8 +193,11 @@ commands and arbitrary filesystem paths are not accepted.
 The form displays the enforced policy: numbered IPv4 RSVP-TE, strict hops,
 minimum TE metric, no affinity constraint, and configured setup/hold priorities
 (initial proposal: 7/7). These defaults need no additional fields. Bandwidth
-uses decimal Mbps, validated and rounded upward to integer bits/s. The
-controller allocates a unique managed name; the PCC assigns its own LSP IDs.
+uses decimal Mbps with up to six decimal places, converted exactly to integer
+bits/s. The configuration backend rounds the RSVP reservation upward to whole
+kilobits/s within policy and displays the actual value before approval. The
+controller allocates a unique managed name. The configuration backend assigns
+a bounded unused tunnel ID; native initiation asks the PCC to allocate it.
 
 Create starts computation, admission and delivery as one tracked operation.
 The page immediately shows its operation ID and progress, and remains usable
@@ -186,17 +246,18 @@ Implementation must also account for verified RFC 8281 erratum 6301 on the
 deletion/reclamation grammar; see the
 [RFC 8281 errata registry](https://www.rfc-editor.org/errata/rfc8281).
 
-## Proposed API and execution boundary
+## API and execution boundary
 
 The separate `TunnelAPI` implements these endpoints behind an explicitly
 configured Unix listener. The default dashboard serves only disabled options;
 the current proxy permits only read methods. Public operator routing and an
 exact qualified device profile remain deployment gates.
 
-| Endpoint | Proposed behavior |
+| Endpoint | Behavior |
 |---|---|
 | `GET /api/tunnel-options` | Authorized headends, destinations, policy defaults, qualification and source-health status. |
-| `POST /api/tunnels` | Validate intent, create or return an idempotent operation, then compute/admit/send through the controller's guarded writer. |
+| `POST /api/tunnel-plans` | Configuration backend only: validate intent and return a generated expiring configuration/path preview without router delivery or capacity reservation. Uses the same operator session, Origin and CSRF boundary as creation. |
+| `POST /api/tunnels` | Validate intent and, for configuration provisioning, its exact `approved_plan_id`; create or recover an idempotent operation, then admit/send through the selected backend's guarded execution boundary. |
 | `GET /api/tunnel-operations/{id}` | Authorized operation status, requested/computed/reported route, evidence and failure reason. |
 
 Example intent, with a session-bound CSRF token and an `Idempotency-Key` header:
@@ -205,17 +266,26 @@ Example intent, with a session-bound CSRF token and an `Idempotency-Key` header:
 {"headend":"PE1","destination":"PE3","bandwidth_bps":1000000}
 ```
 
+This is the preview schema and native initiation schema. Configuration
+creation adds exactly one field, `"approved_plan_id"`, containing the 64 lower
+case hexadecimal characters returned by the preview. Caller-supplied rendered
+configuration, command lists or other extra fields are rejected. Options expose
+`backend`, `requires_plan`, qualification, maximum bandwidth and the configured
+outstanding-operation limit. Native initiation does not gain a preview route.
+
 Return `202 Accepted` with an operation ID and status URL, never an immediate
 "tunnel created" claim. Reject invalid fields, unauthorized endpoints, disabled
 creation or unsupported platform profiles before scheduling any write. A
 well-formed intent can still fail admission without sending protocol bytes.
 
 One click authorizes this constrained creation intent under the displayed
-operator policy. It does not manufacture approval for an unrelated CLI plan.
+operator policy and, for configuration provisioning, the exact displayed CLI
+plan. It does not manufacture approval for an unrelated CLI plan.
 Persist the authenticated principal, exact intent, effective policy revision,
 computed plan digest and its expiry. A shared execution boundary must enforce
 that authorization against the exact wire plan immediately before sending.
-Future raw CLI execution must retain its existing exact-plan approval rules.
+The configuration adapter retains the existing exact-plan approval rules; it
+does not provide raw CLI execution from the dashboard.
 
 The worker must atomically lock and admit against fresh directed TE data plus
 all controller holds, persist the pending reservation and ownership intent,
@@ -271,8 +341,8 @@ timeout/reload must not create another LSP.
 |---|---|
 | `PLANNED` | Computed intent passed admission; exact plan and pending hold are durable. |
 | `PUSHING` | Write boundary entered; outcome can become uncertain. |
-| `APPLIED_UNVERIFIED` | Correlated response identifies the new LSP; acknowledgment may still report DOWN. No green success badge. |
-| `VERIFIED` | Fresh independent headend/transit evidence matches identity, RSVP setup, endpoints, requested bandwidth/priorities, ordered route and operational state. |
+| `APPLIED_UNVERIFIED` | Delivery was acknowledged; configuration delivery or a correlated PCRpt alone does not establish RSVP verification. A native report may still show DOWN. |
+| `VERIFIED` | Configuration profile only: full independent headend identity, destination, bandwidth, ERO and signaling checks passed, with initial PCEP control confirmed. The UI says RSVP verified; payload forwarding remains unverified. |
 | `VERIFICATION_FAILED` | Evidence conflicts, is incomplete or misses the deadline; retain holds unless absence/release is proven. |
 | `ROLLBACK_REQUIRED` | Delivery/recovery is uncertain and needs controlled reconciliation or operator intervention. |
 | `ROLLED_BACK` | An owned-object cleanup was independently confirmed, including resource release. |
@@ -284,10 +354,10 @@ Reported ACTIVE alone cannot reach VERIFIED. MPLS OAM and any traffic test appea
 as separate dated evidence: RSVP reservation does not prove payload throughput,
 and the lab's license limits preclude a 50 Mbps throughput claim.
 
-## Qualification procedure on CSR1000v 16.9.7
+## Native initiation qualification procedure on CSR1000v 16.9.7
 
 The first creation attempt above exercised the private listener. Complete the
-remaining checks before enabling any public creation profile. Initiation is
+remaining checks before enabling a public native initiation profile. Initiation is
 opt-in, scoped to explicitly configured creation headends.
 
 1. Snapshot PE1 configuration, OPEN capability bytes, existing LSP names/IDs,
@@ -318,7 +388,7 @@ opt-in, scoped to explicitly configured creation headends.
    ownership recovery without duplicate LSPs or released uncertain holds.
    Add raw, redacted captures and regression fixtures for the exact image.
 
-If RSVP PCInitiate is rejected or bandwidth is ignored, keep creation disabled
+If RSVP PCInitiate is rejected or bandwidth is ignored, keep native creation disabled
 for this profile. A qualified newer image/vendor or a separately qualified
 configuration-based provisioner is an alternative project milestone; the
 existing preconfigured-tunnel PCUpd workflow must retain its distinct label.

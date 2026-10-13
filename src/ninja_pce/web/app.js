@@ -98,7 +98,7 @@
   $("info-toggle").addEventListener("click", () => $("info-dialog").showModal());
   $("info-close").addEventListener("click", () => $("info-dialog").close());
 
-  const creation = { options: null, pending: null, busy: false, timer: null };
+  const creation = { options: null, pending: null, busy: false, timer: null, plan: null, planIntent: null, previewBusy: false, previewTimer: null, expiryTimer: null, previewGeneration: 0 };
   try { creation.pending = JSON.parse(sessionStorage.getItem("ninja-pce-creation") || "null"); } catch { /* No automatic resubmission. */ }
   if (creation.pending && (typeof creation.pending.key !== "string" || !creation.pending.intent || (creation.pending.id && !/^[0-9a-f]{32}$/.test(creation.pending.id)))) creation.pending = null;
   function saveCreation() {
@@ -108,19 +108,72 @@
     const target = $("creation-status"); target.replaceChildren(el("p", "", message));
     if (operation) {
       target.append(el("span", "mono", `Operation ${operation.id}`));
-      if (operation.reported?.operational_state) target.append(el("p", "", `Router reports ${operation.reported.operational_state}. Forwarding remains unverified.`));
+      if (operation.reported?.operational_state) target.append(el("p", "", `Router reports ${operation.reported.operational_state}.`));
+      target.append(el("p", "muted", "Traffic forwarding has not been verified."));
       if (operation.reason) target.append(el("p", "", String(operation.reason)));
       if (Array.isArray(operation.path_nodes)) target.append(el("p", "mono", operation.path_nodes.join(" → ")));
     }
   }
   function creationControls() {
     const held = Boolean(creation.pending);
+    const planRequired = creation.options?.requires_plan === true;
+    const usablePlan = creation.plan && date(creation.plan.expires_at)?.getTime() > Date.now();
+    const backendMismatch = held && planRequired !== Boolean(creation.pending.approved_plan_id);
+    const recovery = held && !creation.pending.id && planRequired && /^[0-9a-f]{64}$/.test(creation.pending.approved_plan_id);
     $("creation-fields").disabled = creation.busy || held || creation.options?.enabled !== true;
-    $("creation-submit").disabled = creation.busy || Boolean(creation.pending?.id) || creation.options?.enabled !== true;
+    $("creation-submit").disabled = creation.busy || Boolean(creation.pending?.id) || creation.options?.enabled !== true && !recovery || backendMismatch || !held && planRequired && !usablePlan;
     $("creation-submit").hidden = Boolean(creation.pending?.id);
     $("creation-submit").textContent = creation.busy ? "Submitting…" : held ? "Retry same request" : "Create tunnel";
     $("creation-check").hidden = !creation.pending?.id;
     $("creation-check").disabled = creation.busy;
+  }
+  function creationIntent() {
+    const amount = $("creation-bandwidth").value;
+    if (!/^\d+(?:\.\d{1,6})?$/.test(amount)) throw new Error("Enter a positive bandwidth with up to six decimal places.");
+    const [whole, fraction = ""] = amount.split(".");
+    const bps = Number(BigInt(whole) * 1000000n + BigInt(fraction.padEnd(6, "0")));
+    if (!Number.isSafeInteger(bps) || bps <= 0 || bps > creation.options.max_bandwidth_bps) throw new Error("Bandwidth exceeds the operator policy.");
+    const headend = $("creation-headend").value, destination = $("creation-destination").value;
+    if (headend === destination || !creation.options.headends.includes(headend) || !creation.options.destinations.includes(destination)) throw new Error("Choose a different authorized destination.");
+    return { headend, destination, bandwidth_bps: bps };
+  }
+  function showPlan(plan, previous = false) {
+    $("creation-preview").hidden = !plan;
+    if (!plan) return;
+    $("creation-preview-path").textContent = list(plan.path_nodes).join(" → ");
+    const requested = creation.planIntent?.bandwidth_bps || creation.pending?.intent?.bandwidth_bps;
+    $("creation-preview-bandwidth").textContent = `RSVP bandwidth: ${bandwidth(plan.bandwidth_bps)}${requested && requested !== plan.bandwidth_bps ? ` (rounded up from ${bandwidth(requested)})` : ""}.`;
+    $("creation-preview-config").textContent = String(plan.rendered_config || "");
+    $("creation-preview-expiry").textContent = previous ? "Configuration approved for the previous submission." : `Valid until ${fullTime(plan.expires_at)}. Create applies exactly this plan.`;
+  }
+  function invalidatePreview() {
+    clearTimeout(creation.previewTimer); clearTimeout(creation.expiryTimer);
+    creation.previewGeneration += 1; creation.previewBusy = false;
+    creation.plan = null; creation.planIntent = null; showPlan(null);
+  }
+  function queuePreview() {
+    if (creation.pending) return;
+    invalidatePreview(); creationControls();
+    if (creation.options?.enabled !== true || creation.options.requires_plan !== true || !$("create-tunnel-dialog").open) return;
+    creationMessage("Preparing the configuration preview…");
+    creation.previewTimer = setTimeout(previewCreation, 350);
+  }
+  async function previewCreation() {
+    if (creation.pending || creation.busy || creation.options?.requires_plan !== true || creation.options.enabled !== true) return;
+    const generation = creation.previewGeneration;
+    let intent;
+    try { intent = creationIntent(); } catch (error) { creationMessage(error.message); return; }
+    creation.previewBusy = true; creationControls();
+    try {
+      const result = await creationFetch("/api/tunnel-plans", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": creation.options.csrf_token }, body: JSON.stringify(intent) });
+      if (generation !== creation.previewGeneration || creation.pending || !$("create-tunnel-dialog").open) return;
+      const plan = result.plan;
+      if (!plan || !/^[0-9a-f]{64}$/.test(plan.plan_id) || date(plan.expires_at)?.getTime() <= Date.now() || !date(plan.expires_at) || typeof plan.rendered_config !== "string" || !plan.rendered_config || !Array.isArray(plan.path_nodes) || !plan.path_nodes.length || plan.path_nodes.some((name) => typeof name !== "string") || ["headend", "destination"].some((key) => plan[key] !== intent[key]) || !Number.isSafeInteger(plan.bandwidth_bps) || plan.bandwidth_bps < intent.bandwidth_bps || plan.bandwidth_bps - intent.bandwidth_bps >= 1000 || plan.bandwidth_bps > creation.options.max_bandwidth_bps) throw new Error("Unsupported or expired configuration preview.");
+      creation.plan = plan; creation.planIntent = intent; showPlan(plan);
+      creationMessage("Review the path and configuration, then select Create tunnel.");
+      creation.expiryTimer = setTimeout(queuePreview, Math.max(1, date(plan.expires_at).getTime() - Date.now()));
+    } catch (error) { if (generation === creation.previewGeneration) creationMessage(error.message); }
+    finally { if (generation === creation.previewGeneration) { creation.previewBusy = false; creationControls(); } }
   }
   async function creationFetch(path, options = {}) {
     const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 10000);
@@ -133,6 +186,10 @@
   }
   function showOperation(operation) {
     if (!operation || !/^[0-9a-f]{32}$/.test(operation.id) || typeof operation.status !== "string") throw new Error("Unsupported operation response.");
+    if (operation.status === "VERIFIED" || operation.verified === true) {
+      const proof = operation.verification, checks = ["identity", "destination", "bandwidth", "ero", "signaling"];
+      if (creation.options?.requires_plan !== true || proof?.independent !== true || proof.scope !== "headend-rsvp" || proof.pcep_control !== true || !Array.isArray(proof.checks) || proof.checks.length !== checks.length || !checks.every((check) => proof.checks.includes(check))) throw new Error("Independent RSVP verification is unavailable.");
+    }
     creation.pending.id = operation.id; saveCreation();
     const messages = {
       PLANNED: "Path admitted. Waiting for delivery.", PUSHING: "Request sent. Waiting for the router’s response.",
@@ -140,12 +197,13 @@
       ROLLBACK_REQUIRED: "Delivery needs reconciliation. Capacity remains held; this request will not be sent again.",
       REJECTED: "Request rejected before delivery. No tunnel was created by this operation.",
       ROLLED_BACK: "Owned tunnel removal and resource release were confirmed.",
-      VERIFIED: "Tunnel independently verified.", VERIFICATION_FAILED: "Tunnel verification failed. Capacity remains held.",
+      CREATED: "Tunnel configuration created. Waiting for independent RSVP checks.",
+      VERIFIED: "RSVP verified on the headend. Traffic forwarding remains unverified.", VERIFICATION_FAILED: "Tunnel verification failed. Capacity remains held.",
     };
     creationMessage(messages[operation.status] || `Operation state: ${operation.status}`, operation);
     if (["REJECTED", "ROLLED_BACK"].includes(operation.status)) { creation.pending = null; saveCreation(); }
     clearTimeout(creation.timer);
-    if ((["PLANNED", "PUSHING"].includes(operation.status) || operation.status === "APPLIED_UNVERIFIED" && !["ACTIVE", "UP"].includes(operation.reported?.operational_state)) && $("create-tunnel-dialog").open) creation.timer = setTimeout(checkCreation, 2000);
+    if ((["PLANNED", "PUSHING", "CREATED"].includes(operation.status) || operation.status === "APPLIED_UNVERIFIED" && (creation.options?.requires_plan === true || !["ACTIVE", "UP"].includes(operation.reported?.operational_state))) && $("create-tunnel-dialog").open) creation.timer = setTimeout(checkCreation, 2000);
     creationControls();
   }
   async function checkCreation() {
@@ -155,6 +213,7 @@
   }
   async function openCreation() {
     $("create-tunnel-dialog").showModal();
+    invalidatePreview();
     if (!creation.pending) $("creation-status").replaceChildren();
     creation.options = null; creationControls();
     if (state.data?.mode === "demo") { $("creation-policy").textContent = "Tunnel creation is disabled in the demo workspace."; return; }
@@ -167,36 +226,45 @@
         $(id).replaceChildren(...names.filter((name) => typeof name === "string").map((name) => { const option = el("option", "", name); option.value = name; return option; }));
       }
       if (number(options.max_bandwidth_bps) !== null) $("creation-bandwidth").max = String(options.max_bandwidth_bps / 1e6);
-      $("creation-policy").textContent = options.enabled ? `RSVP-TE · strict IPv4 hops · minimum TE metric · priorities 7/7 · maximum ${bandwidth(options.max_bandwidth_bps)}` : String(options.reason || "Tunnel creation is unavailable for this headend.");
+      if (!creation.pending && $("creation-headend").value === $("creation-destination").value) $("creation-destination").value = options.destinations.find((name) => name !== $("creation-headend").value) || "";
+      $("creation-policy").textContent = options.enabled ? `${options.requires_plan === true ? "Router configuration + PCEP path control" : "PCEP initiation"} · RSVP-TE · priorities 7/7 · maximum ${bandwidth(options.max_bandwidth_bps)}` : String(options.reason || "Tunnel creation is unavailable for this headend.");
       if (creation.pending) {
         $("creation-headend").value = creation.pending.intent.headend;
         $("creation-destination").value = creation.pending.intent.destination;
         $("creation-bandwidth").value = String(creation.pending.intent.bandwidth_bps / 1e6);
+        if (creation.pending.plan) showPlan(creation.pending.plan, true);
         if (creation.pending.id) await checkCreation();
+        else if ((options.requires_plan === true) !== Boolean(creation.pending.approved_plan_id)) creationMessage("The previous request belongs to a different provisioning backend. Keep its idempotency key for reconciliation; it cannot be resubmitted here.");
         else creationMessage("A previous submission has an unknown outcome. Retry the same request to recover its operation; do not submit a different intent.");
       }
+      else queuePreview();
     } catch (error) { $("creation-policy").textContent = error.message; }
     creationControls();
   }
   $("create-tunnel-button").addEventListener("click", openCreation);
   $("create-tunnel-close").addEventListener("click", () => $("create-tunnel-dialog").close());
-  $("create-tunnel-dialog").addEventListener("close", () => clearTimeout(creation.timer));
+  $("create-tunnel-dialog").addEventListener("close", () => { clearTimeout(creation.timer); invalidatePreview(); });
+  $("creation-fields").addEventListener("input", queuePreview);
+  $("creation-fields").addEventListener("change", queuePreview);
   $("creation-check").addEventListener("click", checkCreation);
   $("create-tunnel-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (creation.busy || creation.options?.enabled !== true || creation.pending?.id) return;
+    const recovery = creation.pending && !creation.pending.id && creation.options?.requires_plan === true && /^[0-9a-f]{64}$/.test(creation.pending.approved_plan_id);
+    if (creation.busy || creation.options?.enabled !== true && !recovery || creation.pending?.id) return;
     if (!creation.pending) {
-      const amount = $("creation-bandwidth").value;
-      if (!/^\d+(?:\.\d{1,6})?$/.test(amount)) { creationMessage("Enter a positive bandwidth with up to six decimal places."); return; }
-      const [whole, fraction = ""] = amount.split(".");
-      const bps = Number(BigInt(whole) * 1000000n + BigInt(fraction.padEnd(6, "0")));
-      if (!Number.isSafeInteger(bps) || bps <= 0 || bps > creation.options.max_bandwidth_bps) { creationMessage("Bandwidth exceeds the operator policy."); return; }
-      creation.pending = { key: crypto.randomUUID(), intent: { headend: $("creation-headend").value, destination: $("creation-destination").value, bandwidth_bps: bps } };
+      let intent;
+      try { intent = creationIntent(); } catch (error) { creationMessage(error.message); return; }
+      if (creation.options.requires_plan === true && (!creation.plan || date(creation.plan.expires_at)?.getTime() <= Date.now() || JSON.stringify(intent) !== JSON.stringify(creation.planIntent))) { queuePreview(); return; }
+      creation.pending = { key: crypto.randomUUID(), intent };
+      if (creation.options.requires_plan === true) { creation.pending.approved_plan_id = creation.plan.plan_id; creation.pending.plan = creation.plan; }
       saveCreation();
     }
+    if ((creation.options.requires_plan === true) !== Boolean(creation.pending.approved_plan_id)) return;
     creation.busy = true; creationControls(); creationMessage("Computing and admitting the requested path…");
     try {
-      const result = await creationFetch("/api/tunnels", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": creation.options.csrf_token, "Idempotency-Key": creation.pending.key }, body: JSON.stringify(creation.pending.intent) });
+      const payload = { ...creation.pending.intent };
+      if (creation.pending.approved_plan_id) payload.approved_plan_id = creation.pending.approved_plan_id;
+      const result = await creationFetch("/api/tunnels", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": creation.options.csrf_token, "Idempotency-Key": creation.pending.key }, body: JSON.stringify(payload) });
       showOperation(result.operation);
     } catch (error) { creationMessage(`${error.message} The outcome is unknown. Retry the same request to recover its operation.`); }
     finally { creation.busy = false; creationControls(); }

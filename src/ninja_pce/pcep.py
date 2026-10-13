@@ -376,6 +376,8 @@ class PcepServer:
         self.delegated_computer = delegated_computer
         self.failover = failover
         self.creation = creation
+        delegated_peers = (getattr(delegated_computer, "authorized_peers", delegated_computer.allowed_tunnels)
+                           if delegated_computer is not None else ())
         if creation is not None and (
                 path_computer is not creation.manager.computer or not config.keepalive or
                 not set(creation.manager.headends.values()) <= set(config.allowed_peers) or
@@ -383,8 +385,8 @@ class PcepServer:
             raise ValueError("Creation requires the same computer and explicitly allowed stateful PCCs")
         if delegated_computer is not None and (
                 path_computer is None or not config.keepalive or
-                not set(delegated_computer.allowed_tunnels) <= set(config.allowed_peers) or
-                set(delegated_computer.allowed_tunnels) & set(config.stateless_peers)):
+                not set(delegated_peers) <= set(config.allowed_peers) or
+                set(delegated_peers) & set(config.stateless_peers)):
             raise ValueError("Delegation requires computation and allowed stateful PCCs")
         if failover is not None and (
                 delegated_computer is None or path_computer is not failover.computer or
@@ -446,7 +448,11 @@ class PcepServer:
             "capabilities": {"stateful": bool(set(self.config.allowed_peers) - set(self.config.stateless_peers)),
                              "lsp_update": self.delegated_computer is not None or self.creation is not None,
                              "lsp_initiation": self.creation is not None,
+                             "configuration_provisioning": getattr(
+                                 self.delegated_computer, "provisioning_authorizer", None) is not None,
                              "path_computation": self.path_computer is not None},
+            "provisioning_policy_digest": getattr(
+                getattr(self.delegated_computer, "provisioning_authorizer", None), "policy_digest", None),
             "stateless_peers": list(self.config.stateless_peers),
             "capture_error": self._capture_error, "rejected_connections": self._rejected,
             "failure_recovery": self.failover.snapshot() if self.failover is not None else None,
@@ -595,7 +601,8 @@ class PcepServer:
         from .pcep_delegation import ownership_key, report_key
 
         computer = self.delegated_computer
-        if (computer is None or peer not in computer.allowed_tunnels or not connection.state["synchronized"] or
+        authorized_peers = getattr(computer, "authorized_peers", computer.allowed_tunnels) if computer else ()
+        if (computer is None or peer not in authorized_peers or not connection.state["synchronized"] or
                 connection.terminal or self._closing or
                 connection.computation is not None and not connection.computation.done()):
             return
@@ -824,7 +831,9 @@ class PcepServer:
                             self._recovery_session_fresh(connection) and latest is not None and
                             report_fingerprint(latest) == report_fingerprint(original) and
                             os.environ.get("NINJA_PCE_PREVIEW_ONLY", "").strip().lower() not in
-                            {"1", "true", "yes", "on"} and computer.validate_reply(reply))
+                            {"1", "true", "yes", "on"} and computer.validate_reply(reply) and
+                            (not hasattr(computer, "validate_authorization") or
+                             computer.validate_authorization(peer, latest, outcome)))
 
             def prepare_initial() -> None:
                 srp = str(outcome["srp_id"])
@@ -924,7 +933,8 @@ class PcepServer:
             local_stateful = peer not in self.config.stateless_peers
             local_initiation = self.creation is not None and self.creation.allows(peer)
             local_updates = local_initiation or (
-                self.delegated_computer is not None and peer in self.delegated_computer.allowed_tunnels)
+                self.delegated_computer is not None and peer in getattr(
+                    self.delegated_computer, "authorized_peers", self.delegated_computer.allowed_tunnels))
             state["local_stateful"] = local_stateful
             state["local_initiation"] = local_initiation
             await self._send(peer, connection, encode_open(

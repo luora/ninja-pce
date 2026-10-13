@@ -8,10 +8,13 @@ from __future__ import annotations
 import math
 import struct
 from ipaddress import IPv4Address
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .pcep import PCREP, encode_message, encode_object, parse_objects
 from .pcep_compute import PathReply, PcepPathComputer
+
+if TYPE_CHECKING:
+    from .pcep_provisioning import JournalProvisioningAuthorization
 
 PCUPD = 11
 
@@ -53,8 +56,10 @@ def return_delegation(report: dict[str, Any], srp_id: int) -> bytes:
 
 
 class DelegatedPathComputer:
-    def __init__(self, computer: PcepPathComputer, allowed_tunnels: dict[str, tuple[int, ...]]):
-        if not allowed_tunnels or any(peer not in computer.headends for peer in allowed_tunnels):
+    def __init__(self, computer: PcepPathComputer, allowed_tunnels: dict[str, tuple[int, ...]], *,
+                 provisioning_authorizer: JournalProvisioningAuthorization | None = None):
+        if ((not allowed_tunnels and provisioning_authorizer is None) or
+                any(peer not in computer.headends for peer in allowed_tunnels)):
             raise ValueError("Delegation requires explicitly authorized headends")
         for tunnels in allowed_tunnels.values():
             if (not tunnels or len(tunnels) > 16 or len(set(tunnels)) != len(tunnels) or
@@ -62,6 +67,30 @@ class DelegatedPathComputer:
                 raise ValueError("Authorize 1..16 unique tunnel IDs per PCC")
         self.computer = computer
         self.allowed_tunnels = dict(allowed_tunnels)
+        if provisioning_authorizer is not None and any(
+                computer.headends.get(peer) != source for peer, source in provisioning_authorizer.headends.items()):
+            raise ValueError("Configuration delegation must match explicitly authorized computation headends")
+        self.provisioning_authorizer = provisioning_authorizer
+        self.authorized_peers = frozenset(allowed_tunnels) | frozenset(
+            provisioning_authorizer.headends if provisioning_authorizer is not None else ())
+
+    def _authorize(self, peer: str, report: dict[str, Any]) -> str | None:
+        if report["identifiers"]["tunnel_id"] in self.allowed_tunnels.get(peer, ()):
+            return None
+        plan_id = self.provisioning_authorizer(peer, report) if self.provisioning_authorizer is not None else None
+        if plan_id is None:
+            raise ValueError("Initial delegation has no exact, current configured-tunnel authorization")
+        return plan_id
+
+    def validate_authorization(self, peer: str, report: dict[str, Any], outcome: dict[str, Any]) -> bool:
+        """Check durable provisioning authority again inside the PCEP writer lock."""
+        if outcome.get("status") != "INITIAL_PATH":
+            return True
+        plan_id = outcome.get("provisioning_plan_id")
+        if plan_id is None:
+            return report["identifiers"]["tunnel_id"] in self.allowed_tunnels.get(peer, ())
+        return bool(self.provisioning_authorizer is not None and
+                    self.provisioning_authorizer.validate_path(peer, report, plan_id, outcome.get("ero")))
 
     def validate_reply(self, reply: PathReply) -> bool:
         # A refusal does not depend on a TED. An initial path does.
@@ -74,9 +103,9 @@ class DelegatedPathComputer:
         if (not report["delegate"] or report["removed"] or not report["administrative_up"] or
                 report["operational_code"] != 0 or report["ero"] or report["srp_id"] or
                 ids["type"] != 18 or ids["all_zero"] or
-                ids["sender"] != self.computer.headends.get(peer) or
-                ids["tunnel_id"] not in self.allowed_tunnels.get(peer, ())):
+                ids["sender"] != self.computer.headends.get(peer)):
             raise ValueError("Only an authorized initial empty-ERO DOWN delegation can request a path")
+        self._authorize(peer, report)
         if report.get("rro") or report.get("srp_tlvs", []) not in (
                 [], [{"type": 28, "value_hex": "00000000"}]):
             raise ValueError("Recorded routes and SRP extensions are unsupported for initial provision")
@@ -128,6 +157,7 @@ class DelegatedPathComputer:
                        "report_key": report_key(report), "authoritative": False, "reservation_created": False}
             try:
                 request = self._request(peer, report, srp_id)
+                plan_id = self._authorize(peer, report)
                 computed = self.computer(peer, request)
                 if len(computed.messages) != 1 or computed.outcomes[0]["status"] != "PATH":
                     raise ValueError(computed.outcomes[0]["reason"])
@@ -135,6 +165,10 @@ class DelegatedPathComputer:
                     raise ValueError("Topology changed between delegated requests")
                 if not self.computer.validate_reply(computed):
                     raise ValueError("Topology changed or became unavailable during computation")
+                if plan_id is not None and (self.provisioning_authorizer is None or
+                        not self.provisioning_authorizer.validate_path(
+                            peer, report, plan_id, computed.outcomes[0].get("ero"))):
+                    raise ValueError("Configured-tunnel authority expired or the computed path differs from its plan")
                 objects = parse_objects(computed.messages[0][4:])
                 if computed.messages[0][1] != PCREP:
                     raise ValueError("Initial path computation did not produce PCRep")
@@ -150,6 +184,8 @@ class DelegatedPathComputer:
                 messages.append(message)
                 outcomes.append({**computed.outcomes[0], **details, "status": "INITIAL_PATH",
                                  "reason": "Initial delegated path; awaiting PCC RSVP signaling"})
+                if plan_id is not None:
+                    outcomes[-1]["provisioning_plan_id"] = plan_id
             except (ValueError, RuntimeError, OSError) as exc:
                 messages.append(return_delegation(report, srp_id))
                 outcomes.append({**details, "status": "DELEGATION_RETURNED", "reason": str(exc)})

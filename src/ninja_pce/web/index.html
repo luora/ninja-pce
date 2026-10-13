@@ -99,8 +99,15 @@
     <form id="create-tunnel-form">
       <fieldset id="creation-fields" disabled>
         <div class="creation-grid"><label>Headend<select id="creation-headend" required></select></label><label>Destination<select id="creation-destination" required></select></label></div>
-        <label class="creation-bandwidth">Bandwidth <span class="muted">Mbps</span><input id="creation-bandwidth" type="number" min="0.001" step="0.001" value="1" required inputmode="decimal"></label>
+        <label class="creation-bandwidth">Bandwidth <span class="muted">Mbps</span><input id="creation-bandwidth" type="number" min="0.000001" step="0.000001" value="1" required inputmode="decimal"></label>
       </fieldset>
+      <section id="creation-preview" class="creation-preview" aria-labelledby="creation-preview-heading" hidden>
+        <h3 id="creation-preview-heading">Configuration preview</h3>
+        <p id="creation-preview-path" class="mono"></p>
+        <p id="creation-preview-bandwidth"></p>
+        <pre id="creation-preview-config" class="mono" tabindex="0" aria-label="Generated router configuration"></pre>
+        <p id="creation-preview-expiry" class="muted"></p>
+      </section>
       <div id="creation-status" class="creation-status" role="status" aria-live="polite"></div>
       <div class="creation-actions"><button class="button" id="creation-check" type="button" hidden>Check status</button><button class="button primary" id="creation-submit" type="submit" disabled>Create tunnel</button></div>
     </form>

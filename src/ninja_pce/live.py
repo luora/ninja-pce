@@ -52,6 +52,7 @@ def add_live_commands(subparsers: Any) -> None:
                       help="Opt in to initial delegated path provision for PCC-IP=tunnel-ID; repeatable")
     pcep.add_argument("--failover-tunnel", help="Opt in to recovery of one delegated PCC-IP=tunnel-ID")
     pcep.add_argument("--failover-state", help="Persistent failure-recovery journal; required with --failover-tunnel")
+    pcep.add_argument("--provisioning-state", help="Exact owned CLI-provisioning journal for initial delegation")
     pcep.add_argument("--creation-state", help="Opt in to private lab creation with a durable state directory")
     pcep.add_argument("--creation-socket", help="Owner-only Unix console socket; required for lab creation")
     pcep.add_argument("--creation-headend", action="append", default=[], help="Authorized node-name=PCC-IP")
@@ -194,7 +195,7 @@ async def _serve_pcep(args: argparse.Namespace) -> int:
     server_options: dict[str, Any] = {"capture_path": Path(args.capture)}
     if computer is not None:
         server_options["path_computer"] = computer
-    if args.compute_delegated_tunnel:
+    if args.compute_delegated_tunnel or args.provisioning_state:
         if computer is None:
             raise ValueError("Delegated path provision requires all computation options")
         from .pcep_delegation import DelegatedPathComputer
@@ -208,7 +209,17 @@ async def _serve_pcep(args: argparse.Namespace) -> int:
             if not tunnel.isascii() or not tunnel.isdecimal():
                 raise ValueError("Delegated tunnel ID must be decimal")
             allowed_tunnels[peer] = (*allowed_tunnels.get(peer, ()), int(tunnel))
-        server_options["delegated_computer"] = DelegatedPathComputer(computer, allowed_tunnels)
+        provisioning_authorizer = None
+        if args.provisioning_state:
+            from .pcep_provisioning import JournalProvisioningAuthorization
+
+            provisioning_path = Path(args.provisioning_state).resolve()
+            if provisioning_path in paths:
+                raise ValueError("Configuration provisioning journal must be distinct from capture and live inputs")
+            provisioning_authorizer = JournalProvisioningAuthorization(provisioning_path, computer.headends)
+        server_options["delegated_computer"] = DelegatedPathComputer(
+            computer, allowed_tunnels, provisioning_authorizer=provisioning_authorizer,
+        )
     if bool(args.failover_tunnel) != bool(args.failover_state):
         raise ValueError("Failure recovery requires both --failover-tunnel and --failover-state")
     if args.failover_tunnel:
@@ -225,7 +236,7 @@ async def _serve_pcep(args: argparse.Namespace) -> int:
         if tunnel_id not in delegated.allowed_tunnels.get(peer, ()):
             raise ValueError("Failure recovery tunnel must already be explicitly authorized for delegation")
         journal = Path(args.failover_state).resolve()
-        if journal in paths:
+        if journal in paths or args.provisioning_state and journal == Path(args.provisioning_state).resolve():
             raise ValueError("Failure recovery journal must be distinct from capture and live input files")
         from .pcep_failover import FailureRecoveryPlanner
 

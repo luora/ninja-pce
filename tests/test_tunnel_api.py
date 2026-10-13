@@ -15,7 +15,7 @@ from typing import Any, cast
 import pytest
 
 from ninja_pce.pcep_creation import CreationSession
-from ninja_pce.tunnel_api import TunnelAPI
+from ninja_pce.tunnel_api import ProvisioningBackend, TunnelAPI
 
 ORIGIN = "https://controller.example.test"
 INTENT = {"headend": "PE1", "destination": "PE3", "bandwidth_bps": 1_000_000}
@@ -67,13 +67,47 @@ class Creation:
         return copy.deepcopy(operation)
 
 
+class Provisioning(Creation):
+    requires_plan = True
+    backend_name = "router-config"
+    independent_verification = True
+
+    def __init__(self):
+        super().__init__()
+        self.manager.max_outstanding = 2
+        self.previews: list[tuple[str, dict[str, Any]]] = []
+        self.approved_plans: list[str] = []
+
+    def readiness(self, headend=None):
+        return (self.connection_ready and self.manager.topology_ready, "Configuration provisioning available.")
+
+    async def preview(self, principal, intent):
+        self.previews.append((principal, copy.deepcopy(intent)))
+        return {"plan_id": "e" * 64, "expires_at": "2099-01-01T00:00:00+00:00",
+                "rendered_config": "interface Tunnel200\n tunnel mpls traffic-eng bandwidth 1000\n",
+                "path_nodes": ["PE1", "P1", "P2", "PE3"], **intent}
+
+    async def create(self, principal, key, intent, *, approved_plan_id):
+        if approved_plan_id != "e" * 64:
+            raise ValueError("Generated plan does not match the approved identifier")
+        self.approved_plans.append(approved_plan_id)
+        operation = await super().create(principal, key, intent)
+        operation.update(status="VERIFIED", verified=True,
+                         idempotency_key=key, plan_id=approved_plan_id,
+                         verification={"independent": True, "scope": "headend-rsvp", "pcep_control": True,
+                                       "checks": ["identity", "destination", "bandwidth", "ero", "signaling"]})
+        self.manager.operations[(principal, key)] = copy.deepcopy(operation)
+        return operation
+
+
 @asynccontextmanager
 async def running(tmp_path: Path, *, qualified: bool = True, **options):
     parent = tmp_path / "api"
     parent.mkdir()
     parent.chmod(0o750)
-    creation = Creation()
-    api = TunnelAPI(cast(CreationSession, creation), parent / "http.sock", options.pop("allowed_proxy_uid", os.getuid()),
+    creation = options.pop("creation", Creation())
+    backend = cast(ProvisioningBackend, creation) if isinstance(creation, Provisioning) else cast(CreationSession, creation)
+    api = TunnelAPI(backend, parent / "http.sock", options.pop("allowed_proxy_uid", os.getuid()),
                     ORIGIN, ("operator", "second"), qualified=qualified, **options)
     await api.start()
     try:
@@ -268,6 +302,172 @@ def test_operation_polling_cannot_read_another_principal_or_claim_verified(tmp_p
             creation.manager.operations[("operator", "request-one")]["status"] = "VERIFIED"
             status, _, _ = await exchange(api, path=path)
             assert status == 503
+    asyncio.run(scenario())
+
+
+def test_qualified_configuration_preview_binds_creation_and_reports_only_independent_rsvp_checks(tmp_path):
+    async def scenario():
+        async with running(tmp_path, creation=Provisioning()) as (api, backend):
+            _, _, options = await exchange(api)
+            assert options["backend"] == "router-config" and options["requires_plan"] is True
+            assert options["policy"]["max_outstanding"] == 2
+            assert options["policy"]["forwarding_verification"] == "unverified"
+            auth = await authorization(api)
+            del auth["Idempotency-Key"]
+            status, _, response = await exchange(api, "POST", "/api/tunnel-plans", headers=auth,
+                                                  body=json.dumps(INTENT).encode())
+            assert status == 200 and response["plan"]["plan_id"] == "e" * 64
+            assert "interface Tunnel200" in response["plan"]["rendered_config"]
+            assert backend.previews == [("operator", INTENT)]
+            assert not backend.calls and not backend.manager.operations
+            auth["Idempotency-Key"] = "approved-one"
+            payload = {**INTENT, "approved_plan_id": response["plan"]["plan_id"]}
+            status, _, result = await exchange(api, "POST", "/api/tunnels", headers=auth,
+                                                body=json.dumps(payload).encode())
+            assert status == 202 and result["operation"]["status"] == "VERIFIED"
+            assert result["operation"]["verification"]["scope"] == "headend-rsvp"
+            assert backend.calls == [("operator", "approved-one", INTENT)]
+            assert backend.approved_plans == ["e" * 64]
+            path = "/api/tunnel-operations/" + result["operation"]["id"]
+            assert (await exchange(api, path=path))[0] == 200
+            assert (await exchange(api, path=path, headers={"X-Ninja-Principal": "second"}))[0] == 404
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("changed", ["origin", "csrf", "principal", "cookie"])
+def test_preview_has_the_same_authenticated_origin_session_and_csrf_boundary(tmp_path, changed):
+    async def scenario():
+        async with running(tmp_path, creation=Provisioning()) as (api, backend):
+            auth = await authorization(api)
+            if changed == "origin":
+                auth["Origin"] = "https://attacker.example.test"
+            elif changed == "csrf":
+                auth["X-CSRF-Token"] = "x" * 43
+            elif changed == "principal":
+                auth["X-Ninja-Principal"] = "second"
+            else:
+                del auth["Cookie"]
+            status, _, _ = await exchange(api, "POST", "/api/tunnel-plans", headers=auth,
+                                          body=json.dumps(INTENT).encode())
+            assert status == 403 and not backend.previews and not backend.calls
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("kind", ["unqualified", "unavailable", "extra_cli", "extra_plan"])
+def test_preview_cannot_bypass_backend_qualification_readiness_or_exact_intent(tmp_path, kind):
+    async def scenario():
+        async with running(tmp_path, creation=Provisioning(), qualified=kind != "unqualified") as (api, backend):
+            if kind == "unavailable":
+                backend.connection_ready = False
+            payload = dict(INTENT)
+            if kind == "extra_cli":
+                payload["cli"] = "reload"
+            elif kind == "extra_plan":
+                payload["approved_plan_id"] = "e" * 64
+            status, _, _ = await exchange(api, "POST", "/api/tunnel-plans", headers=await authorization(api),
+                                          body=json.dumps(payload).encode())
+            assert status == (400 if kind.startswith("extra") else 503)
+            assert not backend.previews and not backend.calls
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("plan_id", [None, "e" * 32, "E" * 64, "e" * 63, 123, "f" * 64])
+def test_configuration_creation_requires_the_exact_approved_generated_plan(tmp_path, plan_id):
+    async def scenario():
+        async with running(tmp_path, creation=Provisioning()) as (api, backend):
+            payload = dict(INTENT)
+            if plan_id is not None:
+                payload["approved_plan_id"] = plan_id
+            status, _, _ = await exchange(api, "POST", "/api/tunnels", headers=await authorization(api),
+                                          body=json.dumps(payload).encode())
+            assert status == (409 if plan_id == "f" * 64 else 400)
+            assert not backend.calls and not backend.manager.operations
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("bad_proof", [{}, {"independent": False},
+                                      {"independent": True, "scope": "forwarding", "checks": []},
+                                      {"independent": True, "scope": "headend-rsvp", "checks": ["bandwidth"]},
+                                      {"independent": True, "scope": "headend-rsvp", "pcep_control": False,
+                                       "checks": ["identity", "destination", "bandwidth", "ero", "signaling"]},
+                                      {"independent": True, "scope": "headend-rsvp", "checks": [True]}])
+def test_configuration_status_cannot_claim_verification_without_the_full_independent_rsvp_proof(tmp_path, bad_proof):
+    async def scenario():
+        async with running(tmp_path, creation=Provisioning()) as (api, backend):
+            _, _, result = await exchange(api, "POST", "/api/tunnels", headers=await authorization(api),
+                                           body=json.dumps({**INTENT, "approved_plan_id": "e" * 64}).encode())
+            backend.manager.operations[("operator", "request-one")]["verification"] = bad_proof
+            status, _, _ = await exchange(api, path="/api/tunnel-operations/" + result["operation"]["id"])
+            assert status == 503
+    asyncio.run(scenario())
+
+
+def test_native_creation_does_not_gain_a_preview_route_or_approve_arbitrary_plan_ids(tmp_path):
+    async def scenario():
+        async with running(tmp_path) as (api, backend):
+            auth = await authorization(api)
+            status, _, _ = await exchange(api, "POST", "/api/tunnel-plans", headers=auth,
+                                          body=json.dumps(INTENT).encode())
+            assert status == 404
+            status, _, _ = await exchange(api, "POST", "/api/tunnels", headers=auth,
+                                          body=json.dumps({**INTENT, "approved_plan_id": "e" * 64}).encode())
+            assert status == 400 and not backend.calls
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("unavailable", ["qualification", "backend", "topology"])
+def test_configuration_lost_response_recovers_exact_existing_operation_without_write_authority(tmp_path, unavailable):
+    async def scenario():
+        async with running(tmp_path, creation=Provisioning()) as (api, backend):
+            auth = await authorization(api)
+            body = json.dumps({**INTENT, "approved_plan_id": "e" * 64}).encode()
+            first = await exchange(api, "POST", "/api/tunnels", headers=auth, body=body)
+            assert first[0] == 202 and len(backend.calls) == 1
+            if unavailable == "qualification":
+                api.qualified = False
+            elif unavailable == "backend":
+                backend.connection_ready = False
+            else:
+                backend.manager.topology_ready = False
+            assert (await exchange(api))[2]["enabled"] is False
+            recovered = await exchange(api, "POST", "/api/tunnels", headers=auth, body=body)
+            assert recovered == first and len(backend.calls) == 1
+            # A new key cannot turn the recovery path into delivery authority.
+            auth["Idempotency-Key"] = "new-request"
+            assert (await exchange(api, "POST", "/api/tunnels", headers=auth, body=body))[0] == 503
+            assert len(backend.calls) == 1
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("changed", ["intent", "plan"])
+def test_configuration_recovery_conflict_precedes_readiness_and_never_calls_backend(tmp_path, changed):
+    async def scenario():
+        async with running(tmp_path, creation=Provisioning()) as (api, backend):
+            auth = await authorization(api)
+            payload = {**INTENT, "approved_plan_id": "e" * 64}
+            assert (await exchange(api, "POST", "/api/tunnels", headers=auth,
+                                   body=json.dumps(payload).encode()))[0] == 202
+            api.qualified = False
+            backend.connection_ready = backend.manager.topology_ready = False
+            if changed == "intent":
+                payload["bandwidth_bps"] = 500_000
+            else:
+                payload["approved_plan_id"] = "f" * 64
+            status, _, _ = await exchange(api, "POST", "/api/tunnels", headers=auth,
+                                          body=json.dumps(payload).encode())
+            assert status == 409 and len(backend.calls) == 1
+    asyncio.run(scenario())
+
+
+def test_native_idempotent_replay_retains_the_existing_readiness_gate(tmp_path):
+    async def scenario():
+        async with running(tmp_path) as (api, backend):
+            auth = await authorization(api)
+            body = json.dumps(INTENT).encode()
+            assert (await exchange(api, "POST", "/api/tunnels", headers=auth, body=body))[0] == 202
+            api.qualified = False
+            assert (await exchange(api, "POST", "/api/tunnels", headers=auth, body=body))[0] == 503
+            assert len(backend.calls) == 1
     asyncio.run(scenario())
 
 
