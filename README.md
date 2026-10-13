@@ -8,7 +8,9 @@
 > [Opt-in withdrawal recovery](docs/pcep_failure_recovery.md) passed
 > [one IOS XE 16.9.7 lab trial](docs/pcep_failure_recovery_validation.md). Dashboard
 > [three-field tunnel provisioning](docs/dashboard_tunnel_creation.md) has an
-> exact-plan router configuration backend, disabled until private qualification.
+> exact-plan router configuration backend that passed
+> [one private 1 Mbps IOS XE 16.9.7 trial](docs/dashboard_configuration_validation.md).
+> Shipped deployment examples remain disabled by default.
 
 > Reliability remediation: current behavior and migration rules are documented in
 > [input schema](docs/input_schema.md), [reconciliation safety](docs/reconciliation.md),
@@ -82,17 +84,20 @@ This repository is now beyond the first MVP, but still intentionally safe:
 - Done: opt-in one-tunnel withdrawal recovery, qualified for one IOS XE 16.9.7 lab scenario
 - Done: read-only local controller dashboard, with explicitly labelled demo mode
 - Done: gated dashboard configuration previews, exact-plan delivery, shared
-  reservation holds and independently checked initial PCEP control
+  reservation holds and independently checked initial PCEP control; one private
+  PE1 → PE3 1 Mbps configuration-provisioning trial passed on IOS XE 16.9.7
 - Experimental: native PCInitiate, disabled for the tested RSVP bandwidth profile
 - Not implemented: general active optimization, PCReq reoptimization or durable
   delegated ownership across controller restarts
 
 Rendering and mock-tested operational parsers cover IOS XR 7.9.x, IOS XE
 17.12.x and Junos 23.4R candidate dialects. Actual live qualification is currently
-limited to CSR1000v IOS XE 16.9.7 BGP-LS/PCEP and RSVP forwarding observations.
-The exact 16.9.7 CLI dialect is recognized; dashboard delivery still requires
-separate live qualification. See [platform support](docs/platform_support.md) and
-the [disabled deployment examples](docs/dashboard_provisioning_deployment.md).
+limited to CSR1000v IOS XE 16.9.7 BGP-LS/PCEP, separate RSVP forwarding
+observations, and one bounded
+[configuration-provisioning trial](docs/dashboard_configuration_validation.md).
+That new-tunnel trial proves RSVP reservation and initial PCEP control, with
+no payload-forwarding or throughput claim. See [platform support](docs/platform_support.md)
+and the [disabled deployment examples](docs/dashboard_provisioning_deployment.md).
 
 ## Technical overview
 
@@ -102,8 +107,10 @@ operator-authored topology, demand, and inventory files are loaded into typed
 dataclasses; the CSPF engine computes and ranks feasible paths; Jinja2 renders
 platform-specific RSVP-TE configuration; and the optional southbound layer
 previews or applies the resulting command set through Netmiko. Live collectors
-publish snapshots for the same computation model. PCEP computation is a separate
-opt-in path; it is not yet integrated with the persistent reservation ledger.
+publish snapshots for the same computation model. The dashboard configuration
+profile binds one new tunnel's shared reservation hold to exact initial PCEP
+authority. General PCEP computation and withdrawal recovery remain separate
+opt-in paths without global reservation integration.
 
 For the rendered pictorial view, see [docs/architecture.md](docs/architecture.md).
 
@@ -270,8 +277,8 @@ One [live IOS XE 16.9.7 withdrawal trial](docs/pcep_failure_recovery_validation.
 passed with independent RSVP/OAM evidence; this does not qualify broader autonomy.
 Its journal preserves uncertain intent but is not a shared reservation ledger
 or durable delegated ownership. General optimization, PCReq reoptimization,
-PCInitiate, PCEP-to-ledger integration and authenticated PCEPS remain future
-work. Customer policing, shaping and queuing remain PE service
+native bandwidth-aware PCInitiate, general PCEP-to-ledger integration and
+authenticated PCEPS remain future work. Customer policing, shaping and queuing remain PE service
 policy responsibilities. Reported ACTIVE state and advertised bandwidth are
 distinct from independently verified forwarding and measured throughput.
 
@@ -560,8 +567,9 @@ TUN_CUSTOMER_A_PE1_PE3_summary.json
   Initial PCUpd alone does not enable recovery.
 - Add authenticated transport/PCEPS, distributed fencing and qualified recovery
   before widening control authority. PCInitiate remains a separate extension.
-- Implement the proposed [headend/destination/bandwidth creation flow](docs/dashboard_tunnel_creation.md)
-  only after RSVP initiation, ownership, admission and security qualification.
+- Extend the [qualified configuration-provisioning profile](docs/dashboard_configuration_validation.md)
+  beyond one headend, destination and held tunnel only after independent
+  reservation, ownership, failure/recovery and security qualification.
 - Qualify IPv6/unnumbered, inter-area/inter-AS and diversity/protection behavior;
   investigate scalability and additional NETCONF/vendor adapters separately.
 - Choose a project license and reproducible dependency pins before wider reuse.

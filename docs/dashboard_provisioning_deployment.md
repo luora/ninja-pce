@@ -38,6 +38,20 @@ Do not place the password in JSON, YAML, a unit's command line or Git. The
 existing `southbound` optional dependency must be installed in the reviewed
 controller virtual environment.
 
+For the observed IOS XE 16.9.7 lab image, install from the reviewed repository
+checkout with the explicit
+[compatibility constraints](../gns3/controller/ubuntu-24.04/provisioning-constraints.txt):
+
+```bash
+/home/ubuntu/ninja-pce/.venv/bin/python -m pip install -c gns3/controller/ubuntu-24.04/provisioning-constraints.txt -e '.[southbound]'
+```
+
+That image offers only SHA-1 SSH key exchange and RSA signatures, which
+[Paramiko 5 removed](https://www.paramiko.org/changelog.html#5.0.0).
+The constraint applies to this isolated lab profile; qualify a modern router
+image before changing its SSH dependency profile. Host-key pinning remains
+mandatory.
+
 Install a regular, independently pinned OpenSSH `known_hosts` file at
 `/etc/ninja-pce/known_hosts`, readable by the service. Confirm each router key
 against an independent console observation before accepting it. A network key

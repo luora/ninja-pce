@@ -77,6 +77,7 @@ class Provisioning(Creation):
         self.manager.max_outstanding = 2
         self.previews: list[tuple[str, dict[str, Any]]] = []
         self.approved_plans: list[str] = []
+        self.admissions: list[tuple[str, str]] = []
 
     def readiness(self, headend=None):
         return (self.connection_ready and self.manager.topology_ready, "Configuration provisioning available.")
@@ -88,8 +89,17 @@ class Provisioning(Creation):
                 "path_nodes": ["PE1", "P1", "P2", "PE3"], **intent}
 
     async def create(self, principal, key, intent, *, approved_plan_id):
+        self.admissions.append((principal, key))
         if approved_plan_id != "e" * 64:
             raise ValueError("Generated plan does not match the approved identifier")
+        ready, reason = self.readiness(intent["headend"])
+        if not ready:
+            operation = {"id": f"{len(self.manager.operations) + 1:032x}", "principal": principal,
+                         "status": "REJECTED", "verified": False, "intent": copy.deepcopy(intent),
+                         "idempotency_key": key, "plan_id": approved_plan_id, "reason": reason,
+                         "authorization": None, "tunnel_id": None, "reservation_id": None}
+            self.manager.operations[(principal, key)] = operation
+            return copy.deepcopy(operation)
         self.approved_plans.append(approved_plan_id)
         operation = await super().create(principal, key, intent)
         operation.update(status="VERIFIED", verified=True,
@@ -432,9 +442,16 @@ def test_configuration_lost_response_recovers_exact_existing_operation_without_w
             assert (await exchange(api))[2]["enabled"] is False
             recovered = await exchange(api, "POST", "/api/tunnels", headers=auth, body=body)
             assert recovered == first and len(backend.calls) == 1
-            # A new key cannot turn the recovery path into delivery authority.
+            # A new key cannot turn recovery into delivery authority. Qualified
+            # configuration backends persist an admission rejection; an API
+            # qualification withdrawal prevents even that backend invocation.
             auth["Idempotency-Key"] = "new-request"
-            assert (await exchange(api, "POST", "/api/tunnels", headers=auth, body=body))[0] == 503
+            latest = await exchange(api, "POST", "/api/tunnels", headers=auth, body=body)
+            if unavailable == "qualification":
+                assert latest[0] == 503 and len(backend.admissions) == 1
+            else:
+                assert latest[0] == 202 and latest[2]["operation"]["status"] == "REJECTED"
+                assert len(backend.admissions) == 2
             assert len(backend.calls) == 1
     asyncio.run(scenario())
 
@@ -468,6 +485,71 @@ def test_native_idempotent_replay_retains_the_existing_readiness_gate(tmp_path):
             api.qualified = False
             assert (await exchange(api, "POST", "/api/tunnels", headers=auth, body=body))[0] == 503
             assert len(backend.calls) == 1
+    asyncio.run(scenario())
+
+
+def test_configuration_durable_rejection_is_a_recoverable_operation_not_an_unknown_http_error(tmp_path):
+    class RejectOnce(Provisioning):
+        async def create(self, principal, key, intent, *, approved_plan_id):
+            result = await super().create(principal, key, intent, approved_plan_id=approved_plan_id)
+            if len(self.calls) == 1:
+                result.update(status="REJECTED", verified=False, authorization=None, tunnel_id=None,
+                              reason="Reviewed plan expired before delivery")
+                result.pop("verification", None)
+                self.manager.operations[(principal, key)] = copy.deepcopy(result)
+            return result
+
+    async def scenario():
+        async with running(tmp_path, creation=RejectOnce()) as (api, backend):
+            auth = await authorization(api)
+            payload = {**INTENT, "approved_plan_id": "e" * 64}
+            first = await exchange(api, "POST", "/api/tunnels", headers=auth, body=json.dumps(payload).encode())
+            assert first[0] == 202 and first[2]["operation"]["status"] == "REJECTED"
+            api.qualified = False
+            assert await exchange(api, "POST", "/api/tunnels", headers=auth,
+                                  body=json.dumps(payload).encode()) == first
+            assert len(backend.calls) == 1
+            api.qualified = True
+            assert (await exchange(api, "POST", "/api/tunnel-plans", headers=auth,
+                                   body=json.dumps(INTENT).encode()))[0] == 200
+            auth["Idempotency-Key"] = "fresh-approved-request"
+            status, _, result = await exchange(api, "POST", "/api/tunnels", headers=auth,
+                                                body=json.dumps(payload).encode())
+            assert status == 202 and result["operation"]["status"] == "VERIFIED"
+            assert len(backend.calls) == 2
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("unavailable", ["backend", "topology"])
+def test_first_configuration_post_persists_readiness_rejection_and_recovers_it_without_new_admission(tmp_path, unavailable):
+    async def scenario():
+        async with running(tmp_path, creation=Provisioning()) as (api, backend):
+            auth = await authorization(api)
+            payload = json.dumps({**INTENT, "approved_plan_id": "e" * 64}).encode()
+            if unavailable == "backend":
+                backend.connection_ready = False
+            else:
+                backend.manager.topology_ready = False
+            first = await exchange(api, "POST", "/api/tunnels", headers=auth, body=payload)
+            assert first[0] == 202 and first[2]["operation"]["status"] == "REJECTED"
+            assert backend.admissions == [("operator", "request-one")] and not backend.calls
+            api.qualified = False
+            assert await exchange(api, "POST", "/api/tunnels", headers=auth, body=payload) == first
+            assert backend.admissions == [("operator", "request-one")] and not backend.calls
+            status, _, _ = await exchange(api, "POST", "/api/tunnels", headers=auth,
+                                          body=json.dumps({**INTENT, "bandwidth_bps": 500_000,
+                                                           "approved_plan_id": "e" * 64}).encode())
+            assert status == 409 and len(backend.admissions) == 1
+    asyncio.run(scenario())
+
+
+def test_api_qualification_withdrawal_blocks_unknown_configuration_key_before_backend_admission(tmp_path):
+    async def scenario():
+        async with running(tmp_path, creation=Provisioning(), qualified=False) as (api, backend):
+            payload = json.dumps({**INTENT, "approved_plan_id": "e" * 64}).encode()
+            status, _, _ = await exchange(api, "POST", "/api/tunnels", headers=await authorization(api), body=payload)
+            assert status == 503
+            assert not backend.admissions and not backend.calls and not backend.manager.operations
     asyncio.run(scenario())
 
 

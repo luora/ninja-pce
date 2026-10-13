@@ -269,14 +269,14 @@ def test_create_rechecks_exact_plan_policy_and_current_resources_before_holding_
         provisioner = controller(tmp_path, computer, qualified=True)
 
     async def run():
-        with pytest.raises((ValueError, CspfNoPath)):
-            await provisioner.create(principal, "request-1", intent, approved_plan_id=approval)
+        rejected = await provisioner.create(principal, "request-1", intent, approved_plan_id=approval)
+        assert rejected["status"] == "REJECTED" and rejected["authorization"] is None
         await provisioner.close()
 
     asyncio.run(run())
     assert not writes
     assert not ReservationLedger(provisioner.state_dir).entries
-    assert provisioner.list() == []
+    assert len(provisioner.list()) == 1 and provisioner.list()[0]["status"] == "REJECTED"
 
 
 @pytest.mark.parametrize("controlled", [False, True])
@@ -337,6 +337,10 @@ def test_postwrite_readonly_connection_failure_retains_hold_and_never_becomes_pr
     assert len(writes) == 1
     assert provisioner.get(operation["id"])["status"] == "ROLLBACK_REQUIRED"
     assert ReservationLedger(provisioner.state_dir).entries[operation["reservation_id"]]["resources"]
+    evidence = load_state(provisioner.state_dir / ("cli-evidence-" + operation["id"] + ".json"))
+    assert evidence["failure"] == "Read-only verification connection failed"
+    assert evidence["stage"] == "postwrite-observation"
+    assert evidence["failure"] not in provisioner.get(operation["id"])["reason"]
 
 
 def test_restart_after_durable_send_boundary_never_replays_or_releases_hold(tmp_path: Path, monkeypatch):
@@ -402,6 +406,10 @@ def test_proven_prewrite_rejection_releases_only_its_hold_and_survives_restart(t
     operation = asyncio.run(run())
     assert provisioner.get(operation["id"])["status"] == "REJECTED"
     assert not ReservationLedger(provisioner.state_dir).entries
+    evidence = load_state(provisioner.state_dir / ("cli-evidence-" + operation["id"] + ".json"))
+    assert evidence["failure"] == "Pre-existing resource; no configuration was sent"
+    assert evidence["stage"] == "prewrite"
+    assert evidence["failure"] not in provisioner.get(operation["id"])["reason"]
     restored = controller(tmp_path, qualified=True)
     assert restored.get(operation["id"])["status"] == "REJECTED"
 
@@ -456,9 +464,9 @@ def test_shared_reservation_gained_after_preview_blocks_delivery_and_preserves_o
         ledger = ReservationLedger(provisioner.state_dir)
         result = cli_provisioning.compute_cspf(computer.topology, ServiceDemand("other", "PE1", "PE3", .5))
         ledger.reserve("other-tunnel", "other-owner", result, "other-plan")
-    with pytest.raises(CspfNoPath):
-        asyncio.run(provisioner.create("operator", "request-1", dict(INTENT), approved_plan_id=plan["plan_id"]))
-    assert not writes and not provisioner.list()
+    rejected = asyncio.run(provisioner.create("operator", "request-1", dict(INTENT), approved_plan_id=plan["plan_id"]))
+    assert rejected["status"] == "REJECTED"
+    assert not writes and len(provisioner.list()) == 1
     assert set(ReservationLedger(provisioner.state_dir).entries) == {"other-tunnel"}
 
 
@@ -538,3 +546,128 @@ def test_orphan_provisioning_hold_blocks_startup_without_refund_or_replay(tmp_pa
     with pytest.raises(ValueError, match="Orphan provisioning reservation"):
         controller(tmp_path)
     assert ReservationLedger(provisioner.state_dir).entries["PE1:iosxe:Tunnel1000"]["resources"]
+
+
+def test_expired_admission_is_durably_rejected_and_old_request_cannot_deliver_after_restart(tmp_path: Path, monkeypatch):
+    writes, _ = mocks(monkeypatch)
+    provisioner = controller(tmp_path, qualified=True)
+    old_plan = preview(provisioner)
+    actual_now = cli_provisioning._now
+    monkeypatch.setattr(cli_provisioning, "_now", lambda: datetime.fromisoformat(old_plan["expires_at"]))
+    rejected = asyncio.run(provisioner.create("operator", "old-key", dict(INTENT),
+                                             approved_plan_id=old_plan["plan_id"]))
+    assert rejected["status"] == "REJECTED"
+    assert rejected["authorization"] is None
+    assert rejected["reservation_id"] is rejected["tunnel_id"] is None
+    assert "expired or changed" in rejected["reason"]
+    assert not writes and not ReservationLedger(provisioner.state_dir).entries
+    monkeypatch.setattr(cli_provisioning, "_now", actual_now)
+
+    restored = controller(tmp_path, qualified=True)
+    restored.qualified = False
+    retry = asyncio.run(restored.create("operator", "old-key", dict(INTENT), approved_plan_id=old_plan["plan_id"]))
+    assert retry == rejected
+    restored.qualified = True
+    fresh = preview(restored)
+    assert fresh["plan_id"] != old_plan["plan_id"] and fresh["tunnel_id"] == 1000
+
+    async def run():
+        late = await restored.create("operator", "old-key", dict(INTENT), approved_plan_id=old_plan["plan_id"])
+        assert late == rejected and not writes
+        with pytest.raises(ValueError, match="Idempotency key"):
+            await restored.create("operator", "old-key", dict(INTENT), approved_plan_id=fresh["plan_id"])
+        operation = await restored.create("operator", "new-key", dict(INTENT), approved_plan_id=fresh["plan_id"])
+        await restored.close()
+        return operation
+
+    operation = asyncio.run(run())
+    assert len(writes) == 1
+    assert restored.get(operation["id"])["status"] == "VERIFIED"
+    assert restored.get(rejected["id"])["status"] == "REJECTED"
+
+
+def test_managed_tunnel_admission_rejection_never_changes_the_existing_hold(tmp_path: Path, monkeypatch):
+    writes, _ = mocks(monkeypatch, status="ROLLBACK_REQUIRED")
+    provisioner = controller(tmp_path, qualified=True)
+
+    async def run():
+        approved = await provisioner.preview("operator", dict(INTENT))
+        first = await provisioner.create("operator", "first-key", dict(INTENT), approved_plan_id=approved["plan_id"])
+        await provisioner.close()
+        rejected = await provisioner.create("operator", "another-key", dict(INTENT), approved_plan_id=approved["plan_id"])
+        return first, rejected
+
+    first, rejected = asyncio.run(run())
+    assert len(writes) == 1 and rejected["status"] == "REJECTED"
+    assert rejected["authorization"] is None and rejected["reservation_id"] is None
+    holds = ReservationLedger(provisioner.state_dir).entries
+    assert set(holds) == {first["reservation_id"]}
+    assert holds[first["reservation_id"]]["status"] == "ROLLBACK_REQUIRED"
+
+
+@pytest.mark.parametrize("failure", ["journal_corrupt", "capture_corrupt", "unknown_compute", "persistence"])
+def test_unknown_or_corrupt_admission_outcomes_are_not_changed_into_rejections(tmp_path: Path, monkeypatch, failure):
+    writes, _ = mocks(monkeypatch)
+    provisioner = controller(tmp_path, qualified=True)
+    approved = preview(provisioner)
+    before = provisioner.path.read_bytes()
+    if failure == "journal_corrupt":
+        provisioner.path.write_text("{broken json")
+    elif failure == "capture_corrupt":
+        provisioner.pcep_capture.write_text("{broken json")
+    elif failure == "unknown_compute":
+        monkeypatch.setattr(provisioner, "_compute", lambda *args: (_ for _ in ()).throw(ValueError("Unexpected invariant")))
+    else:
+        provisioner.qualified = False
+
+        def fail_save(*args, **kwargs):
+            raise OSError("Journal storage unavailable")
+
+        monkeypatch.setattr(cli_provisioning, "write_state", fail_save)
+    with pytest.raises((ValueError, OSError)):
+        asyncio.run(provisioner.create("operator", "request-1", dict(INTENT), approved_plan_id=approved["plan_id"]))
+    assert not writes and not ReservationLedger(provisioner.state_dir).entries
+    if failure != "journal_corrupt":
+        assert provisioner.path.read_bytes() == before
+
+
+def test_rejection_history_stops_at_bound_without_unrecorded_delivery_or_growth(tmp_path: Path):
+    provisioner = controller(tmp_path, qualified=False)
+    for index in range(16):
+        operation = asyncio.run(provisioner.create("operator", f"rejected-{index}", dict(INTENT),
+                                                   approved_plan_id="0" * 64))
+        assert operation["status"] == "REJECTED"
+    saved = provisioner.path.read_bytes()
+    with pytest.raises(ValueError, match="history is full"):
+        asyncio.run(provisioner.create("operator", "one-too-many", dict(INTENT), approved_plan_id="0" * 64))
+    assert len(provisioner.list()) == 16 and provisioner.path.read_bytes() == saved
+    repeated = asyncio.run(provisioner.create("operator", "rejected-0", dict(INTENT), approved_plan_id="0" * 64))
+    assert repeated["idempotency_key"] == "rejected-0" and repeated["status"] == "REJECTED"
+    assert not ReservationLedger(provisioner.state_dir).entries
+
+
+def test_rejected_tombstone_cannot_conceal_a_reservation_with_its_owner(tmp_path: Path):
+    provisioner = controller(tmp_path, qualified=False)
+    rejected = asyncio.run(provisioner.create("operator", "rejected-key", dict(INTENT), approved_plan_id="0" * 64))
+    with resource_lock(provisioner.state_dir):
+        ledger = ReservationLedger(provisioner.state_dir)
+        result = cli_provisioning.compute_cspf(provisioner.computer.topology, ServiceDemand("unexpected", "PE1", "PE3", .5))
+        ledger.reserve("PE1:iosxe:Tunnel1000", rejected["owner"], result, rejected["plan_id"])
+    with pytest.raises(ValueError, match="Invalid released admission rejection"):
+        controller(tmp_path)
+    assert ReservationLedger(provisioner.state_dir).entries["PE1:iosxe:Tunnel1000"]["resources"]
+
+
+def test_live_configured_tunnel_pce_control_proof_requires_the_selected_option_peer_and_update(tmp_path: Path):
+    provisioner = controller(tmp_path)
+    fixture = Path(__file__).parent / "fixtures/operational/iosxe_16.9.7_configured_tunnel1000_up.live.txt"
+    text = fixture.read_text()
+    command = "show mpls traffic-eng tunnels tunnel 1000"
+    assert provisioner._pce_control(((command, text),))
+    for changed in (
+        text.replace("(Basis for Setup, path weight 30)", ""),
+        text.replace("Working: yes", "Working: no"),
+        text.replace("Delegation peer: 172.16.100.10", "Delegation peer: 172.16.100.11"),
+        text.replace("Created via PCUpd message", "Created via PCInitiate message"),
+    ):
+        assert not provisioner._pce_control(((command, changed),))

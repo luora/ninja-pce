@@ -25,9 +25,15 @@ const pause = (ms) => new Promise((resolve)=>setTimeout(resolve,ms));
 const assert = (value,message) => {if(!value)throw new Error(message);};
 const $test = (id) => document.getElementById(id);
 const proof = {independent:true,scope:"headend-rsvp",pcep_control:true,checks:["identity","destination","bandwidth","ero","signaling"]};
+let statusCalls = 0;
 window.fetch = async(path, options={}) => {
   if(path==="/api/controller") return reply({schema_version:1,read_only:true,mode:"live",sources:[],lsps:[],topology:{nodes:[],links:[]},summary:{},peers:[],events:[],computations:[],refresh_seconds:60});
   if(path==="/api/tunnel-options") return reply({headends:["PE1"],destinations:["PE3"],enabled:!(window.testScenario==="retry"&&sessionStorage.getItem("test-reloaded")),reason:"New delivery temporarily unavailable",requires_plan:true,backend:"router-config",max_bandwidth_bps:5000000,csrf_token:"c".repeat(43),policy:{read_only:false}});
+  if(path.startsWith("/api/tunnel-operations/")&&window.testScenario==="stale-status") {
+    statusCalls+=1; const request=statusCalls;
+    await pause(request===1?40:900);
+    return reply({operation:{id:"1".repeat(32),status:"REJECTED",reason:"First request rejected before delivery."}});
+  }
   calls.push({path,method:options.method,body:JSON.parse(options.body),key:options.headers["Idempotency-Key"]});
   sessionStorage.setItem("test-calls",JSON.stringify(calls));
   if(path==="/api/tunnel-plans") {
@@ -35,7 +41,9 @@ window.fetch = async(path, options={}) => {
     return reply({plan:{plan_id:(intent.bandwidth_bps===1000000?"e":"f").repeat(64),expires_at:new Date(expiry).toISOString(),rendered_config:`interface Tunnel200\n description <test-config>\n tunnel mpls traffic-eng bandwidth ${bps/1000}\n`,path_nodes:["PE1","P1","PE3"],...intent,bandwidth_bps:bps}});
   }
   if(path==="/api/tunnels") {
+    if(window.testScenario==="stale-status") return reply({operation:{id:String(calls.filter((call)=>call.path===path).length).repeat(32),status:"PUSHING"}});
     if(window.testScenario==="retry" && calls.filter((call)=>call.path===path).length===1) throw new TypeError("Synthetic lost response");
+    if(window.testScenario==="rejected" && calls.filter((call)=>call.path===path).length===1) return reply({operation:{id:"1".repeat(32),status:"REJECTED",reason:"Reviewed plan expired before delivery."}});
     return reply({operation:{id:"1".repeat(32),status:"VERIFIED",verified:true,verification:proof,path_nodes:["PE1","P1","PE3"]}});
   }
   throw new Error("Unexpected request: "+path);
@@ -86,6 +94,36 @@ CASES = {
       const sent=calls.filter((call)=>call.path==="/api/tunnels");
       assert(sent.length===2&&sent[0].key===sent[1].key&&JSON.stringify(sent[0].body)===JSON.stringify(sent[1].body),"Retry changed intent, approval or idempotency key");
       assert(calls.filter((call)=>call.path==="/api/tunnel-plans").length===1,"Reload replaced approved plan");
+    """,
+    "rejected": r"""
+      $test("create-tunnel-button").click(); await pause(450);
+      $test("creation-submit").click(); await pause(20);
+      assert(!$test("creation-fields").disabled,"Definitive rejection left fields locked");
+      assert($test("creation-submit").disabled,"Rejected plan was retained for another delivery");
+      await pause(400);
+      assert(!$test("creation-submit").disabled,"Definitive rejection did not refresh preview");
+      assert($test("creation-status").textContent.includes("Reviewed plan expired before delivery"),"Rejection reason disappeared during refresh");
+      $test("creation-bandwidth").value="2";
+      $test("creation-bandwidth").dispatchEvent(new Event("input",{bubbles:true}));
+      await pause(400);
+      $test("creation-submit").click(); await pause(20);
+      const sent=calls.filter((call)=>call.path==="/api/tunnels");
+      assert(sent.length===2&&sent[0].key!==sent[1].key,"New intent reused rejected idempotency key");
+      assert(sent[1].body.bandwidth_bps===2000000&&sent[1].body.approved_plan_id==="f".repeat(64),"New request did not approve refreshed plan");
+    """,
+    "stale-status": r"""
+      $test("create-tunnel-button").click(); await pause(450);
+      $test("creation-submit").click(); await pause(20);
+      $test("creation-check").click(); $test("creation-check").click();
+      await pause(450);
+      assert(!$test("creation-submit").disabled,"First rejection did not permit a new reviewed request");
+      $test("creation-submit").click(); await pause(20);
+      const newer=JSON.parse(sessionStorage.getItem("ninja-pce-creation"));
+      assert(newer.id==="2".repeat(32),"New operation did not start");
+      await pause(500);
+      const retained=JSON.parse(sessionStorage.getItem("ninja-pce-creation"));
+      assert(retained?.id===newer.id&&retained.key===newer.key,"Delayed old rejection cleared or overwrote the newer request");
+      assert($test("creation-status").textContent.includes("Operation "+newer.id),"Old response replaced the newer operation status");
     """,
 }
 

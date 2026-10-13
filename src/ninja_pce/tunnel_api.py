@@ -58,6 +58,10 @@ class ProvisioningBackend(Protocol):
 
     No method accepts operator-supplied CLI. Independent verification concerns
     headend RSVP signaling, never traffic forwarding or end-to-end delivery.
+    ``create`` must enforce current qualification/readiness and exact admission
+    under its own durable request lock. Known prewrite refusals bind the scoped
+    idempotency key to a persistent REJECTED operation; uncertain failures must
+    never be reported as a definitive rejection.
     """
 
     requires_plan: bool
@@ -361,9 +365,15 @@ class TunnelAPI:
                         previous[0].get("plan_id") != plan_id):
                     raise _HTTPError(409, "Idempotency key is already bound to another exact intent and plan.")
                 return 202, {"operation": self._checked_operation(previous[0])}, None
-        enabled, reason = self._ready(intent["headend"])
-        if not enabled:
-            raise _HTTPError(503, reason)
+        # Qualified configuration backends own readiness at the durable
+        # admission boundary. Checking it here would lose a definitive
+        # no-write result if readiness changed after the browser's preview.
+        # The independent API qualification gate still blocks every unknown
+        # request before invoking the backend when it is disabled.
+        if not (uses_plan and not is_preview and self.qualified):
+            enabled, reason = self._ready(intent["headend"])
+            if not enabled:
+                raise _HTTPError(503, reason)
         try:
             if uses_plan:
                 backend = cast(ProvisioningBackend, self.creation)

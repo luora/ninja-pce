@@ -157,6 +157,40 @@ def test_live_iosxe_16_9_auto_tunnel_header_parses_but_zero_bandwidth_refuses():
     assert "Missing or mismatched RSVP Path Tspec" in result.errors
 
 
+def test_live_configured_tunnel1000_proves_requested_megabit_and_exact_pce_selected_upper_route():
+    text = (FIXTURES / "iosxe_16.9.7_configured_tunnel1000_up.live.txt").read_text()
+    expected = VerificationExpectation(
+        "Tunnel1000", "10.255.0.6", 1_000_000,
+        (("strict", "10.0.12.2"), ("strict", "10.0.25.5"), ("strict", "10.0.56.6")),
+    )
+    result = CliOperationalVerifier().verify(
+        "iosxe", IOSXE_16_9_VERSION, {"show mpls traffic-eng tunnels tunnel 1000": text}, expected
+    )
+    assert result.verified, result.errors
+    assert result.bandwidth_bps == 1_000_000
+    assert result.hops == expected.hops
+    # The captured unconstrained shortest path is the lower branch. It cannot
+    # substitute for the current RSVP route, even at the same total TE cost.
+    lower_route = (("strict", "10.0.13.3"), ("strict", "10.0.34.4"), ("strict", "10.0.46.6"))
+    assert not CliOperationalVerifier().verify(
+        "iosxe", IOSXE_16_9_VERSION, {"show mpls traffic-eng tunnels tunnel 1000": text},
+        VerificationExpectation("Tunnel1000", "10.255.0.6", 1_000_000, lower_route),
+    ).verified
+
+
+@pytest.mark.parametrize("field", ["Tspec", "Fspec"])
+def test_configured_tunnel_fixture_cannot_hide_zero_signaling_behind_configured_megabit(field):
+    text = (FIXTURES / "iosxe_16.9.7_configured_tunnel1000_up.live.txt").read_text()
+    text = text.replace(f"{field}: ave rate=1000", f"{field}: ave rate=0")
+    expected = VerificationExpectation(
+        "Tunnel1000", "10.255.0.6", 1_000_000,
+        (("strict", "10.0.12.2"), ("strict", "10.0.25.5"), ("strict", "10.0.56.6")),
+    )
+    assert not CliOperationalVerifier().verify(
+        "iosxe", IOSXE_16_9_VERSION, {"show mpls traffic-eng tunnels tunnel 1000": text}, expected,
+    ).verified
+
+
 @pytest.mark.parametrize(
     "change", ["duplicate_header", "malformed_extra_header", "wrong_endpoint_hop", "wrong_path_hop",
                "unknown_route_annotation",

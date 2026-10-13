@@ -9,6 +9,9 @@ Those initial renderer/parser checks did not contact a router. Subsequent
 BGP-LS and initial delegated PCEP paths on CSR1000v IOS XE 16.9.7. That
 protocol qualification is separate from CLI provisioning. Captured IOS XE
 16.9.7 operational output now supports the narrow evidence dialect described below.
+One subsequent [configuration-provisioning trial](dashboard_configuration_validation.md)
+created a 1 Mbps PE1-to-PE3 tunnel with initial PCEP control and independently
+observed RSVP reservations. This result applies only to that bounded lab profile.
 
 | Adapter | Documentation / candidate release scope | Numbered IPv4 strict ERO | Operational evidence dialect |
 |---|---|---|---|
@@ -70,7 +73,10 @@ sanitization are recorded in
 Recognizing this operational dialect does not qualify automatic CLI provisioning
 or enable dashboard creation. An exact approved CLI plan is still required, and
 any dashboard provisioning service must keep its independent qualification gate
-closed until the complete delivery workflow passes a controlled live test.
+closed until its exact delivery workflow passes a controlled live test. The
+bounded PE1-to-PE3 1 Mbps profile has
+[one such recorded result](dashboard_configuration_validation.md); shipped
+configuration examples remain disabled by default.
 The separate PCEP listener supports observation, a bounded PCReq profile, and
 opt-in initial delegated PCUpd; see [its implemented scope](pcep_computation.md).
 

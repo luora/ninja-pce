@@ -98,7 +98,7 @@
   $("info-toggle").addEventListener("click", () => $("info-dialog").showModal());
   $("info-close").addEventListener("click", () => $("info-dialog").close());
 
-  const creation = { options: null, pending: null, busy: false, timer: null, plan: null, planIntent: null, previewBusy: false, previewTimer: null, expiryTimer: null, previewGeneration: 0 };
+  const creation = { options: null, pending: null, busy: false, timer: null, plan: null, planIntent: null, previewBusy: false, previewTimer: null, expiryTimer: null, previewGeneration: 0, releasedMessage: null };
   try { creation.pending = JSON.parse(sessionStorage.getItem("ninja-pce-creation") || "null"); } catch { /* No automatic resubmission. */ }
   if (creation.pending && (typeof creation.pending.key !== "string" || !creation.pending.intent || (creation.pending.id && !/^[0-9a-f]{32}$/.test(creation.pending.id)))) creation.pending = null;
   function saveCreation() {
@@ -106,6 +106,7 @@
   }
   function creationMessage(message, operation = null) {
     const target = $("creation-status"); target.replaceChildren(el("p", "", message));
+    if (!operation && creation.releasedMessage) target.prepend(el("p", "", creation.releasedMessage));
     if (operation) {
       target.append(el("span", "mono", `Operation ${operation.id}`));
       if (operation.reported?.operational_state) target.append(el("p", "", `Router reports ${operation.reported.operational_state}.`));
@@ -201,15 +202,25 @@
       VERIFIED: "RSVP verified on the headend. Traffic forwarding remains unverified.", VERIFICATION_FAILED: "Tunnel verification failed. Capacity remains held.",
     };
     creationMessage(messages[operation.status] || `Operation state: ${operation.status}`, operation);
-    if (["REJECTED", "ROLLED_BACK"].includes(operation.status)) { creation.pending = null; saveCreation(); }
+    if (["REJECTED", "ROLLED_BACK"].includes(operation.status)) {
+      creation.releasedMessage = `${messages[operation.status]}${operation.reason ? ` ${operation.reason}` : ""}`;
+      creation.pending = null; saveCreation(); queuePreview();
+    }
     clearTimeout(creation.timer);
     if ((["PLANNED", "PUSHING", "CREATED"].includes(operation.status) || operation.status === "APPLIED_UNVERIFIED" && (creation.options?.requires_plan === true || !["ACTIVE", "UP"].includes(operation.reported?.operational_state))) && $("create-tunnel-dialog").open) creation.timer = setTimeout(checkCreation, 2000);
     creationControls();
   }
   async function checkCreation() {
-    if (!creation.pending?.id || creation.busy) return;
-    try { showOperation((await creationFetch(`/api/tunnel-operations/${creation.pending.id}`)).operation); }
-    catch (error) { creationMessage(`${error.message} Keep this operation ID for reconciliation: ${creation.pending.id}`); }
+    const pending = creation.pending;
+    if (!pending?.id || creation.busy) return;
+    const key = pending.key, id = pending.id;
+    const current = () => creation.pending?.key === key && creation.pending?.id === id;
+    try {
+      const result = await creationFetch(`/api/tunnel-operations/${id}`);
+      if (!current()) return;
+      if (result.operation?.id !== id) throw new Error("Operation status does not match the requested identity.");
+      showOperation(result.operation);
+    } catch (error) { if (current()) creationMessage(`${error.message} Keep this operation ID for reconciliation: ${id}`); }
   }
   async function openCreation() {
     $("create-tunnel-dialog").showModal();
@@ -260,6 +271,7 @@
       saveCreation();
     }
     if ((creation.options.requires_plan === true) !== Boolean(creation.pending.approved_plan_id)) return;
+    creation.releasedMessage = null;
     creation.busy = true; creationControls(); creationMessage("Computing and admitting the requested path…");
     try {
       const payload = { ...creation.pending.intent };

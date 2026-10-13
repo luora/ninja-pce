@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
-from .cspf import compute_cspf
+from .cspf import CspfNoPath, CspfSearchLimit, compute_cspf
 from .models import DemandOutput, ManagedDevice, PathConstraints, ServiceDemand
 from .pcep_compute import PcepPathComputer
 from .reservations import ReservationLedger, resource_lock
@@ -38,6 +38,10 @@ def _expiry(value: str) -> datetime:
     if parsed.tzinfo is None:
         raise ValueError("An aware plan expiry is required")
     return parsed
+
+
+class _AdmissionRejected(ValueError):
+    """A known refusal before this request acquires resources or write authority."""
 
 
 class CliProvisioner:
@@ -104,6 +108,9 @@ class CliProvisioner:
                                              "ROLLBACK_REQUIRED", "REJECTED", "ROLLED_BACK"}):
                 raise ValueError("Invalid immutable provisioning operation")
             authorization = op["authorization"]
+            if authorization is None:
+                self._validate_rejection(identifier, op, ledger)
+                continue
             if (not isinstance(authorization, dict) or op.get("owner") != "cli-provision:" + identifier or
                     authorization.get("peer") != self.headends.get(str(op.get("headend"))) or
                     any(authorization.get(field) != op.get(field)
@@ -122,6 +129,26 @@ class CliProvisioner:
                for entry in ledger.entries.values()):
             raise ValueError("Orphan provisioning reservation requires explicit recovery")
         return state, ledger
+
+    def _validate_rejection(self, identifier: str, op: dict[str, Any], ledger: ReservationLedger) -> None:
+        fields = {"id", "principal", "idempotency_key", "intent", "plan_id", "authorization",
+                  "authorization_digest", "owner", "reservation_id", "tunnel_id", "status",
+                  "created_at", "reason", "headend", "destination", "bandwidth_bps"}
+        if (set(op) != fields or not isinstance(identifier, str) or not re.fullmatch(r"[0-9a-f]{32}", identifier) or
+                op["status"] != "REJECTED" or op["reservation_id"] is not None or op["tunnel_id"] is not None or
+                op["owner"] != "cli-provision:" + identifier or
+                not isinstance(op["plan_id"], str) or not re.fullmatch(r"[0-9a-f]{64}", op["plan_id"]) or
+                not isinstance(op["idempotency_key"], str) or
+                not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", op["idempotency_key"]) or
+                not isinstance(op["reason"], str) or not 1 <= len(op["reason"]) <= 256 or
+                not isinstance(op["created_at"], str) or
+                any(entry["owner"] == op["owner"] for entry in ledger.entries.values())):
+            raise ValueError("Invalid released admission rejection")
+        self._principal(op["principal"])
+        self._intent(op["intent"])
+        _expiry(op["created_at"])
+        if any(op[field] != op["intent"][field] for field in ("headend", "destination", "bandwidth_bps")):
+            raise ValueError("Released admission rejection differs from its exact intent")
 
     @staticmethod
     def _principal(principal: str) -> None:
@@ -245,11 +272,26 @@ class CliProvisioner:
         plan = self._plans.get(plan_id)
         if (not isinstance(preview, dict) or plan is None or preview["principal"] != principal or
                 preview["intent"] != intent or _expiry(preview["expires_at"]) <= _now()):
-            raise ValueError("The exact reviewed plan expired or changed; request a new preview")
+            raise _AdmissionRejected("The exact reviewed plan expired or changed; request a new preview")
         result, current, _ = self._compute(intent, preview["op_id"], preview["tunnel_id"], ledger)
         if not self._same_plan(plan, current) or preview["path_edges"] != [e.id for e in result.path_links]:
-            raise ValueError("Fresh topology or resources changed the approved plan")
+            raise _AdmissionRejected("Fresh topology or resources changed the approved plan")
         return preview, result, plan
+
+    def _reject_admission(self, state: dict[str, Any], principal: str, key: str,
+                          intent: dict[str, Any], plan_id: str, reason: str) -> dict[str, Any]:
+        """Bind an exact request to a durable no-write result, without a reservation."""
+        identifier = uuid.uuid4().hex
+        operation = {"id": identifier, "principal": principal, "idempotency_key": key,
+                     "intent": copy.deepcopy(intent), "plan_id": plan_id, "authorization": None,
+                     "authorization_digest": digest(None), "owner": "cli-provision:" + identifier,
+                     "reservation_id": None, "tunnel_id": None, "status": "REJECTED",
+                     "created_at": _now().isoformat(), "reason": "Admission rejected before configuration: " + reason[:192],
+                     "headend": intent["headend"], "destination": intent["destination"],
+                     "bandwidth_bps": intent["bandwidth_bps"]}
+        state["operations"][identifier] = operation
+        write_state(self.path, state)
+        return copy.deepcopy(operation)
 
     async def create(self, principal: str, key: str, intent: dict[str, Any], *,
                      approved_plan_id: str) -> dict[str, Any]:
@@ -267,13 +309,21 @@ class CliProvisioner:
                         if old["intent"] != intent or old["plan_id"] != approved_plan_id:
                             raise ValueError("Idempotency key is already bound to another exact intent and plan")
                         return copy.deepcopy(old)
-                ready, reason = self.readiness(intent["headend"])
-                if not ready:
-                    raise ValueError(reason)
-                if len(state["operations"]) >= 16 or any(op["status"] not in {"REJECTED", "ROLLED_BACK"}
-                                                          for op in state["operations"].values()):
-                    raise ValueError("Another managed tunnel requires observation or recovery")
-                preview, result, plan = self._check_preview(state, ledger, principal, intent, approved_plan_id)
+                if len(state["operations"]) >= 16:
+                    raise ValueError("Provisioning operation history is full; explicit recovery is required")
+                # Do not turn corrupt capture persistence into an ordinary
+                # readiness rejection. Journal/ledger loading and all writes
+                # likewise remain outside the known-admission refusal catch.
+                load_state(self.pcep_capture)
+                try:
+                    ready, reason = self.readiness(intent["headend"])
+                    if not ready:
+                        raise _AdmissionRejected(reason)
+                    if any(op["status"] not in {"REJECTED", "ROLLED_BACK"} for op in state["operations"].values()):
+                        raise _AdmissionRejected("Another managed tunnel requires observation or recovery")
+                    preview, result, plan = self._check_preview(state, ledger, principal, intent, approved_plan_id)
+                except (_AdmissionRejected, CspfNoPath, CspfSearchLimit) as exc:
+                    return self._reject_admission(state, principal, key, intent, approved_plan_id, str(exc))
                 op_id, tunnel_id = preview["op_id"], preview["tunnel_id"]
                 owner = "cli-provision:" + op_id
                 identity = f"{intent['headend']}:iosxe:Tunnel{tunnel_id}"
@@ -369,12 +419,16 @@ class CliProvisioner:
                                           "checks": ["identity", "destination", "bandwidth", "ero", "signaling"]}
                 ledger.transition(op["reservation_id"], status)
                 write_state(self.path, state)
-        except SouthboundError:
+        except SouthboundError as exc:
             # push_plan raises only before its first configuration operation;
             # post-write failures return a retained ROLLBACK_REQUIRED result.
             with resource_lock(self.state_dir):
                 state, ledger = self._load()
                 op = state["operations"][op_id]
+                write_state(self.state_dir / ("cli-evidence-" + op_id + ".json"), {
+                    "kind": "cli_provisioning_evidence", "failure": str(exc), "plan_id": plan.plan_id,
+                    "stage": "postwrite-observation" if push_returned else "prewrite",
+                })
                 if push_returned:
                     op.update(status="ROLLBACK_REQUIRED", reason="Post-write observation failed; reservation retained")
                     ledger.transition(op["reservation_id"], "ROLLBACK_REQUIRED")

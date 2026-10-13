@@ -1,12 +1,15 @@
 # Dashboard tunnel creation design
 
-Status: experimental implementation; public creation remains disabled pending
-platform qualification. The [dashboard](dashboard.md) has a Create tunnel form,
+Status: experimental implementation; the configuration backend passed
+[one private IOS XE 16.9.7 qualification](dashboard_configuration_validation.md).
+Shipped examples and the default server keep creation disabled. Native
+PCInitiate bandwidth creation remains unqualified. The [dashboard](dashboard.md)
+has a Create tunnel form,
 and its default read-only server reports the qualification gate through
 `GET /api/tunnel-options`. It continues to reject mutation methods. The separate
 operator HTTP service uses a permissioned Unix socket, verified proxy UID and
 principal, bounded sessions, same-origin checks and CSRF protection; it defaults
-to unqualified and is not yet wired into the public deployment.
+to unqualified and requires a separately qualified operator deployment.
 
 The private lab session can send guarded PCInitiate with durable holds and
 idempotency, correlate owned reports, and attempt one explicit owned PCUpd or
@@ -20,8 +23,10 @@ PCEP path control** backend. This does not enable or qualify native PCInitiate.
 `CliProvisioner` admits a bounded managed tunnel, delivers generated IOS XE
 configuration through the existing southbound adapter, and authorizes the
 existing PCEP writer for that exact newly configured tunnel. Both the backend
-and operator API default to unqualified. Qualification and deployment of this
-profile must be recorded separately from the negative initiation results below.
+and operator API default to unqualified. The private qualification of this
+profile is recorded in the
+[configuration qualification report](dashboard_configuration_validation.md),
+separately from the negative initiation results below.
 
 After the operator chooses headend, destination and bandwidth, the page
 automatically requests a configuration preview. The preview displays the
@@ -45,6 +50,12 @@ PCC/TED is unavailable. This lookup performs no backend creation or router
 write. A changed intent or plan conflicts; an unknown key still requires full
 qualification and readiness. The page permits only this explicit pending
 request recovery while new creation is unavailable.
+Definitive admission rejection returns a durable `REJECTED` operation bound to
+that exact key, intent and approved plan. The form retains the rejection reason,
+unlocks the fields and obtains a fresh preview; a new Create click uses a new
+key. A late retry of the rejected key cannot deliver configuration. Transport
+errors and uncertain HTTP failures retain the original pending request rather
+than being treated as evidence that nothing was sent.
 
 Generated configuration contains RSVP bandwidth and priorities, a dynamic PCE
 path option, and the computed strict explicit path as fallback. It does not
