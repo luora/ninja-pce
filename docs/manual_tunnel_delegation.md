@@ -1,11 +1,16 @@
 # Initial paths for manually configured tunnels
 
-A router interface does not automatically grant Ninja-PCE permission to control
-it. A manually configured tunnel needs an explicit PCC/tunnel-ID binding for
-initial PCEP path computation. Dashboard provisioning grants separate authority
-through its owned operation journal.
+A router interface alone does not grant path-control authority. For ordinary
+initial delegation, use the [topology-domain policy](topology_domain_delegation.md):
+configure the managed routing domain once, and eligible new PCCs and tunnel
+IDs require no controller registration. Dashboard provisioning grants separate
+authority through its owned operation journal.
 
-## Reusable onboarding steps
+The explicit bindings below describe the legacy profile and the historical
+Tunnel1003 qualification. They remain available for narrowly scoped recovery
+profiles; they are not the recommended onboarding model for new tunnels.
+
+## Legacy explicit-binding steps
 
 1. Configure the RSVP-TE underlay and a reachable, stateful PCC/PCE session.
 2. Configure the tunnel with a positive reservation bandwidth and the PCE path

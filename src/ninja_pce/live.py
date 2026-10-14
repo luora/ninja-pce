@@ -39,7 +39,7 @@ def add_live_commands(subparsers: Any) -> None:
     pcep = subparsers.add_parser("pcep-listen", help="Observe lab PCEP; enable computation with explicit options")
     pcep.add_argument("--listen-host", default="127.0.0.1", help="Bind address; select the lab NIC explicitly")
     pcep.add_argument("--port", type=int, default=4189)
-    pcep.add_argument("--allow-peer", action="append", required=True, help="Allowed PCC source IP; repeatable")
+    pcep.add_argument("--allow-peer", action="append", default=[], help="Static allowed PCC source IP; repeatable")
     pcep.add_argument("--capture", required=True, help="Atomic session and LSP-report capture JSON")
     pcep.add_argument("--keepalive", type=int, default=30)
     pcep.add_argument("--deadtimer", type=int, default=120)
@@ -53,6 +53,8 @@ def add_live_commands(subparsers: Any) -> None:
     pcep.add_argument("--compute-ospf-multi-area-policy", help="Explicit JSON policy matching the collector")
     pcep.add_argument("--compute-headend", action="append", default=[],
                       help="Authorized PCC-IP=source-loopback; repeatable")
+    pcep.add_argument("--compute-domain-policy",
+                      help="Managed BGP-LS domain policy for automatic PCC and initial LSP discovery")
     pcep.add_argument("--compute-delegated-tunnel", action="append", default=[],
                       help="Opt in to initial delegated path provision for PCC-IP=tunnel-ID; repeatable")
     pcep.add_argument("--failover-tunnel", help="Opt in to recovery of one delegated PCC-IP=tunnel-ID")
@@ -193,10 +195,17 @@ async def _serve_pcep(args: argparse.Namespace) -> int:
     from .pcep import PcepServer, PcepServerConfig
 
     computation_args = [args.compute_bgpls_raw, args.compute_bgpls_status, args.compute_topology,
-                        args.compute_bgpls_peer, args.compute_node_map, args.compute_headend]
+                        args.compute_bgpls_peer]
+    domain_policy = None
+    if args.compute_domain_policy:
+        from .pcep_domain_policy import DomainDelegationPolicy
+
+        domain_policy = DomainDelegationPolicy.from_path(Path(args.compute_domain_policy))
     computer = None
-    if any(computation_args) or args.compute_ospf_multi_area_policy:
-        if not all(computation_args):
+    if (any(computation_args) or args.compute_ospf_multi_area_policy or args.compute_node_map or
+            args.compute_headend or domain_policy is not None):
+        if not all(computation_args) or domain_policy is None and not all(
+                (args.compute_node_map, args.compute_headend)):
             raise ValueError("Computation requires raw, status, topology, exporter, node map and headend options")
         from .pcep_compute import PcepPathComputer
 
@@ -210,7 +219,7 @@ async def _serve_pcep(args: argparse.Namespace) -> int:
             headends[peer] = source
         paths = [Path(value).resolve() for value in
                  (args.capture, args.compute_bgpls_raw, args.compute_bgpls_status, args.compute_topology,
-                  args.compute_node_map)]
+                  args.compute_node_map, args.compute_domain_policy) if value]
         if args.compute_ospf_multi_area_policy:
             paths.append(Path(args.compute_ospf_multi_area_policy).resolve())
         if len(set(paths)) != len(paths):
@@ -220,11 +229,12 @@ async def _serve_pcep(args: argparse.Namespace) -> int:
             topology_path=Path(args.compute_topology), required_peers=tuple(args.compute_bgpls_peer),
             node_names=_node_names(args.compute_node_map), headends=headends,
             ospf_multi_area=_ospf_multi_area_policy(args.compute_ospf_multi_area_policy),
+            domain_policy=domain_policy,
         )
     server_options: dict[str, Any] = {"capture_path": Path(args.capture)}
     if computer is not None:
         server_options["path_computer"] = computer
-    if args.compute_delegated_tunnel or args.provisioning_state:
+    if args.compute_delegated_tunnel or args.provisioning_state or domain_policy is not None:
         if computer is None:
             raise ValueError("Delegated path provision requires all computation options")
         from .pcep_delegation import DelegatedPathComputer
@@ -323,6 +333,8 @@ async def _serve_pcep(args: argparse.Namespace) -> int:
     server = PcepServer(
         PcepServerConfig(
             listen_host=args.listen_host, port=args.port, allowed_peers=tuple(args.allow_peer),
+            allowed_peer_networks=tuple(str(network) for network in domain_policy.pcc_prefixes)
+            if domain_policy is not None else (),
             keepalive=args.keepalive, deadtimer=args.deadtimer,
             stateless_peers=tuple(args.stateless_peer),
         ),

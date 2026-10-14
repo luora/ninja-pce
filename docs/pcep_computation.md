@@ -2,7 +2,10 @@
 
 Ninja-PCE has separate PCEP profiles: default passive observation,
 opt-in PCReq/PCRep path advice, and a further opt-in for an initial PCUpd to
-an explicitly authorized PCC and tunnel. Another opt-in profile provides
+an authorized delegated tunnel. The [topology-domain policy](topology_domain_delegation.md)
+discovers eligible PCCs and new tunnel IDs from a fresh managed-domain TED,
+without individual controller registrations. Legacy explicit bindings remain
+available. Another opt-in profile provides
 [one-tunnel withdrawal recovery](pcep_failure_recovery.md), with unit/socket
 coverage and [one qualified IOS XE 16.9.7 lab trial](pcep_failure_recovery_validation.md).
 The PCC performs RSVP signalling and admission. A computed route, a TCP write
@@ -26,7 +29,8 @@ results and do not validate these new computation profiles.
 Without computation flags, `pcep-listen` maintains allowlisted sessions and
 captures LSP reports. It advertises stateful capability with update capability
 clear (`U=0`) and initiation capability clear. It sends no path updates or
-initiation messages. P1 remains an observation peer in this lab.
+initiation messages. Transit routers can become PCCs under the domain policy;
+their role does not restrict initial-path eligibility.
 
 The IP allowlist identifies the permitted TCP source; it is not cryptographic
 authentication. Bind to the isolated lab NIC. Authenticated PCEPS remains
@@ -34,9 +38,10 @@ future work.
 
 ## PCReq/PCRep profile
 
-Computation requires an authorized PCC-IP to head-end-loopback binding and
-fresh, healthy BGP-LS inputs. An allowed reporting peer without that binding
-cannot request a path for another source. Each request describes one
+Computation requires fresh, healthy BGP-LS inputs and either an explicit
+PCC/headend binding or a current unique managed-domain node whose TE loopback
+equals the PCC source. Neither grants permission to impersonate another
+source. Each request describes one
 unidirectional, numbered IPv4 RSVP-TE path.
 
 | Object | Implemented local profile |

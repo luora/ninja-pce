@@ -1,4 +1,4 @@
-"""Opt-in initial RSVP path provision for explicitly delegated lab tunnels.
+"""Opt-in initial RSVP path provision for explicitly authorized delegations.
 
 Only a DOWN, administratively enabled, empty-ERO delegation requests a path.
 Active LSPs are never rerouted. The PCC performs RSVP admission/signaling.
@@ -15,6 +15,7 @@ from .pcep_compute import PathReply, PcepPathComputer
 from .state import digest
 
 if TYPE_CHECKING:
+    from .pcep_headend_policy import HeadendDelegationPolicy
     from .pcep_provisioning import JournalProvisioningAuthorization
 
 PCUPD = 11
@@ -58,8 +59,10 @@ def return_delegation(report: dict[str, Any], srp_id: int) -> bytes:
 
 class DelegatedPathComputer:
     def __init__(self, computer: PcepPathComputer, allowed_tunnels: dict[str, tuple[int, ...]], *,
-                 provisioning_authorizer: JournalProvisioningAuthorization | None = None):
-        if ((not allowed_tunnels and provisioning_authorizer is None) or
+                 provisioning_authorizer: JournalProvisioningAuthorization | None = None,
+                 headend_policy: HeadendDelegationPolicy | None = None):
+        if ((not allowed_tunnels and provisioning_authorizer is None and headend_policy is None and
+             computer.domain_policy is None) or
                 any(peer not in computer.headends for peer in allowed_tunnels)):
             raise ValueError("Delegation requires explicitly authorized headends")
         for tunnels in allowed_tunnels.values():
@@ -72,14 +75,46 @@ class DelegatedPathComputer:
                 computer.headends.get(peer) != source for peer, source in provisioning_authorizer.headends.items()):
             raise ValueError("Configuration delegation must match explicitly authorized computation headends")
         self.provisioning_authorizer = provisioning_authorizer
+        if headend_policy is not None and any(
+                computer.headends.get(peer) != source for peer, source in headend_policy.headends.items()):
+            raise ValueError("Headend delegation policy must match authorized computation headends")
+        self.headend_policy = headend_policy
+        self.domain_enabled = computer.domain_policy is not None
         self.authorized_peers = frozenset(allowed_tunnels) | frozenset(
-            provisioning_authorizer.headends if provisioning_authorizer is not None else ())
+            provisioning_authorizer.headends if provisioning_authorizer is not None else ()) | frozenset(
+            headend_policy.headends if headend_policy is not None else ())
+
+    def policy_allows(self, peer: str, report: dict[str, Any]) -> bool:
+        """Check exact report authority against the current managed domain."""
+        return self.policy_proof(peer, report) is not None
+
+    def policy_proof(self, peer: str, report: dict[str, Any]) -> dict[str, Any] | None:
+        if self.computer.domain_policy is not None:
+            try:
+                topology, _ = self.computer.validated_snapshot()
+                return self.computer.domain_policy.proof(peer, report, topology)
+            except (ValueError, OSError, RuntimeError, RecursionError):
+                return None
+        return self.headend_policy.proof(peer, report) if self.headend_policy is not None else None
+
+    def eligible_peer(self, peer: str) -> bool:
+        return peer in self.authorized_peers or self.computer.validated_peer(peer)
+
+    def concurrent_limit(self, peer: str) -> int | None:
+        if self.computer.domain_policy is not None:
+            return self.computer.domain_policy.max_live_lsps(peer)
+        return self.headend_policy.max_live_lsps(peer) if self.headend_policy is not None else None
+
+    def adopt_active(self, peer: str, report: dict[str, Any]) -> bool:
+        """Retain a live supported active delegation without sending a PCUpd."""
+        return report.get("operational_code") in (1, 2) and bool(report.get("ero")) and self.policy_allows(
+            peer, report)
 
     def _authorize(self, peer: str, report: dict[str, Any]) -> str | None:
         if report["identifiers"]["tunnel_id"] in self.allowed_tunnels.get(peer, ()):
             return None
         plan_id = self.provisioning_authorizer(peer, report) if self.provisioning_authorizer is not None else None
-        if plan_id is None:
+        if plan_id is None and not self.policy_allows(peer, report):
             raise ValueError("Initial delegation has no exact, current configured-tunnel authorization")
         return plan_id
 
@@ -87,6 +122,11 @@ class DelegatedPathComputer:
         """Check durable provisioning authority again inside the PCEP writer lock."""
         if outcome.get("status") != "INITIAL_PATH":
             return True
+        if any(key in outcome for key in ("headend_policy_digest", "headend_report_digest",
+                                         "domain_policy_digest", "domain_report_digest", "domain_source_digest")):
+            proof = self.policy_proof(peer, report)
+            return bool(proof is not None and outcome.get("provisioning_plan_id") is None and
+                        all(outcome.get(key) == value for key, value in proof.items()))
         plan_id = outcome.get("provisioning_plan_id")
         if plan_id is None:
             return report["identifiers"]["tunnel_id"] in self.allowed_tunnels.get(peer, ())
@@ -101,10 +141,14 @@ class DelegatedPathComputer:
 
     def _request(self, peer: str, report: dict[str, Any], srp_id: int) -> bytes:
         ids = report["identifiers"]
+        try:
+            source = self.computer.source_for_peer(peer)
+        except (ValueError, OSError, RuntimeError, RecursionError) as exc:
+            raise ValueError("topology_changed_or_unavailable") from exc
         if (not report["delegate"] or report["removed"] or not report["administrative_up"] or
                 report["operational_code"] != 0 or report["ero"] or report["srp_id"] or
                 ids["type"] != 18 or ids["all_zero"] or
-                ids["sender"] != self.computer.headends.get(peer)):
+                ids["sender"] != source):
             raise ValueError("Only an authorized initial empty-ERO DOWN delegation can request a path")
         self._authorize(peer, report)
         if report.get("rro") or report.get("srp_tlvs", []) not in (
@@ -159,7 +203,15 @@ class DelegatedPathComputer:
             try:
                 request = self._request(peer, report, srp_id)
                 plan_id = self._authorize(peer, report)
+                headend_proof = (self.policy_proof(peer, report)
+                                 if plan_id is None and
+                                 ids["tunnel_id"] not in self.allowed_tunnels.get(peer, ()) else None)
+                if (plan_id is None and ids["tunnel_id"] not in self.allowed_tunnels.get(peer, ()) and
+                        headend_proof is None):
+                    raise ValueError("Headend delegation authority changed before computation")
                 computed = self.computer(peer, request)
+                if len(computed.outcomes) == 1 and computed.outcomes[0]["status"] == "TOPOLOGY_UNAVAILABLE":
+                    raise ValueError("topology_changed_or_unavailable")
                 if len(computed.messages) != 1 or computed.outcomes[0]["status"] != "PATH":
                     raise ValueError(computed.outcomes[0]["reason"])
                 if topology_digest is not None and topology_digest != computed.topology_digest:
@@ -170,6 +222,8 @@ class DelegatedPathComputer:
                         not self.provisioning_authorizer.validate_path(
                             peer, report, plan_id, computed.outcomes[0].get("ero"))):
                     raise ValueError("Configured-tunnel authority expired or the computed path differs from its plan")
+                if headend_proof is not None and self.policy_proof(peer, report) != headend_proof:
+                    raise ValueError("Headend delegation authority changed during computation")
                 objects = parse_objects(computed.messages[0][4:])
                 if computed.messages[0][1] != PCREP:
                     raise ValueError("Initial path computation did not produce PCRep")
@@ -187,6 +241,8 @@ class DelegatedPathComputer:
                                  "reason": "Initial delegated path; awaiting PCC RSVP signaling"})
                 if plan_id is not None:
                     outcomes[-1]["provisioning_plan_id"] = plan_id
+                if headend_proof is not None:
+                    outcomes[-1].update(headend_proof)
             except (ValueError, RuntimeError, OSError) as exc:
                 messages.append(return_delegation(report, srp_id))
                 outcomes.append({**details, "status": "DELEGATION_RETURNED", "reason": str(exc)})

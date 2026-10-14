@@ -86,6 +86,9 @@ This repository is now beyond the first MVP, but still intentionally safe:
 - Added: data-driven IOS XE 16.9.7 underlay rendering and opt-in OSPFv2 ABR
   identity projection for an isolated multi-area collector
 - Done: passive stateful PCEP, bounded PCReq/PCRep and opt-in initial PCUpd
+- Added: [topology-domain PCC discovery](docs/topology_domain_delegation.md)
+  and bounded initial delegation without registering individual routers or
+  tunnel IDs; exact managed recovery authority remains separate
 - Done: opt-in one-tunnel withdrawal recovery, qualified for one IOS XE 16.9.7 lab scenario
 - Done: read-only local controller dashboard, with explicitly labelled demo mode
 - Done: gated dashboard configuration previews, exact-plan delivery, shared

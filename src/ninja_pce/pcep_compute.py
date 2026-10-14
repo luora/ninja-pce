@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from ipaddress import IPv4Address
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .bgpls import BgplsError, OspfMultiAreaPolicy, parse_gobgp_snapshot, parse_ospf_multi_area_policy
 from .cspf import CspfNoPath, CspfSearchLimit, compute_cspf
@@ -31,6 +31,9 @@ from .pcep import (
     parse_tlvs,
 )
 from .state import SCHEMA_VERSION, digest
+
+if TYPE_CHECKING:
+    from .pcep_domain_policy import DomainDelegationPolicy
 
 MAX_FILE_BYTES = 1_048_576
 MAX_REQUESTS = 8
@@ -291,17 +294,20 @@ class PcepPathComputer:
 
     def __init__(self, *, raw_path: Path, status_path: Path, topology_path: Path,
                  required_peers: tuple[str, ...], node_names: dict[str, str], headends: dict[str, str],
-                 max_age_seconds: float = 30, ospf_multi_area: OspfMultiAreaPolicy | None = None):
+                 max_age_seconds: float = 30, ospf_multi_area: OspfMultiAreaPolicy | None = None,
+                 domain_policy: DomainDelegationPolicy | None = None):
         if isinstance(max_age_seconds, bool) or not math.isfinite(max_age_seconds) or not 0 < max_age_seconds <= 30:
             raise ValueError("Computation freshness must be positive and at most 30 seconds")
         if not required_peers or len(set(required_peers)) != len(required_peers):
             raise ValueError("Unique required BGP-LS peers are required")
         self.required_peers = tuple(str(IPv4Address(peer)) for peer in required_peers)
         self.node_names = {str(IPv4Address(address)): validate_identifier(name) for address, name in node_names.items()}
-        if not self.node_names or len(set(self.node_names.values())) != len(self.node_names):
+        if ((not self.node_names and domain_policy is None) or
+                len(set(self.node_names.values())) != len(self.node_names)):
             raise ValueError("Node mapping must be nonempty and one-to-one")
         self.headends = {str(IPv4Address(peer)): str(IPv4Address(source)) for peer, source in headends.items()}
-        if not self.headends or any(source not in self.node_names for source in self.headends.values()):
+        if ((not self.headends and domain_policy is None) or
+                any(source not in self.node_names for source in self.headends.values())):
             raise ValueError("Headends must map allowed PCCs to known source loopbacks")
         self.raw_path, self.status_path, self.topology_path = Path(raw_path), Path(status_path), Path(topology_path)
         if len({path.resolve() for path in (self.raw_path, self.status_path, self.topology_path)}) != 3:
@@ -312,9 +318,31 @@ class PcepPathComputer:
                 raise ValueError("OSPF multi-area computation requires a validated identity policy")
             ospf_multi_area = parse_ospf_multi_area_policy(ospf_multi_area.document())
             for binding in ospf_multi_area.bindings:
-                if self.node_names.get(binding.te_router_id) != binding.node_id:
+                name = self.node_names.get(binding.te_router_id)
+                if name != binding.node_id and (name is not None or domain_policy is None):
                     raise ValueError("OSPF multi-area bindings must match the computation node map")
         self.ospf_multi_area = ospf_multi_area
+        self.domain_policy = domain_policy
+
+    def source_for_peer(self, peer: str, topology: Topology | None = None) -> str | None:
+        """Resolve a static binding or a unique member of the trusted live domain.
+
+        Discovery never changes the static mappings bound to managed recovery.
+        The domain transport profile requires the PCC to use its TE loopback.
+        """
+        if peer in self.headends:
+            return self.headends[peer]
+        if self.domain_policy is None:
+            return None
+        if topology is None:
+            topology, _ = self.validated_snapshot()
+        return self.domain_policy.source(peer, topology)
+
+    def validated_peer(self, peer: str) -> bool:
+        if self.domain_policy is None:
+            return False
+        topology, _ = self.validated_snapshot()
+        return self.domain_policy.source(peer, topology) is not None
 
     def _snapshot(self) -> tuple[Topology, str]:
         paths = (self.raw_path, self.status_path, self.topology_path)
@@ -390,25 +418,34 @@ class PcepPathComputer:
             groups = _groups(body)
         except PcepProtocolError as exc:
             return request_error(body, exc.error_type, exc.error_value, str(exc))
-        if peer not in self.headends:
-            return request_error(body, reason="PCC has no authorized headend mapping")
+        topology: Topology | None = None
+        topology_digest: str | None = None
+        topology_error: str | None = None
+        try:
+            topology, topology_digest = self._snapshot()
+            source = self.source_for_peer(peer, topology)
+        except (ValueError, OSError, RuntimeError, RecursionError) as exc:
+            source = self.headends.get(peer)
+            topology_error = str(exc)
+        if source is None:
+            return request_error(body, reason="PCC is not a current member of the managed topology domain")
+        domain_member = bool(self.domain_policy is not None and topology is not None and
+                             self.domain_policy.source(peer, topology) is not None)
+        if self.domain_policy is not None and topology is not None and not domain_member:
+            return request_error(body, reason="PCC is not a current member of the managed topology domain")
         requests: list[_Request | PcepProtocolError] = []
         for group in groups:
             try:
                 decoded = _decode(group)
-                if decoded.source != self.headends[peer]:
+                if decoded.source != source:
                     raise PcepProtocolError("PCC is not authorized for the requested source", 5, 0)
+                if self.domain_policy is not None and domain_member:
+                    if (decoded.bandwidth_bps > self.domain_policy.max_bandwidth_bps or topology is None or
+                            not self.domain_policy.destination(decoded.destination, topology)):
+                        raise PcepProtocolError("Request exceeds the managed domain policy", 5, 0)
                 requests.append(decoded)
             except PcepProtocolError as exc:
                 requests.append(exc)
-        topology: Topology | None = None
-        topology_digest: str | None = None
-        topology_error: str | None = None
-        if any(isinstance(request, _Request) for request in requests):
-            try:
-                topology, topology_digest = self._snapshot()
-            except (ValueError, OSError, RuntimeError, RecursionError) as exc:
-                topology_error = str(exc)
         messages: list[bytes] = []
         outcomes: list[dict[str, Any]] = []
         for group, request in zip(groups, requests):
@@ -423,7 +460,10 @@ class PcepPathComputer:
                 outcomes.append(_outcome(request_id, "TOPOLOGY_UNAVAILABLE", topology_error or "No fresh TED"))
                 continue
             try:
-                message, outcome = self._compute(topology, request)
+                graph = topology
+                if self.domain_policy is not None and domain_member:
+                    graph = self.domain_policy.graph(topology)
+                message, outcome = self._compute(graph, request)
                 messages.append(message)
                 outcomes.append(outcome)
             except CspfNoPath as exc:
