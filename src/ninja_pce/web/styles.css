@@ -116,7 +116,7 @@ button svg,.search-box svg{width:16px;height:16px;fill:none;stroke:currentColor;
 .topology-link.red{stroke:var(--red)}
 .topology-link.unavailable{stroke:var(--text-3);stroke-dasharray:5 5;opacity:.4}
 .link-hit{fill:none;stroke:transparent;stroke-width:14;cursor:pointer}
-.link-label{font-size:9.5px;fill:var(--text-3);text-anchor:middle;font-family:var(--font);pointer-events:none;paint-order:stroke;stroke:var(--surface);stroke-width:4px;stroke-linejoin:round}
+.link-label{font-size:9.5px;fill:var(--text-2);text-anchor:middle;dominant-baseline:central;font-family:var(--font);cursor:help;paint-order:stroke;stroke:var(--surface);stroke-width:5px;stroke-linejoin:round}
 .link-group:hover .topology-link,.link-group:focus .topology-link,.link-group.selected .topology-link{opacity:1;stroke-width:4}
 .selected-path{fill:none;stroke:var(--blue);stroke-width:5;stroke-linecap:round;stroke-linejoin:round;opacity:.9;pointer-events:none}
 .selected-path.flow{stroke-dasharray:10 8;animation:flow .8s linear infinite}

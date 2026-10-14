@@ -111,6 +111,13 @@ lab network, or the authenticated HTTPS proxy below for public access.
 - Link bandwidth shows advertised RSVP reservation data, not measured traffic.
   Local ledger holds are separate controller accounting and can remain after a
   peer observation expires.
+- Each numbered physical link has one paired reservation label, such as
+  `51% / 0%`, with a white halo in the light theme. The first value is left to
+  right, or top to bottom for vertical links; the second is the reverse. Hover
+  for named directions and interface addresses. Parallel circuits keep separate
+  labels, and a missing or withdrawn direction shows `Unknown`. Labels sit near
+  the midpoint and move aside when a node would obscure them; node coordinates
+  and link paths stay fixed.
 - Events and computations show up to 80 retained records. The API limits input
   files to 8 MiB, peers to 64, LSPs to 512, topology nodes to 256 and directed links
   to 2,048. Oversized or malformed inputs show an invalid source state.

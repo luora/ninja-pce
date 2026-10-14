@@ -502,6 +502,42 @@
   const reservationClass = (percent) => percent === null ? "unknown" : percent < 50 ? "green" : percent <= 80 ? "amber" : "red";
   const reservationText = (percent) => percent === null ? "Unknown" : `${percent.toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
 
+  function topologyLinkLabels(links, points) {
+    const circuits = new Map(), pairs = new Map();
+    for (const link of links) {
+      if (!points.has(link.source) || !points.has(link.target)) continue;
+      const endpoints = [[link.source, link.local_address || ""], [link.target, link.remote_address || ""]]
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+      // Reciprocal interface addresses identify a circuit; node names alone
+      // would collapse parallel links. Unnumbered/ambiguous links stay separate.
+      const key = link.local_address && link.remote_address ? JSON.stringify(endpoints) : JSON.stringify(["unpaired", link.id]);
+      if (!circuits.has(key)) circuits.set(key, []);
+      circuits.get(key).push(link);
+    }
+    for (const [key, circuit] of circuits) {
+      const nodeIds = [circuit[0].source, circuit[0].target].sort((a, b) => {
+        const left = points.get(a), right = points.get(b);
+        return left.x - right.x || left.y - right.y || String(a).localeCompare(String(b));
+      });
+      const forward = circuit.filter((link) => link.source === nodeIds[0]), reverse = circuit.filter((link) => link.source === nodeIds[1]);
+      const entries = forward.length <= 1 && reverse.length <= 1 ? [{ key, forward: forward[0], reverse: reverse[0] }] :
+        circuit.map((link) => ({ key: `${key}:${link.id}`, forward: link.source === nodeIds[0] ? link : undefined, reverse: link.source === nodeIds[1] ? link : undefined }));
+      const pairKey = JSON.stringify([...nodeIds].sort());
+      if (!pairs.has(pairKey)) pairs.set(pairKey, []);
+      for (const entry of entries) pairs.get(pairKey).push({ ...entry, source: nodeIds[0], target: nodeIds[1] });
+    }
+    const labels = [];
+    for (const pair of pairs.values()) {
+      pair.sort((a, b) => a.key.localeCompare(b.key));
+      pair.forEach((entry, index) => {
+        const a = points.get(entry.source), b = points.get(entry.target), dx = b.x - a.x, dy = b.y - a.y;
+        const distance = Math.hypot(dx, dy) || 1, offset = (index - (pair.length - 1) / 2) * 18;
+        labels.push({ ...entry, x: (a.x + b.x) / 2 - dy / distance * offset, y: (a.y + b.y) / 2 + dx / distance * offset });
+      });
+    }
+    return labels.sort((a, b) => a.key.localeCompare(b.key));
+  }
+
   function renderTopology() {
     const graph = $("topology-svg"), observedNodes = list(state.data?.topology?.nodes), observedLinks = list(state.data?.topology?.links), lsp = selectedLsp();
     const display = topologyLayout(observedNodes, observedLinks), { points, nodes, links } = display;
@@ -530,13 +566,43 @@
       const group = svg("g", { class: `link-group${unavailable ? " unavailable" : ""}${state.inspected?.kind === "link" && state.inspected.id === link.id ? " selected" : ""}`, tabindex: 0, role: "button", "aria-label": `${link.source} to ${link.target}, ${unavailable ? observation(link) : `${reservationText(reservation(link))} RSVP reserved`}`, "data-focus-key": `link-${link.id}` });
       group.append(svg("title", {}, unavailable ? `${link.source} → ${link.target} · ${observation(link)} · last observed connection; current bandwidth unknown` : `${link.source} → ${link.target}: ${reservationText(reservation(link))} reserved; ${bandwidth(link.available_bw_bps)} available; receiving ${string(link.remote_address)}`));
       group.append(svg("path", { d, class: `topology-link ${unavailable ? "unavailable" : reservationClass(reservation(link))}`, "marker-end": "url(#link-arrow)" }), svg("path", { d, class: "link-hit" }));
-      if (!unavailable) group.append(svg("text", { x: (start.x + 2 * mx + end.x) / 4, y: (start.y + 2 * my + end.y) / 4 - 7, class: "link-label" }, reservationText(reservation(link))));
       const inspect = () => preserveFocus(() => { state.inspected = { kind: "link", id: link.id }; renderTopology(); });
       group.addEventListener("click", inspect); group.addEventListener("keydown", (event) => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); inspect(); } }); graph.append(group);
     }
     const route = routeFor(lsp), reported = string(lsp?.reported_state || lsp?.operational_state, "Unknown");
     const activeFresh = lsp && isActive(lsp) && fresh(lsp) && sourceState(source("topology")) === "fresh" && !state.paused;
     for (const link of route.links) if (paths.has(link.id)) graph.append(svg("path", { d: paths.get(link.id), class: `selected-path ${!fresh(lsp) || state.paused ? "stale" : isActive(lsp) ? activeFresh ? "flow" : "" : reported.toUpperCase() === "DOWN" ? "down" : "pending"}` }));
+    const bounds = (x, y, width, height) => ({ left: x - width / 2, right: x + width / 2, top: y - height / 2, bottom: y + height / 2 });
+    const labelObstacles = nodes.flatMap((node) => {
+      const point = points.get(node.id), edge = /^PE/i.test(node.id), radius = edge ? 20 : 15;
+      const boxes = [bounds(point.x, point.y, radius * 2 + 8, radius * 2 + 8),
+        bounds(point.x, point.y + (edge ? 32 : 26), String(node.id).length * 6.5 + 8, 18),
+        bounds(point.x, point.y + (edge ? 47 : 41), string(node.loopback).length * 5.5 + 8, 16)];
+      if (node.retained || !topologyFresh) boxes.push(bounds(point.x, point.y + (edge ? 61 : 55), observation(node).length * 5.5 + 8, 16));
+      return boxes;
+    });
+    // Keep the shared label and its halo above both directional paths and ERO.
+    for (const entry of topologyLinkLabels(links, points)) {
+      const available = (link) => link && !link.retained && topologyFresh;
+      if (!available(entry.forward) && !available(entry.reverse)) continue;
+      const value = (link) => reservationText(available(link) ? reservation(link) : null);
+      const detail = (link, source, target) => `${source} → ${target}${link ? ` (${string(link.local_address)} → ${string(link.remote_address)})` : ""}: ${value(link)} RSVP reserved${link && !available(link) ? ` · ${observation(link)}` : !link ? " · Not advertised" : ""}`;
+      const description = `${detail(entry.forward, entry.source, entry.target)}; ${detail(entry.reverse, entry.target, entry.source)}`;
+      const label = svg("g", { class: "link-label-group", role: "img", "aria-label": description });
+      const text = svg("text", { x: entry.x, y: entry.y, class: "link-label", "aria-hidden": "true" }, `${value(entry.forward)} / ${value(entry.reverse)}`);
+      label.append(svg("title", {}, description), text);
+      graph.append(label);
+      const width = (text.getComputedTextLength() || text.textContent.length * 5.5) + 8;
+      const a = points.get(entry.source), b = points.get(entry.target), dx = b.x - a.x, dy = b.y - a.y, distance = Math.hypot(dx, dy) || 1;
+      // A transit node can occupy a long link's midpoint. Move only the label
+      // along the link normal, with deterministic spacing and direction order.
+      for (const offset of [0, 18, -18, 36, -36, 54, -54, 72, -72, 90, -90]) {
+        const x = entry.x - dy / distance * offset, y = entry.y + dx / distance * offset, box = bounds(x, y, width, 17);
+        if (box.left < 4 || box.right > 646 || box.top < 4 || box.bottom > 296 ||
+            labelObstacles.some((other) => box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top)) continue;
+        text.setAttribute("x", x); text.setAttribute("y", y); labelObstacles.push(box); break;
+      }
+    }
     for (const node of nodes) {
       const unavailable = node.retained || !topologyFresh;
       const point = points.get(node.id), edge = /^PE/i.test(node.id), group = svg("g", { class: `node-group${unavailable ? " unavailable" : ""}${state.inspected?.kind === "node" && state.inspected.id === node.id ? " selected" : ""}`, tabindex: 0, role: "button", "aria-label": `${node.id}, ${string(node.loopback, "address unknown")}${unavailable ? `, ${observation(node)}` : ""}`, "data-focus-key": `node-${node.id}` });
