@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from .bgpls import OspfMultiAreaPolicy, parse_ospf_multi_area_policy
 from .reservations import RESERVATION_STATES
 from .state import SCHEMA_VERSION, digest
 
@@ -38,6 +39,7 @@ class DashboardConfig:
     max_age_seconds: float = 30.0
     refresh_seconds: float = 5.0
     demo: bool = False
+    ospf_multi_area: OspfMultiAreaPolicy | None = None
 
     def __post_init__(self) -> None:
         if not self.host or not 0 <= self.port <= 65535:
@@ -45,6 +47,11 @@ class DashboardConfig:
         for value in (self.max_age_seconds, self.refresh_seconds):
             if isinstance(value, bool) or not math.isfinite(value) or value <= 0:
                 raise ValueError("Dashboard freshness and refresh intervals must be finite and positive")
+        if self.ospf_multi_area is not None:
+            if not isinstance(self.ospf_multi_area, OspfMultiAreaPolicy):
+                raise ValueError("Dashboard OSPF multi-area policy requires validated configuration")
+            object.__setattr__(self, "ospf_multi_area",
+                               parse_ospf_multi_area_policy(self.ospf_multi_area.document()))
 
 
 def _number(value: Any) -> float | None:
@@ -213,6 +220,16 @@ class DashboardStore:
                 bgpls_source.update(state="invalid", message="Collector files do not describe the same observation.")
         if feed:
             try:
+                # Observation metadata can confirm configured identity authority;
+                # it must never enable a router projection by itself. Apply this
+                # check to retained observations as well as current ones.
+                for item in (metadata, status_metadata):
+                    if config.ospf_multi_area is None:
+                        if "ospf_multi_area" in item or "ospf_multi_area_digest" in item:
+                            raise ValueError("Collector OSPF area policy requires dashboard opt-in")
+                    elif (item.get("ospf_multi_area") != config.ospf_multi_area.document() or
+                          item.get("ospf_multi_area_digest") != config.ospf_multi_area.digest):
+                        raise ValueError("Collector OSPF area policy differs from dashboard policy")
                 nodes = _list(feed.get("nodes"), MAX_NODES)
                 links = _list(feed.get("links"), MAX_LINKS)
                 result["topology"] = {
@@ -233,7 +250,8 @@ class DashboardStore:
                     names = {node["loopback"]: node["id"] for node in result["topology"]["nodes"]}
                     required = tuple(_list(metadata.get("required_peers"), MAX_PEERS))
                     parsed = parse_gobgp_snapshot(raw or {}, node_names=names, required_peers=required,
-                                                  now=now, max_age_seconds=config.max_age_seconds)
+                                                  now=now, max_age_seconds=config.max_age_seconds,
+                                                  ospf_multi_area=config.ospf_multi_area)
                     if topology_document(parsed) != feed:
                         raise ValueError("Normalized topology differs from its captured BGP-LS input")
                     if status is None:

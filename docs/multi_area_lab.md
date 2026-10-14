@@ -251,3 +251,18 @@ the previewed 1 Mbps, or test forwarding or failure recovery for that tunnel.
 The existing PCEP service and dashboard still consume their original area 0
 inputs. Qualifying one PE1→PE4 tunnel and updating those consumers are separate
 next steps.
+
+## Recorded provisioning and recovery result — 2026-10-14
+
+The subsequent [live inter-area tunnel trial](multi_area_tunnel_validation.md)
+qualified Tunnel1002 from PE1 to PE4 at 1 Mbps. The PCEP listener, dashboard
+and provisioning backend now consume the explicit two-area policy and live
+feed. Initial MPLS OAM passed on PE1 → P3 → P4 → PE4. A controlled P4–PE4
+failure produced one acknowledged PCEP replacement through P1/P2/P5, with
+MPLS OAM passing before and after link restoration. Tunnel100's configuration
+and separate recovery budget were preserved. The full suite passed 1,523 tests.
+
+This resolves the consumer and single inter-area tunnel steps left open in the
+preceding result. Qualification remains limited to the recorded single-tunnel
+IOS XE profile; the linked report records conservative holds and outstanding
+deployment limits.

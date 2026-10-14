@@ -121,6 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--topology", default="build/live/topology.json", help="Normalized live topology JSON")
     dashboard.add_argument("--bgpls-status", default="build/live/bgpls-status.json", help="Collector health JSON")
     dashboard.add_argument("--bgpls-raw", default="build/live/bgpls-raw.json", help="Raw collector JSON")
+    dashboard.add_argument("--ospf-multi-area-policy", help="Explicit JSON policy matching the BGP-LS collector")
     dashboard.add_argument("--pcep", default="build/live/pcep.json", help="Checksummed PCEP observation JSON")
     dashboard.add_argument("--state-dir", default="build/state", help="Existing shared reservation directory")
     dashboard.add_argument("--max-age", type=float, default=30.0, help="Observation freshness limit in seconds")
@@ -571,11 +572,13 @@ def cmd_daemon(args: argparse.Namespace) -> int:
 
 def cmd_dashboard(args: argparse.Namespace) -> int:
     from .dashboard import DashboardConfig, create_dashboard_server
+    from .live import _ospf_multi_area_policy
 
     config = DashboardConfig(
         topology_path=Path(args.topology), bgpls_status_path=Path(args.bgpls_status),
         bgpls_raw_path=Path(args.bgpls_raw), pcep_path=Path(args.pcep), state_dir=Path(args.state_dir),
         host=args.host, port=args.port, max_age_seconds=args.max_age, refresh_seconds=args.refresh, demo=args.demo,
+        ospf_multi_area=_ospf_multi_area_policy(args.ospf_multi_area_policy),
     )
     try:
         server = create_dashboard_server(config)

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
+import os
 import time
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -11,6 +13,9 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from test_multi_area_wiring import NAMES as MULTI_AREA_NAMES
+from test_multi_area_wiring import policy_file
+from test_multi_area_wiring import prepare as prepare_multi_area
 from test_pcep_provisioning import report_for
 from test_tunnel_creation import PEER, Computer
 
@@ -126,6 +131,188 @@ def test_readiness_fails_closed_for_qualification_and_stale_controller_state(tmp
 
 def test_ready_qualified_fresh_exact_pcc_profile(tmp_path: Path):
     assert controller(tmp_path, qualified=True).readiness("PE1") == (True, "")
+
+
+@pytest.mark.parametrize("recovery", [None, [], {"pending": {"srp_id": 3}},
+                                      {"blocked": True}, {"status": "RECOVERY_REQUIRED"}])
+def test_readiness_refuses_managed_recovery_uncertainty(tmp_path: Path, recovery):
+    provisioner = controller(tmp_path, qualified=True)
+    capture = load_state(provisioner.pcep_capture)
+    capture["managed_failure_recovery"] = recovery
+    write_state(provisioner.pcep_capture, capture)
+    ready, reason = provisioner.readiness("PE1")
+    assert ready is False and "Managed tunnel recovery" in reason
+
+
+def test_readiness_accepts_healthy_managed_recovery_observation(tmp_path: Path):
+    provisioner = controller(tmp_path, qualified=True)
+    capture = load_state(provisioner.pcep_capture)
+    capture["managed_failure_recovery"] = {"pending": None, "blocked": False, "status": "MONITORING"}
+    write_state(provisioner.pcep_capture, capture)
+    assert provisioner.readiness("PE1") == (True, "")
+
+
+def multi_area_runtime(tmp_path: Path, monkeypatch) -> dict[str, Any]:
+    prepare_multi_area(tmp_path, monkeypatch)
+    return {
+        "state_dir": str(tmp_path / "state"), "pcep_capture": str(tmp_path / "pcep.json"),
+        "inventory": str(tmp_path / "inventory.yml"), "known_hosts": str(tmp_path / "known_hosts"),
+        "socket_path": str(tmp_path / "api.sock"),
+        "computer": {
+            "raw_path": str(tmp_path / "raw.json"), "status_path": str(tmp_path / "status.json"),
+            "topology_path": str(tmp_path / "topology.json"), "required_peers": ["10.255.0.5"],
+            "node_names": MULTI_AREA_NAMES, "headends": {PEER: PEER},
+            "ospf_multi_area_policy": str(policy_file(tmp_path)),
+        },
+    }
+
+
+def multi_area_controller(tmp_path: Path, config: dict[str, Any], *, qualified: bool = False) -> CliProvisioner:
+    computer = cli_provisioning._runtime_computer(config)
+    result = CliProvisioner(
+        computer, Path(config["state_dir"]),
+        {"PE1": ManagedDevice("PE1", "PE1", PEER, "cisco_ios", "operator",
+                              password_env="NINJA_PCE_TEST_PASSWORD")},
+        ("PE4",), "172.16.100.10", Path(config["pcep_capture"]), qualified=qualified,
+        connect_handler=lambda **kwargs: pytest.fail("must not contact a router"),
+    )
+    identity = computer.ospf_multi_area
+    assert identity is not None
+    write_state(result.pcep_capture, {
+        "listener_running": True, "generated_at": time.time(),
+        "provisioning_policy_digest": result.authorization.policy_digest,
+        "capabilities": {"configuration_provisioning": True},
+        "topology_policy": {"ospf_multi_area": identity.document(), "ospf_multi_area_digest": identity.digest},
+        "peers": {PEER: {"state": "ESTABLISHED", "fresh": True, "synchronized": True,
+                        "valid_until": time.time() + 120}},
+    })
+    return result
+
+
+def test_runtime_explicit_area_policy_previews_strict_path_without_qualifying_writes(tmp_path, monkeypatch):
+    config = multi_area_runtime(tmp_path, monkeypatch)
+    before = copy.deepcopy(config)
+    provisioner = multi_area_controller(tmp_path, config)
+    intent = {**INTENT, "destination": "PE4"}
+    plan = preview(provisioner, intent=intent)
+    assert plan["path_nodes"] == ["PE1", "P2", "PE4"]
+    assert plan["ero"] == ["10.0.15.5", "10.0.58.8"]
+    assert provisioner.computer.headends == {PEER: PEER}
+    assert provisioner.allowed_destinations == ("PE4",)
+    assert config == before
+    assert provisioner.readiness("PE1") == (
+        False, "Configuration provisioning has not been qualified for this device profile.")
+    rejected = asyncio.run(provisioner.create("operator", "area-preview", intent, approved_plan_id=plan["plan_id"]))
+    assert rejected["status"] == "REJECTED" and "qualified" in rejected["reason"]
+    assert not ReservationLedger(provisioner.state_dir).entries
+
+
+def test_runtime_default_rejects_area_normalized_feed(tmp_path, monkeypatch):
+    config = multi_area_runtime(tmp_path, monkeypatch)
+    del config["computer"]["ospf_multi_area_policy"]
+    computer = cli_provisioning._runtime_computer(config)
+    assert computer.ospf_multi_area is None
+    with pytest.raises(ValueError, match="OSPF area policy"):
+        computer.validated_snapshot()
+
+
+@pytest.mark.parametrize("mutation", ["missing", "digest", "document", "extra"])
+def test_multi_area_readiness_requires_same_listener_identity_policy(tmp_path, monkeypatch, mutation):
+    provisioner = multi_area_controller(tmp_path, multi_area_runtime(tmp_path, monkeypatch), qualified=True)
+    assert provisioner.readiness("PE1") == (True, "")
+    capture = load_state(provisioner.pcep_capture)
+    if mutation == "missing":
+        del capture["topology_policy"]
+    elif mutation == "digest":
+        capture["topology_policy"]["ospf_multi_area_digest"] = "0" * 64
+    elif mutation == "document":
+        capture["topology_policy"]["ospf_multi_area"]["instance_id"] = 1
+    else:
+        capture["topology_policy"]["unexpected"] = True
+    write_state(provisioner.pcep_capture, capture)
+    ready, reason = provisioner.readiness("PE1")
+    assert ready is False and "OSPF area policy" in reason
+    assert not ReservationLedger(provisioner.state_dir).entries
+
+
+@pytest.mark.parametrize("policy", [None, {}, {"ospf_multi_area_digest": "0" * 64}])
+def test_default_readiness_rejects_listener_multi_area_policy(tmp_path, policy):
+    provisioner = controller(tmp_path, qualified=True)
+    capture = load_state(provisioner.pcep_capture)
+    capture["topology_policy"] = policy
+    write_state(provisioner.pcep_capture, capture)
+    assert provisioner.readiness("PE1")[0] is False
+
+
+def test_multi_area_journal_binds_identity_policy_and_requires_explicit_reconciliation(tmp_path, monkeypatch):
+    config = multi_area_runtime(tmp_path, monkeypatch)
+    provisioner = multi_area_controller(tmp_path, config)
+    identity = provisioner.computer.ospf_multi_area
+    assert identity is not None
+    changed = identity.document()
+    changed["bindings"][0]["areas"].append("0.0.0.2")
+    Path(config["computer"]["ospf_multi_area_policy"]).write_text(json.dumps(changed))
+    before = provisioner.path.read_bytes()
+    with pytest.raises(ValueError, match="journal policy"):
+        multi_area_controller(tmp_path, config)
+    assert provisioner.path.read_bytes() == before
+
+
+@pytest.mark.parametrize("location", ["raw_path", "status_path", "topology_path", "inventory", "known_hosts",
+                                      "pcep_capture", "socket_path", "state_dir", "runtime"])
+def test_runtime_policy_cannot_alias_live_inputs_or_mutable_outputs(tmp_path, monkeypatch, location):
+    config = multi_area_runtime(tmp_path, monkeypatch)
+    path = Path(config["computer"]["ospf_multi_area_policy"])
+    before = path.read_bytes()
+    runtime = tmp_path / "runtime.json"
+    if location in {"raw_path", "status_path", "topology_path"}:
+        config["computer"][location] = str(path)
+    elif location == "state_dir":
+        config[location] = str(path.parent)
+    elif location == "runtime":
+        runtime = path
+    else:
+        config[location] = str(path)
+    with pytest.raises(ValueError, match="distinct|mutable"):
+        cli_provisioning._runtime_computer(config, config_path=runtime)
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("kind", ["symlink", "hardlink"])
+def test_runtime_policy_rejects_filesystem_aliases(tmp_path, monkeypatch, kind):
+    config = multi_area_runtime(tmp_path, monkeypatch)
+    path = Path(config["computer"]["ospf_multi_area_policy"])
+    output = tmp_path / "alias.json"
+    if kind == "symlink":
+        output.symlink_to(path)
+    else:
+        os.link(path, output)
+    config["pcep_capture"] = str(output)
+    with pytest.raises(ValueError, match="distinct"):
+        cli_provisioning._runtime_computer(config)
+
+
+@pytest.mark.parametrize("mutation", ["null", "yaml", "duplicate", "unknown", "node_map", "direct_object"])
+def test_runtime_rejects_invalid_or_implicit_identity_policy(tmp_path, monkeypatch, mutation):
+    config = multi_area_runtime(tmp_path, monkeypatch)
+    path = Path(config["computer"]["ospf_multi_area_policy"])
+    if mutation == "null":
+        config["computer"]["ospf_multi_area_policy"] = None
+    elif mutation == "yaml":
+        config["computer"]["ospf_multi_area_policy"] = str(path.with_suffix(".yml"))
+    elif mutation == "duplicate":
+        path.write_text('{"schema_version": 1, "schema_version": 1}')
+    elif mutation == "unknown":
+        document = json.loads(path.read_text())
+        document["guess_abr_identity"] = True
+        path.write_text(json.dumps(document))
+    elif mutation == "node_map":
+        config["computer"]["node_names"] = {**MULTI_AREA_NAMES, "10.255.0.5": "OTHER"}
+    else:
+        config["computer"]["ospf_multi_area"] = json.loads(path.read_text())
+    with pytest.raises(ValueError):
+        cli_provisioning._runtime_computer(config)
+    assert not (tmp_path / "state").exists()
 
 
 @pytest.mark.parametrize("generated", ["stale", "future", "missing", "nan", "infinite", "boolean"])
@@ -664,8 +851,13 @@ def test_live_configured_tunnel_pce_control_proof_requires_the_selected_option_p
     text = fixture.read_text()
     command = "show mpls traffic-eng tunnels tunnel 1000"
     assert provisioner._pce_control(((command, text),))
+    # IOS XE omits the local path weight for a PCE-computed inter-area LSP.
+    inter_area = text.replace("(Basis for Setup, path weight 30)", "(Basis for Setup)")
+    assert provisioner._pce_control(((command, inter_area),))
     for changed in (
         text.replace("(Basis for Setup, path weight 30)", ""),
+        inter_area.replace("(Basis for Setup)", ""),
+        inter_area.replace("(Basis for Setup)", "(Basis for Setup, path weight UNKNOWN)"),
         text.replace("Working: yes", "Working: no"),
         text.replace("Delegation peer: 172.16.100.10", "Delegation peer: 172.16.100.11"),
         text.replace("Created via PCUpd message", "Created via PCInitiate message"),

@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from .pcep_creation import CreationSession
     from .pcep_delegation import DelegatedPathComputer
     from .pcep_failover import FailureRecoveryPlanner
+    from .pcep_managed_failover import ManagedFailureRecoveryPlanner
 
 from .state import load_state, write_state
 
@@ -369,12 +370,14 @@ class PcepServer:
                  path_computer: PcepPathComputer | None = None,
                  delegated_computer: DelegatedPathComputer | None = None,
                  failover: FailureRecoveryPlanner | None = None,
+                 managed_failover: ManagedFailureRecoveryPlanner | None = None,
                  creation: CreationSession | None = None):
         self.config = config
         self.capture_path = capture_path
         self.path_computer = path_computer
         self.delegated_computer = delegated_computer
         self.failover = failover
+        self.managed_failover = managed_failover
         self.creation = creation
         delegated_peers = (getattr(delegated_computer, "authorized_peers", delegated_computer.allowed_tunnels)
                            if delegated_computer is not None else ())
@@ -398,6 +401,32 @@ class PcepServer:
                 inputs.append(capture_path)
             if failover.path.resolve() in {path.resolve() for path in inputs}:
                 raise ValueError("Failure recovery journal must be distinct from observation files")
+        if managed_failover is not None:
+            from .pcep_managed_failover import ManagedFailureRecoveryPlanner
+            from .pcep_provisioning import JournalProvisioningAuthorization
+
+            authorizer = getattr(delegated_computer, "provisioning_authorizer", None)
+            if (not isinstance(managed_failover, ManagedFailureRecoveryPlanner) or
+                    delegated_computer is None or path_computer is not managed_failover.computer or
+                    delegated_computer.computer is not path_computer or
+                    not isinstance(authorizer, JournalProvisioningAuthorization) or
+                    authorizer.path.resolve() != managed_failover.operation_journal.resolve() or
+                    managed_failover.peer not in config.allowed_peers or
+                    managed_failover.peer in config.stateless_peers or not config.keepalive or
+                    not managed_failover.validate_authority()):
+                raise ValueError("Managed recovery requires the same computer and exact provisioning journal authority")
+            inputs = [managed_failover.computer.raw_path, managed_failover.computer.status_path,
+                      managed_failover.computer.topology_path, managed_failover.operation_journal]
+            if capture_path is not None:
+                inputs.append(capture_path)
+            if failover is not None:
+                inputs.append(failover.path)
+                if (failover.peer, failover.tunnel_id) == (managed_failover.peer, managed_failover.tunnel_id):
+                    raise ValueError("Recovery profiles must control distinct scoped tunnels")
+            if managed_failover.path.resolve() in {path.resolve() for path in inputs}:
+                raise ValueError("Managed recovery journal must be distinct from other live files")
+            if failover is not None and failover.path.resolve() == managed_failover.operation_journal.resolve():
+                raise ValueError("Legacy recovery journal must be distinct from the provisioning journal")
         self._compute_slots = asyncio.Semaphore(config.max_computations)
         self._workers: set[asyncio.Task[Any]] = set()
         self._server: asyncio.Server | None = None
@@ -412,6 +441,7 @@ class PcepServer:
         self._capture_error: str | None = None
         self._closing = False
         self._rejected = 0
+        self._recovery_cursor = 0
         if capture_path is not None and capture_path.exists():
             previous = load_state(capture_path)
             if previous.get("kind") != "passive_pcep_capture":
@@ -462,7 +492,12 @@ class PcepServer:
         if policy is not None:
             capture["topology_policy"] = {"ospf_multi_area": policy.document(),
                                           "ospf_multi_area_digest": policy.digest}
+        if self.managed_failover is not None:
+            capture["managed_failure_recovery"] = self.managed_failover.snapshot()
         return capture
+
+    def _recovery_planners(self) -> tuple[FailureRecoveryPlanner, ...]:
+        return tuple(planner for planner in (self.failover, self.managed_failover) if planner is not None)
 
     def _persist(self) -> None:
         if self.capture_path is not None:
@@ -498,7 +533,7 @@ class PcepServer:
             await self._server.wait_closed()
             self._server = None
             raise
-        if self.failover is not None:
+        if self._recovery_planners():
             self._failover_task = asyncio.create_task(self._watch_failover())
 
     async def serve_forever(self) -> None:
@@ -618,6 +653,11 @@ class PcepServer:
                 continue
             if self.creation is not None and self.creation.owns(peer, report):
                 continue
+            if self.managed_failover is not None and self.managed_failover.matches(peer, report):
+                # A verified provisioned tunnel belongs exclusively to its
+                # recovery policy, including DOWN/empty-ERO reports on restart.
+                # Recovery authority never becomes initial-path authority.
+                continue
             recovery_state = self.failover.snapshot() if self.failover is not None else {}
             if self.failover is not None and self.failover.matches(peer, report) and (
                     report["ero"] or recovery_state.get("baseline") or recovery_state.get("pending")):
@@ -647,16 +687,18 @@ class PcepServer:
         connection.computation = asyncio.create_task(self._compute_delegations(peer, connection, reports, srps))
         connection.computation.add_done_callback(lambda task: self._delegation_done(peer, connection, task))
 
-    def _recovery_report(self, peer: str, connection: _Connection) -> dict[str, Any] | None:
-        if self.failover is None:
+    def _recovery_report(self, peer: str, connection: _Connection,
+                         planner: FailureRecoveryPlanner | None = None) -> dict[str, Any] | None:
+        recovery = planner if planner is not None else self.failover
+        if recovery is None:
             return None
         reports = [report for report in connection.state["reports"].values()
-                   if self.failover.matches(peer, report)]
+                   if recovery.matches(peer, report)]
         # Prefer the latest report, including revocation. An older ACTIVE
         # incarnation must not conceal a newer DOWN or undelegated report.
         if not reports:
             return None
-        pending = self.failover.snapshot().get("pending")
+        pending = recovery.snapshot().get("pending")
         if pending:
             def priority(report: dict[str, Any]) -> tuple[bool, bool, float]:
                 recent = report.get("received_at", 0) >= pending["created_at"]
@@ -675,11 +717,12 @@ class PcepServer:
                     (connection.state.get("peer_open", {}).get("stateful_flags") or 0) & 1 and
                     time.monotonic() - connection.last_rx < ttl)
 
-    def _recovery_failed(self, reason: str) -> None:
-        if self.failover is None:
+    def _recovery_failed(self, reason: str, planner: FailureRecoveryPlanner | None = None) -> None:
+        recovery = planner if planner is not None else self.failover
+        if recovery is None:
             return
         try:
-            self.failover.failed(reason)
+            recovery.failed(reason)
         except (OSError, ValueError) as exc:
             # Journal errors stop the monitor without bypassing transport
             # cleanup or masking the original session failure.
@@ -687,49 +730,62 @@ class PcepServer:
 
     async def _watch_failover(self) -> None:
         """Watch topology independently of incoming PCRpt and keepalive traffic."""
-        assert self.failover is not None
+        planners = self._recovery_planners()
+        assert planners
         try:
             while not self._closing:
                 await asyncio.sleep(1)
                 if self._capture_error is not None:
-                    self._recovery_failed("capture_unavailable")
+                    for recovery in planners:
+                        self._recovery_failed("capture_unavailable", recovery)
                     return
-                peer = self.failover.peer
-                connection = self._connections.get(peer)
-                if connection is None or not self._recovery_session_fresh(connection):
-                    self._recovery_failed("session_unavailable_or_stale")
-                    continue
-                if connection.computation is not None and not connection.computation.done():
-                    continue
-                report = self._recovery_report(peer, connection)
-                if report is None:
-                    self._recovery_failed("controlled_tunnel_unavailable")
-                    continue
-                self.failover.observe(peer, report, fresh=True, synchronized=True)
-                if not report["delegate"] or not report["administrative_up"] or report["removed"]:
-                    self._persist()
-                    continue
-                connection.computation = asyncio.create_task(self._compute_failure(peer, connection, report))
-                connection.computation.add_done_callback(
-                    partial(self._recovery_task_done, peer, connection))
+                # One per-session computation and SRP sequence cover both
+                # profiles. Rotate first consideration so a healthy legacy
+                # tunnel cannot starve a failed managed tunnel on the same PCC.
+                start = self._recovery_cursor % len(planners)
+                self._recovery_cursor += 1
+                for recovery in planners[start:] + planners[:start]:
+                    peer = recovery.peer
+                    connection = self._connections.get(peer)
+                    if connection is None or not self._recovery_session_fresh(connection):
+                        self._recovery_failed("session_unavailable_or_stale", recovery)
+                        continue
+                    if connection.computation is not None and not connection.computation.done():
+                        continue
+                    report = self._recovery_report(peer, connection, recovery)
+                    if report is None:
+                        self._recovery_failed("controlled_tunnel_unavailable", recovery)
+                        continue
+                    recovery.observe(peer, report, fresh=True, synchronized=True)
+                    if not report["delegate"] or not report["administrative_up"] or report["removed"]:
+                        self._persist()
+                        continue
+                    connection.request_body = None
+                    connection.computation = asyncio.create_task(
+                        self._compute_failure(peer, connection, report, recovery))
+                    connection.computation.add_done_callback(
+                        partial(self._recovery_task_done, peer, connection, planner=recovery))
         except (OSError, ValueError, RuntimeError) as exc:
-            self._recovery_failed(f"recovery_monitor_failed:{type(exc).__name__}")
+            for recovery in planners:
+                self._recovery_failed(f"recovery_monitor_failed:{type(exc).__name__}", recovery)
             self._capture_error = f"Failure recovery stopped: {exc}"
 
-    def _recovery_task_done(self, peer: str, connection: _Connection, task: asyncio.Task[None]) -> None:
+    def _recovery_task_done(self, peer: str, connection: _Connection, task: asyncio.Task[None], *,
+                            planner: FailureRecoveryPlanner | None = None) -> None:
         if not task.cancelled() and task.exception() is not None:
-            self._recovery_failed("recovery_task_failed")
+            self._recovery_failed("recovery_task_failed", planner)
             self._capture_error = f"Failure recovery stopped: {task.exception()}"
         elif not self._closing and not connection.terminal and self._connections.get(peer) is connection:
             self._schedule_delegations(peer, connection)
 
     async def _compute_failure(self, peer: str, connection: _Connection,
-                               report: dict[str, Any]) -> None:
+                               report: dict[str, Any], planner: FailureRecoveryPlanner | None = None) -> None:
         from .pcep_delegation import ownership_key, report_fingerprint
 
-        recovery = self.failover
+        recovery = planner if planner is not None else self.failover
         assert recovery is not None
-        if self._compute_slots.locked() or connection.srp_sequence >= 0xFFFFFFFE:
+        if (self._compute_slots.locked() or connection.srp_sequence >= 0xFFFFFFFE or
+                len(connection.state["updates"]) >= 32):
             return
         original = copy.deepcopy(report)
         srp = connection.srp_sequence + 1
@@ -747,12 +803,12 @@ class PcepServer:
         try:
             reply = await asyncio.wait_for(asyncio.shield(worker), self.config.computation_timeout)
         except (asyncio.TimeoutError, ValueError, RuntimeError, OSError):
-            self._recovery_failed("recovery_computation_failed")
+            self._recovery_failed("recovery_computation_failed", recovery)
             return
         if reply is None:
             self._persist()
             return
-        current = self._recovery_report(peer, connection)
+        current = self._recovery_report(peer, connection, recovery)
         if (self._connections.get(peer) is not connection or not self._recovery_session_fresh(connection) or
                 current is None or report_fingerprint(current) != report_fingerprint(original)):
             return
@@ -761,12 +817,14 @@ class PcepServer:
         if not recovery.computer.validate_reply(reply):
             return
         def authorized() -> bool:
-            latest = self._recovery_report(peer, connection)
+            latest = self._recovery_report(peer, connection, recovery)
             return bool(self._capture_error is None and self._connections.get(peer) is connection and
                         self._recovery_session_fresh(connection) and latest is not None and
+                        connection.srp_sequence + 1 == srp and len(connection.state["updates"]) < 32 and
                         report_fingerprint(latest) == report_fingerprint(original) and
                         os.environ.get("NINJA_PCE_PREVIEW_ONLY", "").strip().lower() not in
-                        {"1", "true", "yes", "on"} and recovery.computer.validate_reply(reply))
+                        {"1", "true", "yes", "on"} and recovery.computer.validate_reply(reply) and
+                        (recovery is not self.managed_failover or self.managed_failover.validate_authority()))
 
         def prepare() -> None:
             # This runs inside the send lock, immediately before writer.write.
@@ -1017,9 +1075,9 @@ class PcepServer:
                             update = state["updates"].get(srp)
                             if update is not None:
                                 update.update(acknowledged=True, status="PCC_ERROR", errors=state["last_peer_errors"])
-                                if self.failover is not None and self.failover.peer == peer and (
-                                        update.get("tunnel_id") == self.failover.tunnel_id):
-                                    self._recovery_failed("pcc_error")
+                                for recovery in self._recovery_planners():
+                                    if recovery.peer == peer and update.get("tunnel_id") == recovery.tunnel_id:
+                                        self._recovery_failed("pcc_error", recovery)
                                 connection.owned_plsps.pop(update["plsp_id"], None)
                 elif message_type == PCRPT:
                     if not remote["stateful"] or not local_stateful:
@@ -1031,20 +1089,21 @@ class PcepServer:
                         self.creation.observe(peer, reports)
                     if allow_delegation:
                         self._acknowledge_updates(connection, reports)
-                        if self.failover is not None:
-                            revoked = any(self.failover.matches(peer, item) and not item["removed"] and
+                        for recovery in self._recovery_planners():
+                            if recovery.peer != peer:
+                                continue
+                            revoked = any(recovery.matches(peer, item) and not item["removed"] and
                                           (not item["delegate"] or not item["administrative_up"])
                                           for item in reports)
-                            current = self._recovery_report(peer, connection)
+                            current = self._recovery_report(peer, connection, recovery)
                             if revoked:
-                                self._recovery_failed("delegation_revoked_or_administratively_disabled")
+                                self._recovery_failed("delegation_revoked_or_administratively_disabled", recovery)
                             elif current is not None:
-                                self.failover.observe(peer, current, fresh=True,
-                                                      synchronized=state["synchronized"])
-                            elif any(item["removed"] and (self.failover.matches(peer, item) or
-                                     item["plsp_id"] == (self.failover.snapshot().get("baseline") or {}).get("plsp_id"))
+                                recovery.observe(peer, current, fresh=True, synchronized=state["synchronized"])
+                            elif any(item["removed"] and (recovery.matches(peer, item) or
+                                     item["plsp_id"] == (recovery.snapshot().get("baseline") or {}).get("plsp_id"))
                                      for item in reports):
-                                self._recovery_failed("controlled_tunnel_removed")
+                                self._recovery_failed("controlled_tunnel_removed", recovery)
                         self._schedule_delegations(peer, connection)
                 elif message_type == PCREQ and self.path_computer is not None:
                     if connection.computation is not None and not connection.computation.done():
@@ -1108,8 +1167,9 @@ class PcepServer:
             self._connections.pop(peer, None)
             if self.creation is not None:
                 self.creation.disconnected(peer)
-            if self.failover is not None and self.failover.peer == peer:
-                self._recovery_failed("pcep_session_disconnected")
+            for recovery in self._recovery_planners():
+                if recovery.peer == peer:
+                    self._recovery_failed("pcep_session_disconnected", recovery)
             state.update(state="DISCONNECTED", fresh=False, synchronized=False, disconnected_at=time.time(),
                          stale_reason="server_shutdown" if self._closing else reason)
             writer.close()

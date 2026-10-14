@@ -113,3 +113,6 @@ rejected with HTTP 403. This final readiness check sent no router configuration.
 
 A restarted controller, removal PCRpt or missing GUI line alone does not release
 a hold. There is no public deletion endpoint or automatic teardown.
+
+The later [inter-area trial](multi_area_tunnel_validation.md) adds live MPLS OAM
+and bounded failure recovery evidence for one separately scoped PE1→PE4 tunnel.

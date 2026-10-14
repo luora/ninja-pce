@@ -41,6 +41,23 @@ Use `--topology`, `--bgpls-status`, `--bgpls-raw`, `--pcep` and `--state-dir` to
 match the running controller. The dashboard does not start the protocol services.
 It works with missing inputs and displays their availability individually.
 
+For an explicitly qualified multi-area collector, select all three files from
+that collector and supply the same independently reviewed identity policy:
+
+```bash
+.venv/bin/ninja-pce dashboard \
+  --topology build/live/multi-area/topology.json \
+  --bgpls-status build/live/multi-area/bgpls-status.json \
+  --bgpls-raw build/live/multi-area/bgpls-raw.json \
+  --ospf-multi-area-policy build/lab-plan/ospf-multi-area-policy.json
+```
+
+The dashboard checks both collector metadata documents against this policy and
+revalidates the raw BGP-LS descriptors with it. Without the explicit policy,
+multi-area projections are invalid; observation metadata cannot authorize ABR
+identity merging. This setting affects topology interpretation and grants no
+router provisioning access.
+
 The listener binds to loopback by default. To reach it from a workstation, forward
 the port over an existing SSH connection:
 

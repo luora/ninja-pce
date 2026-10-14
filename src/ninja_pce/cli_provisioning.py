@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import json
 import math
 import os
 import re
@@ -18,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
+from .bgpls import parse_ospf_multi_area_policy
 from .cspf import CspfNoPath, CspfSearchLimit, compute_cspf
 from .models import DemandOutput, ManagedDevice, PathConstraints, ServiceDemand
 from .pcep_compute import PcepPathComputer
@@ -73,10 +73,14 @@ class CliProvisioner:
         self.manager: ProvisioningManager = self
         self.handler = connect_handler
         self.authorization = JournalProvisioningAuthorization(self.path, computer.headends)
-        self.policy_digest = digest({"devices": {k: asdict(v) for k, v in devices.items()},
-                                     "destinations": destinations, "max_bandwidth_bps": max_bandwidth_bps,
-                                     "pce_address": pce_address, "max_outstanding": self.max_outstanding,
-                                     "qualified_versions": ["16.09.07", "16.9.7"]})
+        policy = {"devices": {k: asdict(v) for k, v in devices.items()},
+                  "destinations": destinations, "max_bandwidth_bps": max_bandwidth_bps,
+                  "pce_address": pce_address, "max_outstanding": self.max_outstanding,
+                  "qualified_versions": ["16.09.07", "16.9.7"]}
+        identity_policy = getattr(computer, "ospf_multi_area", None)
+        if identity_policy is not None:
+            policy["ospf_multi_area_digest"] = identity_policy.digest
+        self.policy_digest = digest(policy)
         self._lock = asyncio.Lock()
         self._workers: set[asyncio.Task[None]] = set()
         self._plans: dict[str, PushPlan] = {}
@@ -189,6 +193,18 @@ class CliProvisioner:
                     not isinstance(peers, dict) or
                     recovery is not None and (not isinstance(recovery, dict) or recovery.get("pending"))):
                 raise ValueError("PCEP provisioning authorization is unavailable or recovery is pending.")
+            if "managed_failure_recovery" in capture:
+                managed_recovery = capture["managed_failure_recovery"]
+                if (not isinstance(managed_recovery, dict) or managed_recovery.get("pending") or
+                        managed_recovery.get("blocked") or managed_recovery.get("status") == "RECOVERY_REQUIRED"):
+                    raise ValueError("Managed tunnel recovery is pending or requires reconciliation.")
+            identity_policy = getattr(self.computer, "ospf_multi_area", None)
+            expected_policy = (None if identity_policy is None else {
+                "ospf_multi_area": identity_policy.document(), "ospf_multi_area_digest": identity_policy.digest,
+            })
+            if (capture.get("topology_policy") != expected_policy or
+                    expected_policy is None and "topology_policy" in capture):
+                raise ValueError("PCEP listener OSPF area policy differs from provisioning policy.")
             for name in ([headend] if headend is not None else self.headends):
                 peer = peers.get(self.headends.get(name), {})
                 if (not isinstance(peer, dict) or peer.get("state") != "ESTABLISHED" or peer.get("fresh") is not True or
@@ -370,7 +386,7 @@ class CliProvisioner:
         # Require the observed active option, remote peer, and delegation. The
         # generic verifier independently establishes this exact tunnel's RSVP.
         return bool(re.search(r"(?im)^\s*path option 1, \(PCE address " + re.escape(self.pce_address) +
-                              r"\) type dynamic \(Basis for Setup, path weight \d+\)\s*$", text) and
+                              r"\) type dynamic \(Basis for Setup(?:, path weight \d+)?\)\s*$", text) and
                     re.search(r"(?im)^\s*Delegation state:\s*Working:\s*yes\s+Protect:\s*no\s*$", text) and
                     re.search(r"(?im)^\s*Delegation peer:\s*" + re.escape(self.pce_address) + r"\s*$", text) and
                     re.search(r"(?im)^\s*Created via PCUpd message from PCE server:\s*" +
@@ -454,7 +470,44 @@ class CliProvisioner:
             await asyncio.gather(*tuple(self._workers), return_exceptions=True)
 
 
-async def serve(config: dict[str, Any]) -> None:
+def _runtime_computer(config: dict[str, Any], *, config_path: Path | None = None) -> PcepPathComputer:
+    """Load an explicit identity policy without letting runtime outputs replace it."""
+    from .loaders import _load_mapping
+
+    computer_config = dict(config["computer"])
+    allowed = {"raw_path", "status_path", "topology_path", "required_peers", "node_names", "headends",
+               "max_age_seconds", "ospf_multi_area_policy"}
+    if set(computer_config) - allowed:
+        raise ValueError("Unknown provisioning computer fields")
+    for key in ("raw_path", "status_path", "topology_path"):
+        computer_config[key] = Path(computer_config[key])
+    computer_config["required_peers"] = tuple(computer_config["required_peers"])
+    if "ospf_multi_area_policy" in computer_config:
+        value = computer_config.pop("ospf_multi_area_policy")
+        if not isinstance(value, str) or not value or any(ord(char) < 32 or ord(char) == 127 for char in value):
+            raise ValueError("OSPF multi-area policy must be an explicit JSON file path")
+        policy_path = Path(value)
+        if policy_path.suffix.lower() != ".json":
+            raise ValueError("OSPF multi-area policy must be an explicit JSON file")
+        other_paths = [computer_config[key] for key in ("raw_path", "status_path", "topology_path")]
+        other_paths.extend(Path(config[key]) for key in
+                           ("inventory", "known_hosts", "pcep_capture", "socket_path") if key in config)
+        if config_path is not None:
+            other_paths.append(Path(config_path))
+        resolved = policy_path.resolve()
+        for path in other_paths:
+            same_file = resolved == path.resolve()
+            if not same_file and policy_path.exists() and path.exists():
+                same_file = os.path.samefile(policy_path, path)
+            if same_file:
+                raise ValueError("OSPF multi-area policy must be distinct from runtime inputs and outputs")
+        if "state_dir" in config and resolved.is_relative_to(Path(config["state_dir"]).resolve()):
+            raise ValueError("OSPF multi-area policy must be outside the mutable provisioning state directory")
+        computer_config["ospf_multi_area"] = parse_ospf_multi_area_policy(_load_mapping(policy_path))
+    return PcepPathComputer(**computer_config)
+
+
+async def serve(config: dict[str, Any], *, config_path: Path | None = None) -> None:
     """Run only the configured Unix API; the authenticated reverse proxy owns TLS."""
     import signal
 
@@ -463,11 +516,7 @@ async def serve(config: dict[str, Any]) -> None:
     from .loaders import load_inventory
     from .tunnel_api import TunnelAPI
 
-    computer_config = dict(config["computer"])
-    for key in ("raw_path", "status_path", "topology_path"):
-        computer_config[key] = Path(computer_config[key])
-    computer_config["required_peers"] = tuple(computer_config["required_peers"])
-    computer = PcepPathComputer(**computer_config)
+    computer = _runtime_computer(config, config_path=config_path)
     inventory = load_inventory(config["inventory"])
     devices = {name: inventory.device_for_node(name) for name in config["headends"]}
     known_hosts = Path(config["known_hosts"])
@@ -501,8 +550,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, type=Path, help="Private provisioning policy JSON")
     args = parser.parse_args()
-    config = json.loads(args.config.read_text(encoding="utf-8"))
-    asyncio.run(serve(config))
+    from .loaders import _load_mapping
+
+    if args.config.suffix.lower() != ".json":
+        raise ValueError("Provisioning runtime policy must be a JSON file")
+    config = _load_mapping(args.config)
+    asyncio.run(serve(config, config_path=args.config))
 
 
 if __name__ == "__main__":

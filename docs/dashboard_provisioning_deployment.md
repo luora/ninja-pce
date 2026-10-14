@@ -14,6 +14,19 @@ address plan. Change paths, topology mappings and the HTTPS origin locally.
 The headend inventory's SSH host must also identify the authorized PCC loopback
 in `computer.headends`; do not substitute the console-server endpoint.
 
+For an explicitly qualified OSPF multi-area feed, add the JSON path
+`computer.ospf_multi_area_policy` to the private runtime policy. The file must
+contain the same validated ABR identity policy used by the BGP-LS collector and
+the PCEP listener's `--compute-ospf-multi-area-policy` option. It must be distinct
+from runtime inputs and outputs and outside the mutable `state_dir`. The default
+configuration accepts only the original single-area feed.
+
+Provisioning requires the collector, API computation and listener capture to
+agree on the exact policy document and digest. Changing the identity policy
+requires explicit reconciliation of the provisioning journal. This option
+does not qualify writes or expand the configured headends, destinations or
+bandwidth limit; keep `qualified: false` until that exact deployment is tested.
+
 | Example | Controller destination |
 |---|---|
 | [Runtime JSON](../gns3/controller/ubuntu-24.04/provisioning.json.example) | `/etc/ninja-pce/provisioning.json` |
@@ -105,6 +118,49 @@ freshness and synchronization are unavailable. This journal permits initial
 control of the exact owned new tunnel; it does not widen Tunnel100's recovery
 allowlist to all managed IDs. All delivery processes must use the same durable
 reservation ledger directory.
+
+## Recovery of one provisioned tunnel
+
+Managed recovery is an explicit qualification profile for one configuration
+provisioning operation. Enable it only after that operation is `VERIFIED` with
+independent headend RSVP and PCEP control evidence. Append these arguments to
+the complete reviewed PCEP command:
+
+```text
+--provisioning-state /home/ubuntu/ninja-pce/build/state/cli-provisioning.json
+--managed-failover-operation <VERIFIED_OPERATION_ID>
+--managed-failover-state /home/ubuntu/ninja-pce/build/managed-recovery/journal.json
+```
+
+Replace `<VERIFIED_OPERATION_ID>` with the exact 32-character lowercase
+hexadecimal operation ID from the creation journal. Both managed recovery flags
+are required. Its journal must have a separate parent directory from the shared
+provisioning state and remain distinct from live inputs, captures and the legacy
+recovery journal. Retain Tunnel100's existing delegation, `--failover-tunnel`
+and `--failover-state` arguments and its persisted attempt count; the two
+profiles must target different tunnels. Do not add the managed tunnel to the
+blanket `--compute-delegated-tunnel` allowlist.
+
+The listener requires the original operation, unchanged ownership and
+constraints, its exact shared reservation hold, fresh synchronized PCC reports,
+and a matching fresh topology policy. It adopts a healthy delegated path before
+monitoring that path for a stable link failure. Defaults permit at most three
+persisted recovery sends, with a five-second debounce, a thirty-second cooldown
+and a thirty-second acknowledgement timeout. It does not optimize healthy paths
+or switch back automatically when a failed link returns.
+
+Before sending a replacement, the planner adds its edges to the original
+owner's held resources. Old and replacement edges remain held as a union;
+recovery does not refund or release reservations. A pending operation found on
+restart blocks recovery for explicit reconciliation and is never replayed.
+Ownership changes or uncertain results also retain holds and require review;
+do not clear journals or reset attempt counts to retry.
+
+Set `NINJA_PCE_PREVIEW_ONLY=1` in the listener's environment to suppress recovery
+writes. Inspect `managed_failure_recovery` in its capture independently of the
+legacy `failure_recovery` status. Qualify this exact single-tunnel profile with
+recorded forwarding and controlled failure evidence before making a broader
+deployment claim; these arguments alone do not establish live qualification.
 
 ## Authenticated HTTPS proxy
 
