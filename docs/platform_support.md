@@ -13,6 +13,12 @@ One subsequent [configuration-provisioning trial](dashboard_configuration_valida
 created a 1 Mbps PE1-to-PE3 tunnel with initial PCEP control and independently
 observed RSVP reservations. This result applies only to that bounded lab profile.
 
+The separate [OSPF multi-area lab profile](multi_area_lab.md) passed underlay,
+isolated BGP-LS ingestion and local PE1-to-PE4 path computation checks on IOS XE
+16.9.7. It requires the documented GoBGP identity correction and explicit ABR
+bindings. That result does not extend tunnel delivery, signaling or forwarding
+qualification across areas.
+
 | Adapter | Documentation / candidate release scope | Numbered IPv4 strict ERO | Operational evidence dialect |
 |---|---|---|---|
 | `iosxr` | ASR 9000 IOS XR 7.9.x; XRv/XRv9000 requires independent image validation | `index N next-address strict ipv4 unicast REMOTE_INTERFACE_IP` | Version 7.9.x, one tunnel identity/destination, admin/oper up, valid path, connected signaling, bandwidth, current LSP ERO/Tspec and Resv Fspec |

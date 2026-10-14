@@ -11,8 +11,9 @@
 > exact-plan router configuration backend that passed
 > [one private 1 Mbps IOS XE 16.9.7 trial](docs/dashboard_configuration_validation.md).
 > Shipped deployment examples remain disabled by default.
-> The [repeatable multi-area lab profile](docs/multi_area_lab.md) adds two routers
-> and explicit ABR identity handling; its validation scope is recorded separately.
+> The [repeatable multi-area lab profile](docs/multi_area_lab.md) passed underlay,
+> eight-router BGP-LS ingestion and local cross-area path computation checks.
+> Inter-area tunnel signaling and forwarding remain unqualified.
 
 > Reliability remediation: current behavior and migration rules are documented in
 > [input schema](docs/input_schema.md), [reconciliation safety](docs/reconciliation.md),

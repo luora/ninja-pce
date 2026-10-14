@@ -203,3 +203,51 @@ resolve this missing-node evidence.
 This result qualifies the recorded underlay checks only. It does not qualify
 the multi-area TED, inter-area tunnel provisioning, forwarding through an
 inter-area RSVP tunnel, or automatic recovery for that tunnel.
+
+## Recorded topology and computation result — 2026-10-14
+
+The isolated collector now uses the
+[pinned GoBGP node-identity correction](../gns3/controller/gobgp/patches/README.md).
+Its live RIB retained all **ten Node NLRIs and 22 Link NLRIs**. Explicit policy
+projection produced **eight physical routers and 22 directed TE links** across
+areas `0.0.0.0` and `0.0.0.1`. P2 and P4 each retained independently advertised
+identities in both areas; no missing Node NLRI was reconstructed from a link.
+This resolves the stock-collector blocker recorded above.
+
+A fresh raw/status/topology consistency check passed through
+`PcepPathComputer.validated_snapshot()`. Default computation without the
+explicit area policy refused the normalized feed. A read-only CSPF calculation
+for 1 Mbps from PE1 to PE4 returned:
+
+| Observation | Result |
+|---|---|
+| Path | PE1 → P3 → P4 → PE4 |
+| Edge areas | 0 → 0 → 1 |
+| Total TE metric | 30 |
+| Numbered strict ERO | `10.0.13.3`, `10.0.34.4`, `10.0.48.8` |
+| Advertised bottleneck availability at capture | 50 Mbps |
+
+The existing P1 collector and PCEP/dashboard service definitions remained
+unchanged and active. Tunnel100 remained operational with its 50 Mbps RSVP
+reservation on explicit fallback; its configuration was unchanged. PE1 again
+reached PE4's loopback with three replies from three probes. The saved underlay
+survived the intervening lab reboot. P2's separately unsaved exporter was
+restored after that reboot, verified established, and saved after qualification.
+The two isolated collector services were enabled on boot only after fresh
+qualification passed.
+
+The private evidence archive contains the exact raw capture, status, normalized
+graph, explicit policy, node map, report and hash manifest. Its SHA-256 is
+`40f2fca0747ec80edc75feafaa3f8e84bd078ce48c730987404ff88a31c8d984`.
+Captures and binary artifacts remain outside Git. The final daemon binary
+SHA-256 is `3b65786c4927d1fd9c1682a3dba6ec7e6f9faceb29af3bb92c0fd268c4d576ca`;
+its packet/RIB package suites, expected-failing upstream controls, module
+verification and independent byte-identical rebuild passed. The Python suite
+passed **1,391 tests**, with Ruff and mypy checks clean.
+
+This result qualifies live topology ingestion and a local path calculation.
+It did not send a PCEP request or update, create an inter-area tunnel, reserve
+the previewed 1 Mbps, or test forwarding or failure recovery for that tunnel.
+The existing PCEP service and dashboard still consume their original area 0
+inputs. Qualifying one PE1→PE4 tunnel and updating those consumers are separate
+next steps.
