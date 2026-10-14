@@ -289,8 +289,7 @@ class FailureRecoveryPlanner:
             _saved_path(self._data["baseline"], policy)
         pending = self._data.get("pending")
         if pending is not None:
-            if not self._data.get("baseline"):
-                raise ValueError("Pending recovery lacks an adopted baseline")
+            basis = self._pending_basis(pending)
             if (type(pending.get("ack_seen")) is not bool or
                     type(pending.get("srp_id")) is not int or not 0 < pending["srp_id"] < 0xFFFFFFFF or
                     pending.get("peer") != self.peer or not isinstance(pending.get("session_id"), str)):
@@ -302,9 +301,9 @@ class FailureRecoveryPlanner:
             if not 0 < pending["deadline"] - pending["created_at"] <= 300:
                 raise ValueError("Unbounded pending recovery deadline")
             outcome = pending.get("outcome")
-            if not isinstance(outcome, dict) or outcome.get("status") != "FAILURE_PATH":
+            if not isinstance(outcome, dict):
                 raise ValueError("Malformed pending recovery outcome")
-            candidate = {**self._data["baseline"], **pending,
+            candidate = {**basis, **pending,
                          "topology_timestamp": outcome.get("topology_timestamp"),
                          "topology_digest": outcome.get("topology_digest")}
             _saved_path(candidate, policy)
@@ -320,6 +319,15 @@ class FailureRecoveryPlanner:
             self._data.update(baseline=None, failure_since=None, failure_signature=None)
             if not self._data["blocked"]:
                 self._data["status"] = "WAITING_BASELINE"
+
+    def _pending_basis(self, pending: dict[str, Any]) -> dict[str, Any]:
+        baseline = self._data.get("baseline")
+        if not baseline:
+            raise ValueError("Pending recovery lacks an adopted baseline")
+        outcome = pending.get("outcome")
+        if not isinstance(outcome, dict) or outcome.get("status") != "FAILURE_PATH":
+            raise ValueError("Malformed pending recovery outcome")
+        return baseline
 
     def _now(self) -> float:
         result = self.clock()
@@ -544,8 +552,13 @@ class FailureRecoveryPlanner:
                     self._data["attempts"] >= self.max_attempts or
                     self._data["blocked"] or self._data.get("pending")):
                 raise ValueError("Recovery authority changed before persistence")
-            outcome = reply.outcomes[0]
-            self._data["pending"] = {
+            self._persist_intent(peer, report, reply)
+
+    def _persist_intent(self, peer: str, report: dict[str, Any], reply: PathReply, *,
+                        extra: dict[str, Any] | None = None) -> None:
+        """Called under the planner lock after all prewrite checks and holds."""
+        now, outcome = self._now(), reply.outcomes[0]
+        self._data["pending"] = {
                 "created_at": now, "deadline": now + self.ack_timeout, "peer": peer,
                 "session_id": report["session_id"], "plsp_id": report["plsp_id"],
                 "ownership_key": list(ownership_key(report)), "srp_id": outcome["srp_id"],
@@ -553,15 +566,16 @@ class FailureRecoveryPlanner:
                 "ero": outcome["ero"], "edges": outcome["path_link_ids"],
                 "bandwidth_bps": outcome["bandwidth_bps"], "reply_hash": _reply_hash(reply),
                 "outcome": copy.deepcopy(outcome), "message_hex": reply.messages[0].hex(),
-            }
-            self._data.update(attempts=self._data["attempts"] + 1, last_attempt_at=now,
+                **(extra or {}),
+        }
+        self._data.update(attempts=self._data["attempts"] + 1, last_attempt_at=now,
                               status="AWAITING_REPORT", reason="durable_intent_before_network_write")
-            self._proposal = None
-            try:
-                self._save()
-            except (ValueError, OSError):
-                self._data.update(blocked=True, status="RECOVERY_REQUIRED", reason="pending_persistence_failed")
-                raise
+        self._proposal = None
+        try:
+            self._save()
+        except (ValueError, OSError):
+            self._data.update(blocked=True, status="RECOVERY_REQUIRED", reason="pending_persistence_failed")
+            raise
 
     def failed(self, reason: str) -> None:
         with self._lock:

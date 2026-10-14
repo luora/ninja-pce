@@ -59,6 +59,7 @@ def add_live_commands(subparsers: Any) -> None:
     pcep.add_argument("--failover-state", help="Persistent failure-recovery journal; required with --failover-tunnel")
     pcep.add_argument("--managed-failover-operation", help="Exact VERIFIED provisioning operation UUID for recovery")
     pcep.add_argument("--managed-failover-state", help="Separate persistent managed-recovery journal")
+    pcep.add_argument("--managed-reinstate-request", help="Private one-use request for explicit managed reinstatement")
     pcep.add_argument("--provisioning-state", help="Exact owned CLI-provisioning journal for initial delegation")
     pcep.add_argument("--creation-state", help="Opt in to private lab creation with a durable state directory")
     pcep.add_argument("--creation-socket", help="Owner-only Unix console socket; required for lab creation")
@@ -271,6 +272,8 @@ async def _serve_pcep(args: argparse.Namespace) -> int:
         )
     if bool(args.managed_failover_operation) != bool(args.managed_failover_state):
         raise ValueError("Managed recovery requires --managed-failover-operation and --managed-failover-state")
+    if args.managed_reinstate_request and not args.managed_failover_operation:
+        raise ValueError("Managed reinstatement requires an existing managed recovery profile")
     if args.managed_failover_operation:
         if computer is None or not args.provisioning_state:
             raise ValueError("Managed recovery requires computation and --provisioning-state")
@@ -280,11 +283,14 @@ async def _serve_pcep(args: argparse.Namespace) -> int:
             protected.add(Path(args.failover_state).resolve())
         if journal in protected:
             raise ValueError("Managed recovery journal must be distinct from live inputs and other journals")
+        if args.managed_reinstate_request and Path(args.managed_reinstate_request).resolve() in protected | {journal}:
+            raise ValueError("Managed reinstatement request must be separate from live inputs and journals")
         from .pcep_managed_failover import ManagedFailureRecoveryPlanner
 
         managed = ManagedFailureRecoveryPlanner(
             computer, operation_journal=Path(args.provisioning_state),
             operation_id=args.managed_failover_operation, journal_path=Path(args.managed_failover_state),
+            reinstatement_path=Path(args.managed_reinstate_request) if args.managed_reinstate_request else None,
         )
         legacy = server_options.get("failover")
         if legacy is not None and (legacy.peer, legacy.tunnel_id) == (managed.peer, managed.tunnel_id):

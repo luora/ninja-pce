@@ -6,9 +6,12 @@ constraints. Recovery retains old and new local holds; it never refunds them.
 from __future__ import annotations
 
 import copy
+import math
+import os
 import re
 import struct
 import time
+import uuid
 from dataclasses import replace
 from datetime import datetime
 from ipaddress import IPv4Address
@@ -16,7 +19,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .pcep_compute import PathReply, PcepPathComputer
-from .pcep_failover import FailureRecoveryPlanner, _mapped_edges, _report
+from .pcep_failover import FailureRecoveryPlanner, _mapped_edges, _reply_hash, _report
 from .pcep_provisioning import _FIELDS
 from .reservations import ReservationLedger, resource_lock
 from .state import digest, load_state
@@ -38,7 +41,8 @@ class ManagedFailureRecoveryPlanner(FailureRecoveryPlanner):
     def __init__(self, computer: PcepPathComputer, *, operation_journal: Path,
                  operation_id: str, journal_path: Path, debounce_seconds: float = 5,
                  cooldown_seconds: float = 30, max_attempts: int = 3,
-                 ack_timeout_seconds: float = 30, clock: Callable[[], float] = time.time):
+                 ack_timeout_seconds: float = 30, clock: Callable[[], float] = time.time,
+                 reinstatement_path: Path | None = None):
         self.operation_journal = Path(operation_journal).resolve()
         self.operation_id = operation_id
         if not isinstance(operation_id, str) or not re.fullmatch(r"[0-9a-f]{32}", operation_id):
@@ -65,6 +69,12 @@ class ManagedFailureRecoveryPlanner(FailureRecoveryPlanner):
             "topology_policy": self._topology_policy,
         }
         self._expected_resources = copy.deepcopy(hold["resources"])
+        self.reinstatement_path = Path(reinstatement_path) if reinstatement_path is not None else None
+        if self.reinstatement_path is not None and self.reinstatement_path.resolve() in {
+                self.operation_journal, recovery_path, computer.raw_path.resolve(),
+                computer.status_path.resolve(), computer.topology_path.resolve(),
+                self.operation_journal.parent / ".ninja-pce-reservations.json"}:
+            raise ValueError("Reinstatement request must be separate from controller inputs and state")
         super().__init__(computer, peer=authorization["peer"], tunnel_id=authorization["tunnel_id"],
                          journal_path=recovery_path, debounce_seconds=debounce_seconds,
                          cooldown_seconds=cooldown_seconds, max_attempts=max_attempts,
@@ -81,6 +91,142 @@ class ManagedFailureRecoveryPlanner(FailureRecoveryPlanner):
             raise ValueError("Managed recovery operation or held resources changed; reconcile explicitly")
         if not self.validate_authority():
             raise ValueError("Managed recovery authority changed during initialization")
+
+    def _pending_basis(self, pending: dict[str, Any]) -> dict[str, Any]:
+        if pending.get("intent_mode") != "reinstatement":
+            return super()._pending_basis(pending)
+        records = self._data.get("reinstatements", [])
+        auth = self._authorization
+        if (self._data.get("baseline") is not None or not isinstance(records, list) or len(records) > 3 or
+                not any(isinstance(item, dict) and item.get("request_id") == pending.get("reinstatement_id") and
+                        item.get("attempt") == self._data["attempts"] for item in records) or
+                (pending.get("outcome") or {}).get("status") != "REINSTATEMENT_PATH" or
+                pending.get("ownership_key") != [18, auth["source_ip"], auth["destination_ip"],
+                                                 auth["tunnel_id"], IPv4Address(auth["source_ip"]).packed.hex()] or
+                pending.get("bandwidth_wire") != struct.pack("!f", auth["bandwidth_bps"] / 8).hex() or
+                pending.get("lspa_wire") != (bytes(12) + bytes((7, 7, 0, 0))).hex() or
+                pending.get("symbolic_name_hex") != auth["symbolic_name"].encode().hex()):
+            raise ValueError("Malformed pending managed reinstatement authority")
+        return pending
+
+    def _reinstatement_candidate(self, peer: str, report: dict[str, Any], srp_id: int) -> PathReply:
+        if (type(srp_id) is not int or not 0 < srp_id < 0xFFFFFFFF or
+                not self._report_authorized(peer, report) or report.get("sync") is not False or
+                report.get("operational_code") != 0 or report.get("ero") != [] or report.get("srp_id") != 0):
+            raise ValueError("Reinstatement requires an exact live DOWN empty-ERO delegation")
+        validated = _report(report, self._now())
+        reply = self.delegated(peer, [validated["report"]], (srp_id,))
+        if (len(reply.messages) != 1 or len(reply.outcomes) != 1 or
+                reply.outcomes[0].get("status") != "INITIAL_PATH" or not self.computer.validate_reply(reply)):
+            raise ValueError("No fresh admissible reinstatement path")
+        outcome = {**reply.outcomes[0], "status": "REINSTATEMENT_PATH",
+                   "reason": "Explicit one-use managed tunnel reinstatement",
+                   "topology_digest": reply.topology_digest}
+        result = PathReply(reply.messages, (outcome,), reply.topology_digest)
+        with resource_lock(self.operation_journal.parent):
+            journal, ledger, operation, hold = self._owned_state()
+            self._check_binding(journal, operation, hold)
+            self._candidate(result, ledger)
+        return result
+
+    def reinstatement_plan(self, peer: str, report: dict[str, Any], *, ttl_seconds: float = 60,
+                           request_id: str | None = None, created_at: float | None = None,
+                           _reply: PathReply | None = None) -> dict[str, Any]:
+        """Reviewable local authority; does not change state or send a message."""
+        with self._lock:
+            now = self._now()
+            created = now if created_at is None else created_at
+            identifier = uuid.uuid4().hex if request_id is None else request_id
+            if (isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, (int, float)) or
+                    not math.isfinite(ttl_seconds) or not 0 < ttl_seconds <= 120 or
+                    isinstance(created, bool) or not isinstance(created, (int, float)) or
+                    not math.isfinite(created) or not created <= now < created + ttl_seconds or
+                    not isinstance(identifier, str) or not re.fullmatch(r"[0-9a-f]{32}", identifier)):
+                raise ValueError("Reinstatement needs a fresh bounded request identity and expiry")
+            saved = load_state(self.path)
+            if digest(saved) != self._disk_revision:
+                raise ValueError("Reinstatement recovery journal changed")
+            if (self._data.get("pending") or self._data.get("baseline") or
+                    self._data["attempts"] >= self.max_attempts or
+                    self._data["blocked"] and saved.get("reason") not in {
+                        "managed_operation_or_report_authority_changed", "tunnel_identity_or_constraints_changed"}):
+                raise ValueError("Unresolved intent, active baseline or recovery policy prevents reinstatement")
+            last = self._data.get("last_attempt_at")
+            if last is not None and now - last < self.cooldown:
+                raise ValueError("Reinstatement recovery cooldown has not elapsed")
+            if any(item.get("request_id") == identifier for item in self._data.get("reinstatements", [])):
+                raise ValueError("Reinstatement request was already consumed")
+            received = report.get("received_at")
+            if (isinstance(received, bool) or not isinstance(received, (int, float)) or
+                    not math.isfinite(received) or not 0 <= now - received <= self.computer.max_age_seconds):
+                raise ValueError("Reinstatement requires a newly received report")
+            revision, epoch = self._disk_revision, self._epoch
+            attempts, resources = self._data["attempts"], digest(self._expected_resources)
+        # Graph search runs outside the planner lock, so the session reader can
+        # observe revocation while the bounded computation is in progress.
+        reply = _reply if _reply is not None else self._reinstatement_candidate(peer, report, 1)
+        if _reply is not None and not self._report_authorized(peer, report):
+            raise ValueError("Reinstatement report authority changed")
+        with self._lock:
+            if (self._disk_revision != revision or self._epoch != epoch or self._data.get("pending") or
+                    self._data.get("baseline") or self._data["attempts"] != attempts or
+                    digest(self._expected_resources) != resources):
+                raise ValueError("Reinstatement authority changed during computation")
+            if not created <= self._now() < created + ttl_seconds:
+                raise ValueError("Reinstatement review interval expired during computation")
+            return {"version": 2, "kind": "managed_pcep_reinstatement", "request_id": identifier,
+                    "created_at": created, "expires_at": created + ttl_seconds,
+                    "binding": copy.deepcopy(self._binding), "recovery_revision": self._disk_revision,
+                    "resources_digest": digest(self._expected_resources), "attempts": self._data["attempts"],
+                    "report_token": self._token(report), "session_id": report["session_id"],
+                    "plsp_id": report["plsp_id"], "ero": reply.outcomes[0]["ero"],
+                    "edges": reply.outcomes[0]["path_link_ids"],
+                    "prior_status": saved["status"], "prior_reason": saved.get("reason")}
+
+    def _checked_reinstatement(self, peer: str, report: dict[str, Any], *,
+                               reply: PathReply | None = None) -> dict[str, Any]:
+        path = self.reinstatement_path
+        if path is None:
+            raise ValueError("No explicit reinstatement request configured")
+        _regular(path, 65536)
+        stat = path.stat()
+        if stat.st_uid != os.geteuid() or stat.st_mode & 0o077:
+            raise ValueError("Reinstatement request must be owned privately by the listener user")
+        request = load_state(path)
+        expected = self.reinstatement_plan(peer, report, request_id=request.get("request_id"),
+                                           created_at=request.get("created_at"),
+                                           ttl_seconds=request["expires_at"] - request["created_at"], _reply=reply)
+        if request != expected:
+            raise ValueError("Reinstatement request differs from current reviewed authority")
+        return request
+
+    def _compute_reinstatement(self, peer: str, report: dict[str, Any], srp_id: int) -> PathReply | None:
+        with self._lock:
+            if (not self._live or self._computing or self._data.get("pending") or self._data.get("baseline") or
+                    self._token(report) != self._token(self._live["raw"])):
+                return None
+            self._computing = True
+            epoch = self._epoch
+        try:
+            reply = self._reinstatement_candidate(peer, report, srp_id)
+            request = self._checked_reinstatement(peer, report, reply=reply)
+            with self._lock:
+                if (self._epoch != epoch or not self._live or self._data.get("pending") or
+                        self._data.get("baseline") or self._token(report) != self._token(self._live["raw"])):
+                    return None
+                if reply.outcomes[0]["ero"] != request["ero"] or reply.outcomes[0]["path_link_ids"] != request["edges"]:
+                    return None
+                self._proposal = {"hash": _reply_hash(reply), "token": self._token(report),
+                                  "epoch": self._epoch, "reply": reply, "reinstatement": request}
+                # READY is observational only; the request remains bound to the
+                # durable journal revision and its prior status/reason.
+                self._data["status"] = "READY"
+                return reply
+        except (ValueError, OSError, KeyError, TypeError, OverflowError):
+            return None
+        finally:
+            with self._lock:
+                self._computing = False
 
     def _computer_policy(self) -> dict[str, Any]:
         computer = self._configured_computer
@@ -229,7 +375,8 @@ class ManagedFailureRecoveryPlanner(FailureRecoveryPlanner):
         if reply.topology_digest != revision or len(reply.outcomes) != 1:
             raise ValueError("Managed recovery candidate requires the exact fresh topology")
         outcome, auth = reply.outcomes[0], self._authorization
-        if (outcome.get("status") != "FAILURE_PATH" or outcome.get("sender") != auth["source_ip"] or
+        if (outcome.get("status") not in {"FAILURE_PATH", "REINSTATEMENT_PATH"} or
+                outcome.get("sender") != auth["source_ip"] or
                 outcome.get("endpoint") != auth["destination_ip"] or outcome.get("tunnel_id") != self.tunnel_id or
                 outcome.get("bandwidth_bps") != auth["bandwidth_bps"] or
                 outcome.get("setup_priority") != 7 or outcome.get("hold_priority") != 7):
@@ -254,6 +401,10 @@ class ManagedFailureRecoveryPlanner(FailureRecoveryPlanner):
         if not self._report_authorized(peer, report):
             self._deny("managed_operation_or_report_authority_changed")
             return None
+        if self.reinstatement_path is not None and self.reinstatement_path.exists():
+            reinstated = self._compute_reinstatement(peer, report, srp_id)
+            if reinstated is not None:
+                return reinstated
         reply = super().compute(peer, report, srp_id)
         if reply is not None:
             try:
@@ -272,6 +423,9 @@ class ManagedFailureRecoveryPlanner(FailureRecoveryPlanner):
         if not self._report_authorized(peer, report):
             self._deny("managed_operation_or_report_authority_changed")
             raise ValueError("Managed recovery authority is no longer current")
+        if reply.outcomes and reply.outcomes[0].get("status") == "REINSTATEMENT_PATH":
+            self._prepare_reinstatement(peer, report, reply)
+            return
         try:
             with resource_lock(self.operation_journal.parent):
                 journal, ledger, operation, hold = self._owned_state()
@@ -292,4 +446,48 @@ class ManagedFailureRecoveryPlanner(FailureRecoveryPlanner):
                 raise ValueError("Managed recovery authority changed during intent persistence")
         except (ValueError, OSError, KeyError, TypeError, OverflowError):
             self._deny("managed_recovery_prewrite_failed_holds_retained")
+            raise
+
+    def _prepare_reinstatement(self, peer: str, report: dict[str, Any], reply: PathReply) -> None:
+        try:
+            with self._lock:
+                request = self._checked_reinstatement(peer, report, reply=reply)
+                if (not self._live or not self._proposal or self._proposal.get("reinstatement") != request or
+                        self._proposal["hash"] != _reply_hash(reply) or self._proposal["epoch"] != self._epoch or
+                        self._proposal["token"] != self._token(report) or
+                        self._token(self._live["raw"]) != self._token(report) or
+                        not 0 <= self._now() - self._observed_at <= self.computer.max_age_seconds or
+                        not self.computer.validate_reply(reply)):
+                    raise ValueError("Reinstatement proposal no longer matches live authority")
+                with resource_lock(self.operation_journal.parent):
+                    journal, ledger, operation, hold = self._owned_state()
+                    self._check_binding(journal, operation, hold)
+                    selected = self._candidate(reply, ledger)
+                    if not request["created_at"] <= self._now() < request["expires_at"]:
+                        raise ValueError("Reinstatement expired before resource preparation")
+                    resources = dict(hold["resources"])
+                    for edge in selected:
+                        resources[edge] = max(resources.get(edge, 0), self._authorization["bandwidth_bps"])
+                    ledger.data["entries"][operation["reservation_id"]]["resources"] = resources
+                    ledger.save()
+                    self._expected_resources = resources
+                self._data["managed_authority"]["resources"] = copy.deepcopy(resources)
+                self._data.setdefault("reinstatements", []).append({
+                    "request_id": request["request_id"], "request_digest": digest(request),
+                    "consumed_at": self._now(), "attempt": self._data["attempts"] + 1,
+                    "prior_status": request["prior_status"], "prior_reason": request["prior_reason"],
+                    "recovery_revision": request["recovery_revision"],
+                })
+                validated = _report(report, self._now())
+                if not request["created_at"] <= self._now() < request["expires_at"]:
+                    raise ValueError("Reinstatement expired before intent persistence")
+                self._data["blocked"] = False
+                self._persist_intent(peer, report, reply, extra={
+                    "intent_mode": "reinstatement", "reinstatement_id": request["request_id"],
+                    **{key: validated[key] for key in ("bandwidth_wire", "lspa_wire", "symbolic_name_hex")},
+                })
+                if not self.validate_authority():
+                    raise ValueError("Reinstatement authority changed during intent persistence")
+        except (ValueError, OSError, KeyError, TypeError, OverflowError):
+            self._deny("managed_reinstatement_prewrite_failed_holds_retained")
             raise

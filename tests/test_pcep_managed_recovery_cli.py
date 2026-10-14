@@ -145,3 +145,17 @@ def test_cli_refuses_two_recovery_profiles_for_same_tunnel(tmp_path, monkeypatch
                  "--failover-tunnel", f"{PEER}={planner.tunnel_id}",
                  "--failover-state", str(tmp_path / "legacy" / "state.json")]) == 1
     assert not offline_server
+
+
+def test_reinstatement_flag_requires_managed_profile(tmp_path, offline_server):
+    assert main([*base_args(tmp_path), "--managed-reinstate-request", str(tmp_path / "request.json")]) == 1
+    assert not offline_server
+
+
+@pytest.mark.parametrize("target", ["pcep.json", "raw.json", "journal"])
+def test_reinstatement_request_cannot_alias_controller_inputs(tmp_path, monkeypatch, offline_server, target):
+    planner, _, _, _ = managed_lab(tmp_path, monkeypatch)
+    request = planner.path if target == "journal" else tmp_path / target
+    assert main([*base_args(tmp_path), *qualified_options(tmp_path, planner), *managed_args(planner),
+                 "--managed-reinstate-request", str(request)]) == 1
+    assert not offline_server

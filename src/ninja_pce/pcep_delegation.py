@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from .pcep import PCREP, encode_message, encode_object, parse_objects
 from .pcep_compute import PathReply, PcepPathComputer
+from .state import digest
 
 if TYPE_CHECKING:
     from .pcep_provisioning import JournalProvisioningAuthorization
@@ -32,11 +33,11 @@ def ownership_key(report: dict[str, Any]) -> tuple[Any, ...]:
 
 
 def report_fingerprint(report: dict[str, Any]) -> tuple[Any, ...]:
-    """Fields that must remain unchanged while an initial path is computed."""
+    """Stable across capture JSON; changes to ordered wire values still revoke."""
     return (report_key(report), report["delegate"], report["administrative_up"],
-            report["removed"], report["operational_code"], repr(report["ero"]),
-            repr(report["attributes"]), report.get("symbolic_name_hex"),
-            report["srp_id"], repr(report.get("srp_tlvs", [])), repr(report["tlvs"]))
+            report["removed"], report["operational_code"], digest(report["ero"]),
+            digest(report["attributes"]), report.get("symbolic_name_hex"),
+            report["srp_id"], digest(report.get("srp_tlvs", [])), digest(report["tlvs"]))
 
 
 def _lsp(report: dict[str, Any], delegate: bool) -> bytes:

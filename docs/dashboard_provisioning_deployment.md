@@ -162,6 +162,76 @@ legacy `failure_recovery` status. Qualify this exact single-tunnel profile with
 recorded forwarding and controlled failure evidence before making a broader
 deployment claim; these arguments alone do not establish live qualification.
 
+### Explicit reinstatement after the active path is lost
+
+A managed tunnel can remain DOWN with an empty ERO after a controller restart
+or an externally changed configuration. A previously verified creation record
+does not authorize replaying the original delivery. First restore the tunnel's
+exact authorized destination, bandwidth and priorities, then inspect the
+managed recovery journal. Resolve any pending or uncertain write separately;
+the reinstatement command refuses a pending operation.
+
+Configure one private reinstatement request path in the complete reviewed PCEP
+listener command, alongside its existing managed recovery arguments:
+
+```text
+--managed-reinstate-request /home/ubuntu/ninja-pce/build/managed-recovery/reinstate-request.json
+```
+
+The local two-phase command uses the same private provisioning runtime policy
+as the dashboard backend. Create a short-lived plan while the listener and PCC
+are fresh and synchronized:
+
+```bash
+python -m ninja_pce.pcep_reinstate plan \
+  --config /etc/ninja-pce/provisioning.json \
+  --operation <VERIFIED_OPERATION_ID> \
+  --recovery-state /home/ubuntu/ninja-pce/build/managed-recovery/journal.json \
+  --capture /home/ubuntu/ninja-pce/build/live/pcep.json \
+  --request /home/ubuntu/ninja-pce/build/managed-recovery/reinstate-request.json \
+  --plan /home/ubuntu/ninja-pce/build/managed-recovery/reinstate-plan.json
+```
+
+Inspect the mode0600 plan locally. It binds the original operation and retained
+resources, recovery journal revision and attempt count, the current PCC session
+and tunnel report, and the computed strict path. Planning writes only the review
+artifact. The default review interval is sixty seconds; if it expires, create a
+new plan with a new artifact name and review the fresh evidence.
+The tunnel report must also remain within the computation profile's report-age
+limit (thirty seconds by default). An older report is refused even when the
+review artifact has not expired. No request is published by a refused check.
+
+Authorize the reviewed plan with the same arguments:
+
+```bash
+python -m ninja_pce.pcep_reinstate authorize \
+  --config /etc/ninja-pce/provisioning.json \
+  --operation <VERIFIED_OPERATION_ID> \
+  --recovery-state /home/ubuntu/ninja-pce/build/managed-recovery/journal.json \
+  --capture /home/ubuntu/ninja-pce/build/live/pcep.json \
+  --request /home/ubuntu/ninja-pce/build/managed-recovery/reinstate-request.json \
+  --plan /home/ubuntu/ninja-pce/build/managed-recovery/reinstate-plan.json
+```
+
+Authorization rereads the live capture, immutable ownership, held resources,
+recovery journal and candidate path before atomically publishing the private
+request. Existing plan and request files are never overwritten. The listener
+checks the request again against its live session and fresh TED immediately
+before sending. A changed report, expired plan, changed authority, exhausted
+attempt budget or competing capacity hold prevents delivery.
+
+Reinstatement consumes one attempt from the existing recovery budget and
+preserves all prior reservation holds and the immutable creation operation.
+The request is one-shot; an unresolved pending intent on restart remains blocked
+and is never replayed. A matching correlated UP or ACTIVE report establishes the
+new monitored baseline. Inspect the recovery journal's consumed-request record
+before archiving any artifact or attempting another explicit review. Do not
+delete recovery history or reset the attempt count to retry.
+
+`NINJA_PCE_PREVIEW_ONLY=1` prevents authorization and listener writes. This
+workflow changes neither authentication nor firewall policy and adds no public
+API route. Keep request and review artifacts private and out of Git.
+
 ## Authenticated HTTPS proxy
 
 Keep the existing TLS certificate, HTTPS Basic authentication, static dashboard

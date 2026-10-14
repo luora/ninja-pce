@@ -136,3 +136,7 @@ simultaneous managed tunnels, repeated/concurrent failures, reboot recovery
 after this final deployment, healthy-path optimization, other vendors,
 NETCONF provisioning or inter-AS operation. Autoroute stayed disabled; MPLS
 OAM verified the selected LSP rather than customer traffic placement.
+
+The subsequent [explicit reinstatement trial](managed_tunnel_reinstatement_validation.md)
+records restoration of this managed tunnel from DOWN/empty-ERO state through a
+reviewed one-use PCEP update, with unchanged original ownership and holds.
