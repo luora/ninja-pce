@@ -116,8 +116,12 @@ lab network, or the authenticated HTTPS proxy below for public access.
   right, or top to bottom for vertical links; the second is the reverse. Hover
   for named directions and interface addresses. Parallel circuits keep separate
   labels, and a missing or withdrawn direction shows `Unknown`. Labels sit near
-  the midpoint and move aside when a node would obscure them; node coordinates
-  and link paths stay fixed.
+  the routed midpoint and move aside when a node would obscure them.
+- Link curves bend around unrelated router icons, names and addresses while
+  router coordinates stay fixed. The selected ERO follows those exact curves.
+  Drawing geometry is independent of tunnel selection, reservation changes and
+  fresh/retained observation state; only topology identities or positions can
+  change it.
 - Events and computations show up to 80 retained records. The API limits input
   files to 8 MiB, peers to 64, LSPs to 512, topology nodes to 256 and directed links
   to 2,048. Oversized or malformed inputs show an invalid source state.

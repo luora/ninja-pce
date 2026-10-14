@@ -502,7 +502,7 @@
   const reservationClass = (percent) => percent === null ? "unknown" : percent < 50 ? "green" : percent <= 80 ? "amber" : "red";
   const reservationText = (percent) => percent === null ? "Unknown" : `${percent.toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
 
-  function topologyLinkLabels(links, points) {
+  function topologyCircuits(links, points) {
     const circuits = new Map(), pairs = new Map();
     for (const link of links) {
       if (!points.has(link.source) || !points.has(link.target)) continue;
@@ -532,10 +532,122 @@
       pair.forEach((entry, index) => {
         const a = points.get(entry.source), b = points.get(entry.target), dx = b.x - a.x, dy = b.y - a.y;
         const distance = Math.hypot(dx, dy) || 1, offset = (index - (pair.length - 1) / 2) * 18;
-        labels.push({ ...entry, x: (a.x + b.x) / 2 - dy / distance * offset, y: (a.y + b.y) / 2 + dx / distance * offset });
+        labels.push({ ...entry, laneOffset: offset, x: (a.x + b.x) / 2 - dy / distance * offset, y: (a.y + b.y) / 2 + dx / distance * offset });
       });
     }
     return labels.sort((a, b) => a.key.localeCompare(b.key));
+  }
+
+  const topologyBounds = (x, y, width, height) => ({ left: x - width / 2, right: x + width / 2, top: y - height / 2, bottom: y + height / 2 });
+  let topologyGeometryCache = null;
+  function topologyGeometry(nodes, links, points) {
+    const circuits = topologyCircuits(links, points);
+    const currentCircuits = new Map(circuits.map((entry) => [entry.key, entry]));
+    const currentLabels = (geometry) => ({ ...geometry, labels: geometry.labels.map((label) => ({ ...currentCircuits.get(label.key), ...label })) });
+    const orderedNodes = [...nodes].sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    // Bandwidth, observation state and selected LSP never change the drawing.
+    const key = JSON.stringify([orderedNodes.map((node) => [node.id, node.loopback, points.get(node.id)]),
+      circuits.map((entry) => [entry.key, entry.source, entry.target, entry.forward?.id, entry.reverse?.id])]);
+    if (topologyGeometryCache?.key === key) return currentLabels(topologyGeometryCache);
+    const obstacles = orderedNodes.flatMap((node) => {
+      const point = points.get(node.id), edge = /^PE/i.test(node.id), radius = edge ? 20 : 15;
+      // Reserve the status line even while fresh, so observation changes do
+      // not bend links differently or put a retained router's text over them.
+      return [
+        { node: node.id, icon: true, ...topologyBounds(point.x, point.y, radius * 2 + 8, radius * 2 + 8) },
+        { node: node.id, ...topologyBounds(point.x, point.y + (edge ? 32 : 26), String(node.id).length * 6.5 + 8, 18) },
+        { node: node.id, ...topologyBounds(point.x, point.y + (edge ? 47 : 41), string(node.loopback).length * 5.5 + 8, 16) },
+        { node: node.id, ...topologyBounds(point.x, point.y + (edge ? 61 : 55), 134, 16) },
+      ];
+    });
+    const paths = new Map(), labels = [], pairs = new Map();
+    for (const entry of circuits) {
+      const pairKey = JSON.stringify([entry.source, entry.target]);
+      if (!pairs.has(pairKey)) pairs.set(pairKey, []);
+      pairs.get(pairKey).push(entry);
+    }
+    const curvePoint = (path, t) => {
+      const s = 1 - t, { start, end, control, second } = path;
+      return second ? { x: s ** 3 * start.x + 3 * s * s * t * control.x + 3 * s * t * t * second.x + t ** 3 * end.x,
+        y: s ** 3 * start.y + 3 * s * s * t * control.y + 3 * s * t * t * second.y + t ** 3 * end.y } :
+        { x: s * s * start.x + 2 * s * t * control.x + t * t * end.x, y: s * s * start.y + 2 * s * t * control.y + t * t * end.y };
+    };
+    const curve = (link, control, second = null) => {
+      const a = points.get(link.source), b = points.get(link.target);
+      const toward = (point, gap) => {
+        const dx = control.x - point.x, dy = control.y - point.y, distance = Math.hypot(dx, dy) || 1;
+        return { x: point.x + dx / distance * gap, y: point.y + dy / distance * gap };
+      };
+      const start = toward(a, (/^PE/i.test(link.source) ? 20 : 15) + 4);
+      const endControl = second || control, endDistance = Math.hypot(endControl.x - b.x, endControl.y - b.y) || 1;
+      const gap = (/^PE/i.test(link.target) ? 20 : 15) + 7;
+      const end = { x: b.x + (endControl.x - b.x) / endDistance * gap, y: b.y + (endControl.y - b.y) / endDistance * gap };
+      const path = { link, start, end, control, second,
+        d: `M${start.x},${start.y} ${second ? `C${control.x},${control.y} ${second.x},${second.y}` : `Q${control.x},${control.y}`} ${end.x},${end.y}` };
+      const controls = [start, control, second || control, end];
+      const length = controls.slice(1).reduce((sum, point, index) => sum + Math.hypot(point.x - controls[index].x, point.y - controls[index].y), 0);
+      return { ...path, length, midpoint: curvePoint(path, .5) };
+    };
+    const collisions = (path) => {
+      const { start, end, control, second, link } = path, margin = 6, controls = [start, control, second || control, end];
+      const nearby = obstacles.filter((box) => !(box.icon && [link.source, link.target].includes(box.node)) &&
+        box.right + margin >= Math.min(...controls.map((point) => point.x)) && box.left - margin <= Math.max(...controls.map((point) => point.x)) &&
+        box.bottom + margin >= Math.min(...controls.map((point) => point.y)) && box.top - margin <= Math.max(...controls.map((point) => point.y)));
+      const steps = Math.max(24, Math.min(120, Math.ceil(path.length / 4)));
+      let hits = 0;
+      for (let i = 0; i <= steps; i++) {
+        const { x, y } = curvePoint(path, i / steps);
+        if (x < 6 || x > 644 || y < 6 || y > 294) hits += 1;
+        for (const box of nearby) if (x >= box.left - margin && x <= box.right + margin && y >= box.top - margin && y <= box.bottom + margin) hits += 1;
+      }
+      return hits;
+    };
+    for (const pair of pairs.values()) {
+      const a = points.get(pair[0].source), b = points.get(pair[0].target), dx = b.x - a.x, dy = b.y - a.y;
+      const distance = Math.hypot(dx, dy) || 1, normal = { x: -dy / distance, y: dx / distance };
+      let chosen = null;
+      const bends = [0, ...Array.from({ length: 10 }, (_, i) => [(i + 1) * 24, -(i + 1) * 24]).flat()];
+      // Both directions and parallel circuits share one obstacle-free corridor.
+      // A bounded least-obstructed fallback keeps unusually dense maps visible.
+      for (const bend of bends) {
+        const routes = pair.map((entry) => ({ entry, curves: [entry.forward, entry.reverse].filter(Boolean).map((link) => {
+          const lane = entry.forward && entry.reverse ? link === entry.forward ? -9.5 : 9.5 : 0;
+          const offset = bend + entry.laneOffset * 2 + lane;
+          return curve(link, { x: (a.x + b.x) / 2 + normal.x * offset, y: (a.y + b.y) / 2 + normal.y * offset });
+        }) }));
+        const score = routes.reduce((sum, route) => sum + route.curves.reduce((value, path) => value + collisions(path), 0), 0);
+        const cost = routes.reduce((sum, route) => sum + route.curves.reduce((value, path) => value + path.length, 0), 0);
+        if (!chosen || score < chosen.score) chosen = { routes, score, cost };
+        if (!score) break;
+      }
+      // Independent endpoint tangents can clear tightly stacked status text
+      // when a single quadratic bend cannot approach a router safely.
+      if (chosen.score) for (const bend of bends) {
+        for (const [from, to, firstSide, secondSide] of [[-.15, 1.15, 1, 1], [0, 1, 1, 1], [1 / 3, 2 / 3, -1, 1], [1 / 3, 2 / 3, 1, -1]]) {
+          const routes = pair.map((entry) => ({ entry, curves: [entry.forward, entry.reverse].filter(Boolean).map((link) => {
+            const lane = entry.forward && entry.reverse ? link === entry.forward ? -9.5 : 9.5 : 0;
+            const offset = entry.laneOffset * 2 + lane;
+            const first = { x: a.x + dx * from + normal.x * (bend * firstSide + offset), y: a.y + dy * from + normal.y * (bend * firstSide + offset) };
+            const second = { x: a.x + dx * to + normal.x * (bend * secondSide + offset), y: a.y + dy * to + normal.y * (bend * secondSide + offset) };
+            return link.source === entry.source ? curve(link, first, second) : curve(link, second, first);
+          }) }));
+          const cost = routes.reduce((sum, route) => sum + route.curves.reduce((value, path) => value + path.length, 0), 0);
+          if (!chosen.score && cost >= chosen.cost) continue;
+          const score = routes.reduce((sum, route) => sum + route.curves.reduce((value, path) => value + collisions(path), 0), 0);
+          if (score < chosen.score || score === chosen.score && cost < chosen.cost) chosen = { routes, score, cost };
+        }
+      }
+      for (const { entry, curves } of chosen.routes) {
+        for (const path of curves) paths.set(path.link.id, path.d);
+        const reference = curves[0], before = curvePoint(reference, .49), after = curvePoint(reference, .51);
+        const sign = reference.link.source === entry.source ? 1 : -1;
+        const tx = (after.x - before.x) * sign, ty = (after.y - before.y) * sign, tangent = Math.hypot(tx, ty) || 1;
+        labels.push({ key: entry.key, normal: { x: -ty / tangent, y: tx / tangent }, x: curves.reduce((sum, path) => sum + path.midpoint.x, 0) / curves.length,
+          y: curves.reduce((sum, path) => sum + path.midpoint.y, 0) / curves.length });
+      }
+    }
+    topologyGeometryCache = { key, paths, labels: labels.sort((a, b) => a.key.localeCompare(b.key)), obstacles };
+    return currentLabels(topologyGeometryCache);
   }
 
   function renderTopology() {
@@ -548,21 +660,12 @@
     $("topology-name").textContent = string(state.data?.topology?.name, "Awaiting data");
     $("topology-freshness").textContent = titleCase(sourceState(source("topology")));
     if (!nodes.length) { $("topology-caption").textContent = "Topology is unavailable; no route is inferred."; renderInspector(); return; }
-    const paths = new Map(), pairs = new Map();
-    for (const link of links) { const key = [link.source, link.target].sort().join("\u0000"); if (!pairs.has(key)) pairs.set(key, []); pairs.get(key).push(link); }
-    for (const pair of pairs.values()) pair.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    const geometry = topologyGeometry(nodes, links, points), { paths } = geometry;
     const defs = svg("defs");
     const marker = svg("marker", { id: "link-arrow", viewBox: "0 0 10 10", refX: 8, refY: 5, markerWidth: 4, markerHeight: 4, orient: "auto" }); marker.append(svg("path", { d: "M 0 0 L 10 5 L 0 10 Z", class: "link-arrow" })); defs.append(marker); graph.append(defs);
     for (const link of links) {
       const unavailable = link.retained || !topologyFresh;
-      const a = points.get(link.source), b = points.get(link.target); if (!a || !b) continue;
-      const pair = pairs.get([link.source, link.target].sort().join("\u0000"));
-      const index = pair.indexOf(link), offset = pair.length === 1 ? 0 : (index - (pair.length - 1) / 2) * 19;
-      const direction = String(link.source).localeCompare(String(link.target)) <= 0 ? 1 : -1;
-      const dx = b.x - a.x, dy = b.y - a.y, distance = Math.hypot(dx, dy) || 1;
-      const mx = (a.x + b.x) / 2 - dy / distance * offset * direction, my = (a.y + b.y) / 2 + dx / distance * offset * direction;
-      const start = { x: a.x + dx / distance * 22, y: a.y + dy / distance * 22 }, end = { x: b.x - dx / distance * 24, y: b.y - dy / distance * 24 };
-      const d = `M${start.x},${start.y} Q${mx},${my} ${end.x},${end.y}`; paths.set(link.id, d);
+      const d = paths.get(link.id); if (!d) continue;
       const group = svg("g", { class: `link-group${unavailable ? " unavailable" : ""}${state.inspected?.kind === "link" && state.inspected.id === link.id ? " selected" : ""}`, tabindex: 0, role: "button", "aria-label": `${link.source} to ${link.target}, ${unavailable ? observation(link) : `${reservationText(reservation(link))} RSVP reserved`}`, "data-focus-key": `link-${link.id}` });
       group.append(svg("title", {}, unavailable ? `${link.source} → ${link.target} · ${observation(link)} · last observed connection; current bandwidth unknown` : `${link.source} → ${link.target}: ${reservationText(reservation(link))} reserved; ${bandwidth(link.available_bw_bps)} available; receiving ${string(link.remote_address)}`));
       group.append(svg("path", { d, class: `topology-link ${unavailable ? "unavailable" : reservationClass(reservation(link))}`, "marker-end": "url(#link-arrow)" }), svg("path", { d, class: "link-hit" }));
@@ -572,17 +675,9 @@
     const route = routeFor(lsp), reported = string(lsp?.reported_state || lsp?.operational_state, "Unknown");
     const activeFresh = lsp && isActive(lsp) && fresh(lsp) && sourceState(source("topology")) === "fresh" && !state.paused;
     for (const link of route.links) if (paths.has(link.id)) graph.append(svg("path", { d: paths.get(link.id), class: `selected-path ${!fresh(lsp) || state.paused ? "stale" : isActive(lsp) ? activeFresh ? "flow" : "" : reported.toUpperCase() === "DOWN" ? "down" : "pending"}` }));
-    const bounds = (x, y, width, height) => ({ left: x - width / 2, right: x + width / 2, top: y - height / 2, bottom: y + height / 2 });
-    const labelObstacles = nodes.flatMap((node) => {
-      const point = points.get(node.id), edge = /^PE/i.test(node.id), radius = edge ? 20 : 15;
-      const boxes = [bounds(point.x, point.y, radius * 2 + 8, radius * 2 + 8),
-        bounds(point.x, point.y + (edge ? 32 : 26), String(node.id).length * 6.5 + 8, 18),
-        bounds(point.x, point.y + (edge ? 47 : 41), string(node.loopback).length * 5.5 + 8, 16)];
-      if (node.retained || !topologyFresh) boxes.push(bounds(point.x, point.y + (edge ? 61 : 55), observation(node).length * 5.5 + 8, 16));
-      return boxes;
-    });
+    const labelObstacles = [...geometry.obstacles];
     // Keep the shared label and its halo above both directional paths and ERO.
-    for (const entry of topologyLinkLabels(links, points)) {
+    for (const entry of geometry.labels) {
       const available = (link) => link && !link.retained && topologyFresh;
       if (!available(entry.forward) && !available(entry.reverse)) continue;
       const value = (link) => reservationText(available(link) ? reservation(link) : null);
@@ -593,11 +688,10 @@
       label.append(svg("title", {}, description), text);
       graph.append(label);
       const width = (text.getComputedTextLength() || text.textContent.length * 5.5) + 8;
-      const a = points.get(entry.source), b = points.get(entry.target), dx = b.x - a.x, dy = b.y - a.y, distance = Math.hypot(dx, dy) || 1;
       // A transit node can occupy a long link's midpoint. Move only the label
       // along the link normal, with deterministic spacing and direction order.
       for (const offset of [0, 18, -18, 36, -36, 54, -54, 72, -72, 90, -90]) {
-        const x = entry.x - dy / distance * offset, y = entry.y + dx / distance * offset, box = bounds(x, y, width, 17);
+        const x = entry.x + entry.normal.x * offset, y = entry.y + entry.normal.y * offset, box = topologyBounds(x, y, width, 17);
         if (box.left < 4 || box.right > 646 || box.top < 4 || box.bottom > 296 ||
             labelObstacles.some((other) => box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top)) continue;
         text.setAttribute("x", x); text.setAttribute("y", y); labelObstacles.push(box); break;
