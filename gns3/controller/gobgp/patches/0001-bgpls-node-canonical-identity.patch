@@ -1,0 +1,383 @@
+--- a/pkg/packet/bgp/bgp.go
++++ b/pkg/packet/bgp/bgp.go
+@@ -5272,7 +5272,26 @@
+ 	}
+ 
+ 	local := l.LocalNodeDesc.(*LsTLVNodeDescriptor).Extract()
+-	return fmt.Sprintf("NODE { AS:%v BGP-LS ID:%v %v %v:%v }", local.Asn, local.BGPLsID, local.IGPRouterID, l.ProtocolID.String(), l.Identifier)
++	// String is also the destination key in the RIB and Adj-RIB. Extracted
++	// display fields omit descriptors (including the OSPF area) and cannot
++	// distinguish an absent descriptor from an explicitly advertised zero.
++	// Accepted node descriptors are already ordered by sub-TLV type, so the
++	// serialized NLRI preserves their complete identity, protocol and instance.
++	identity, err := l.Serialize()
++	if err != nil {
++		// The decoder can retain an inconsistent descriptor length after
++		// ignoring trailing bytes. Preserve the ordered supported descriptors
++		// and their presence even when the complete NLRI cannot serialize.
++		subTLVs := l.LocalNodeDesc.(*LsTLVNodeDescriptor).SubTLVs
++		descriptors, jsonErr := json.Marshal(subTLVs)
++		if jsonErr != nil {
++			// Decoder-supported sub-TLVs cannot fail JSON encoding; retain
++			// deterministic value text for other programmatically built TLVs.
++			return fmt.Sprintf("NODE { AS:%v BGP-LS ID:%v %v %v:%v DESC-TEXT:%v INVALID:%v }", local.Asn, local.BGPLsID, local.IGPRouterID, l.ProtocolID.String(), l.Identifier, subTLVs, err)
++		}
++		return fmt.Sprintf("NODE { AS:%v BGP-LS ID:%v %v %v:%v DESC-JSON:%s INVALID:%v }", local.Asn, local.BGPLsID, local.IGPRouterID, l.ProtocolID.String(), l.Identifier, descriptors, err)
++	}
++	return fmt.Sprintf("NODE { AS:%v BGP-LS ID:%v %v %v:%v NLRI:%x }", local.Asn, local.BGPLsID, local.IGPRouterID, l.ProtocolID.String(), l.Identifier, identity)
+ }
+ 
+ func (l *LsNodeNLRI) Serialize() ([]byte, error) {
+--- a/pkg/packet/bgp/bgp_test.go
++++ b/pkg/packet/bgp/bgp_test.go
+@@ -3351,7 +3351,7 @@
+ 			0x02, 0x01, 0x00, 0x04, 0x07, 0x07, 0x07, 0x07, // TLV BGP LS ID: 117901063
+ 			0x02, 0x02, 0x00, 0x04, 0x07, 0x07, 0x07, 0x07, // TLV OSPF Area ID: 117901063
+ 			0x02, 0x03, 0x00, 0x06, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, // TLV IGP Router ID: 0102.0304.0506
+-		}, "NLRI { NODE { AS:117901063 BGP-LS ID:117901063 0102.0304.0506 ISIS-L2:0 } }", false, true},
++		}, "NLRI { NODE { AS:117901063 BGP-LS ID:117901063 0102.0304.0506 ISIS-L2:0 NLRI:0200000000000000000100002202000004070707070201000407070707020200040707070702030006010203040506 } }", false, true},
+ 		{[]byte{
+ 			0x00, 0x01, 0x00, 0x2e, // Node NLRI, truncated length
+ 			0x02,                                           // Protocol ISIS Level 2
+--- a/pkg/packet/bgp/bgpls_node_identity_test.go
++++ b/pkg/packet/bgp/bgpls_node_identity_test.go
+@@ -0,0 +1,78 @@
++package bgp
++
++import (
++	"bytes"
++	"encoding/binary"
++	"encoding/hex"
++	"testing"
++)
++
++func nodeIdentityTestPrefix(t *testing.T, protocol LsProtocolID, instance uint64, descriptors string) *LsAddrPrefix {
++	t.Helper()
++	desc, err := hex.DecodeString(descriptors)
++	if err != nil {
++		t.Fatal(err)
++	}
++	wire := make([]byte, 17+len(desc))
++	binary.BigEndian.PutUint16(wire[0:2], uint16(LS_NLRI_TYPE_NODE))
++	binary.BigEndian.PutUint16(wire[2:4], uint16(len(wire)-4))
++	wire[4] = byte(protocol)
++	binary.BigEndian.PutUint64(wire[5:13], instance)
++	binary.BigEndian.PutUint16(wire[13:15], uint16(LS_TLV_LOCAL_NODE_DESC))
++	binary.BigEndian.PutUint16(wire[15:17], uint16(len(desc)))
++	copy(wire[17:], desc)
++	node := &LsAddrPrefix{}
++	if err := node.DecodeFromBytes(wire); err != nil {
++		t.Fatal(err)
++	}
++	serialized, err := node.Serialize()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !bytes.Equal(wire, serialized) {
++		t.Fatalf("identity formatting must preserve wire NLRI: got %x, want %x", serialized, wire)
++	}
++	return node
++}
++
++func TestLsNodeCanonicalIdentity(t *testing.T) {
++	const igp = "020000040000fde80201000400000000"
++	const area0 = "0202000400000000"
++	const area1 = "0202000400000001"
++	const router = "02030004c0000201"
++	tests := []struct {
++		name        string
++		protocol    LsProtocolID
++		instance    uint64
++		descriptors string
++	}{
++		{"area-zero", LS_PROTOCOL_OSPF_V2, 0, igp + area0 + router},
++		{"area-one", LS_PROTOCOL_OSPF_V2, 0, igp + area1 + router},
++		{"area-absent", LS_PROTOCOL_OSPF_V2, 0, igp + router},
++		{"ls-id-absent", LS_PROTOCOL_OSPF_V2, 0, "020000040000fde8" + area0 + router},
++		{"instance", LS_PROTOCOL_OSPF_V2, 1, igp + area0 + router},
++		{"protocol", LS_PROTOCOL_OSPF_V3, 0, igp + area0 + router},
++		{"isis-l1", LS_PROTOCOL_ISIS_L1, 0, igp + "02030006000102030405"},
++		{"isis-l2", LS_PROTOCOL_ISIS_L2, 0, igp + "02030006000102030405"},
++		{"bgp-router-one", LS_PROTOCOL_BGP, 0, igp + "02040004c0000201"},
++		{"bgp-router-two", LS_PROTOCOL_BGP, 0, igp + "02040004c0000202"},
++		{"bgp-confed", LS_PROTOCOL_BGP, 0, igp + "02040004c0000201020500040000fde8"},
++		{"bgp-confed-zero", LS_PROTOCOL_BGP, 0, igp + "02040004c00002010205000400000000"},
++	}
++	seen := make(map[string]string)
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			node := nodeIdentityTestPrefix(t, tt.protocol, tt.instance, tt.descriptors)
++			key := node.String()
++			if other, ok := seen[key]; ok {
++				t.Fatalf("distinct node identities collide: %s and %s: %s", other, tt.name, key)
++			}
++			seen[key] = tt.name
++			node.SetPathIdentifier(123)
++			node.SetPathLocalIdentifier(456)
++			if node.String() != key {
++				t.Fatal("BGP path identifiers must not change destination identity")
++			}
++		})
++	}
++}
+--- a/internal/pkg/table/bgpls_node_identity_test.go
++++ b/internal/pkg/table/bgpls_node_identity_test.go
+@@ -0,0 +1,80 @@
++package table
++
++import (
++	"bytes"
++	"net"
++	"testing"
++	"time"
++
++	"github.com/osrg/gobgp/v3/pkg/packet/bgp"
++)
++
++func ospfAreaNodeForTest(t *testing.T, area uint32) *bgp.LsAddrPrefix {
++	t.Helper()
++	descriptor := bgp.NewLsTLVNodeDescriptor(&bgp.LsNodeDescriptor{
++		Asn: 65000, BGPLsID: 0, OspfAreaID: area,
++		IGPRouterID: string([]byte{192, 0, 2, 1}),
++	}, bgp.LS_TLV_LOCAL_NODE_DESC)
++	node := &bgp.LsAddrPrefix{
++		Type: bgp.LS_NLRI_TYPE_NODE,
++		NLRI: &bgp.LsNodeNLRI{
++			LsNLRI:        bgp.LsNLRI{NLRIType: bgp.LS_NLRI_TYPE_NODE, ProtocolID: bgp.LS_PROTOCOL_OSPF_V2, Identifier: 0},
++			LocalNodeDesc: &descriptor,
++		},
++	}
++	wire, err := node.Serialize()
++	if err != nil {
++		t.Fatal(err)
++	}
++	decoded := &bgp.LsAddrPrefix{}
++	if err := decoded.DecodeFromBytes(wire); err != nil {
++		t.Fatal(err)
++	}
++	return decoded
++}
++
++func TestLsNodeAreasSurviveIndependentWithdrawal(t *testing.T) {
++	tbl := NewTable(logger, bgp.RF_LS)
++	peer := &PeerInfo{AS: 65000, LocalAS: 65000, ID: net.ParseIP("192.0.2.2"), Address: net.ParseIP("192.0.2.2")}
++	attrs := []bgp.PathAttributeInterface{
++		bgp.NewPathAttributeOrigin(bgp.BGP_ORIGIN_ATTR_TYPE_IGP),
++		bgp.NewPathAttributeAsPath([]bgp.AsPathParamInterface{}),
++	}
++	area0, area1 := ospfAreaNodeForTest(t, 0), ospfAreaNodeForTest(t, 1)
++	path0 := NewPath(peer, area0, false, attrs, time.Now(), false)
++	path1 := NewPath(peer, area1, false, attrs, time.Now(), false)
++	tbl.update(path0)
++	tbl.update(path1)
++	if got := len(tbl.GetDestinations()); got != 2 {
++		t.Fatalf("same OSPF router in two areas must retain two RIB destinations; got %d", got)
++	}
++	if tbl.GetDestination(area0) == tbl.GetDestination(area1) {
++		t.Fatal("area nodes share a RIB destination")
++	}
++	// A same-source re-advertisement replaces only the matching area's path.
++	tbl.update(NewPath(peer, ospfAreaNodeForTest(t, 0), false, attrs, time.Now(), false))
++	if len(tbl.GetDestinations()) != 2 || len(tbl.GetDestination(area0).knownPathList) != 1 || len(tbl.GetDestination(area1).knownPathList) != 1 {
++		t.Fatal("same-area replacement changed the other area or retained duplicate paths")
++	}
++	// Decode a fresh, byte-identical NLRI as a real received withdrawal would.
++	withdraw := ospfAreaNodeForTest(t, 0)
++	want, _ := area0.Serialize()
++	got, _ := withdraw.Serialize()
++	if !bytes.Equal(want, got) {
++		t.Fatal("withdrawal fixture differs from original NLRI")
++	}
++	tbl.update(NewPath(peer, withdraw, true, nil, time.Now(), false))
++	// The internal table may retain an empty destination while its local path
++	// ID remains allocated. Select is the live RIB view used by ListPath.
++	selected, err := tbl.Select()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(selected.GetDestinations()) != 1 || selected.GetDestination(area0) != nil {
++		t.Fatal("withdrawn area remains in the RIB")
++	}
++	remaining := selected.GetDestination(area1)
++	if remaining == nil || len(remaining.knownPathList) != 1 || remaining.knownPathList[0] != path1 {
++		t.Fatal("withdrawing area zero removed or replaced the area-one path")
++	}
++}
+--- a/pkg/packet/bgp/bgpls_node_malformed_identity_test.go
++++ b/pkg/packet/bgp/bgpls_node_malformed_identity_test.go
+@@ -0,0 +1,88 @@
++package bgp
++
++import (
++	"bytes"
++	"encoding/binary"
++	"strings"
++	"testing"
++)
++
++func malformedNodeUpdateForIdentityTest(t *testing.T, protocol LsProtocolID, instance uint64, descriptors string, trailing int) *LsAddrPrefix {
++	t.Helper()
++	node := nodeIdentityTestPrefix(t, protocol, instance, descriptors)
++	wire, err := node.Serialize()
++	if err != nil {
++		t.Fatal(err)
++	}
++	wire = append(wire, bytes.Repeat([]byte{0x2a}, trailing)...)
++	binary.BigEndian.PutUint16(wire[2:4], uint16(len(wire)-4))
++	binary.BigEndian.PutUint16(wire[15:17], uint16(len(wire)-17))
++	// Construct received bytes directly: serializing the malformed fixture
++	// through GoBGP would fail before its incoming decoder can be exercised.
++	mp := append([]byte{0x40, 0x04, 0x47, 4, 192, 0, 2, 2, 0}, wire...)
++	attrs := append([]byte{0x40, 1, 1, 0, 0x40, 2, 0, 0x80, 14, byte(len(mp))}, mp...)
++	body := append([]byte{0, 0, 0, 0}, attrs...)
++	binary.BigEndian.PutUint16(body[2:4], uint16(len(attrs)))
++	message := bytes.Repeat([]byte{0xff}, 19)
++	message[18] = BGP_MSG_UPDATE
++	binary.BigEndian.PutUint16(message[16:18], uint16(len(message)+len(body)))
++	message = append(message, body...)
++	decoded, err := ParseBGPMessage(message)
++	if err != nil {
++		t.Fatal(err)
++	}
++	update := decoded.Body.(*BGPUpdate)
++	if ok, err := ValidateUpdateMsg(update, map[RouteFamily]BGPAddPathMode{RF_LS: BGP_ADD_PATH_NONE}, false, false, false); !ok {
++		t.Fatalf("upstream validator unexpectedly rejected fixture: %v", err)
++	}
++	prefix := update.PathAttributes[2].(*PathAttributeMpReachNLRI).Value[0].(*LsAddrPrefix)
++	if _, err := prefix.Serialize(); err == nil {
++		t.Fatal("malformed descriptor must reach the serialization-error fallback")
++	}
++	return prefix
++}
++
++func TestLsNodeMalformedCanonicalIdentity(t *testing.T) {
++	const igp = "020000040000fde80201000400000000"
++	const area0 = "0202000400000000"
++	const area1 = "0202000400000001"
++	const router = "02030004c0000201"
++	tests := []struct {
++		name        string
++		protocol    LsProtocolID
++		instance    uint64
++		descriptors string
++	}{
++		{"area-zero", LS_PROTOCOL_OSPF_V2, 0, igp + area0 + router},
++		{"area-one", LS_PROTOCOL_OSPF_V2, 0, igp + area1 + router},
++		{"area-absent", LS_PROTOCOL_OSPF_V2, 0, igp + router},
++		{"ls-id-absent", LS_PROTOCOL_OSPF_V2, 0, "020000040000fde8" + area0 + router},
++		{"router-two", LS_PROTOCOL_OSPF_V2, 0, igp + area0 + "02030004c0000202"},
++		{"instance", LS_PROTOCOL_OSPF_V2, 1, igp + area0 + router},
++		{"protocol", LS_PROTOCOL_OSPF_V3, 0, igp + area0 + router},
++		{"bgp-router-one", LS_PROTOCOL_BGP, 0, igp + "02040004c0000201"},
++		{"bgp-router-two", LS_PROTOCOL_BGP, 0, igp + "02040004c0000202"},
++		{"bgp-confed", LS_PROTOCOL_BGP, 0, igp + "02040004c0000201020500040000fde8"},
++		{"bgp-confed-zero", LS_PROTOCOL_BGP, 0, igp + "02040004c00002010205000400000000"},
++	}
++	seen := make(map[string]string)
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			node := malformedNodeUpdateForIdentityTest(t, tt.protocol, tt.instance, tt.descriptors, 1)
++			key := node.String()
++			if other, ok := seen[key]; ok {
++				t.Fatalf("malformed distinct node identities collide: %s and %s: %s", other, tt.name, key)
++			}
++			seen[key] = tt.name
++			if !strings.Contains(key, "DESC-JSON:") || !strings.Contains(key, "INVALID:") {
++				t.Fatal("malformed identity must retain descriptor JSON and invalid status")
++			}
++			for trailing := 1; trailing <= 3; trailing++ {
++				fresh := malformedNodeUpdateForIdentityTest(t, tt.protocol, tt.instance, tt.descriptors, trailing)
++				if fresh.String() != key {
++					t.Fatal("fresh malformed decode must retain the same supported descriptor identity")
++				}
++			}
++		})
++	}
++}
+--- a/internal/pkg/table/bgpls_node_malformed_identity_test.go
++++ b/internal/pkg/table/bgpls_node_malformed_identity_test.go
+@@ -0,0 +1,84 @@
++package table
++
++import (
++	"bytes"
++	"encoding/binary"
++	"net"
++	"testing"
++	"time"
++
++	"github.com/osrg/gobgp/v3/pkg/packet/bgp"
++)
++
++func malformedOspfAreaUpdateForTest(t *testing.T, area uint32, withdraw bool) *bgp.BGPMessage {
++	t.Helper()
++	wire, err := ospfAreaNodeForTest(t, area).Serialize()
++	if err != nil {
++		t.Fatal(err)
++	}
++	wire = append(wire, 0x2a)
++	binary.BigEndian.PutUint16(wire[2:4], uint16(len(wire)-4))
++	binary.BigEndian.PutUint16(wire[15:17], uint16(len(wire)-17))
++	var attrs []byte
++	if withdraw {
++		mp := append([]byte{0x40, 0x04, 0x47}, wire...)
++		attrs = append([]byte{0x80, 15, byte(len(mp))}, mp...)
++	} else {
++		mp := append([]byte{0x40, 0x04, 0x47, 4, 192, 0, 2, 2, 0}, wire...)
++		attrs = append([]byte{0x40, 1, 1, 0, 0x40, 2, 0, 0x80, 14, byte(len(mp))}, mp...)
++	}
++	body := append([]byte{0, 0, 0, 0}, attrs...)
++	binary.BigEndian.PutUint16(body[2:4], uint16(len(attrs)))
++	message := bytes.Repeat([]byte{0xff}, 19)
++	message[18] = bgp.BGP_MSG_UPDATE
++	binary.BigEndian.PutUint16(message[16:18], uint16(len(message)+len(body)))
++	message = append(message, body...)
++	decoded, err := bgp.ParseBGPMessage(message)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if ok, err := bgp.ValidateUpdateMsg(decoded.Body.(*bgp.BGPUpdate), map[bgp.RouteFamily]bgp.BGPAddPathMode{bgp.RF_LS: bgp.BGP_ADD_PATH_NONE}, false, false, false); !ok {
++		t.Fatalf("upstream validator unexpectedly rejected fixture: %v", err)
++	}
++	return decoded
++}
++
++func TestLsNodeMalformedAreasSurviveIndependentWithdrawal(t *testing.T) {
++	tbl := NewTable(logger, bgp.RF_LS)
++	peer := &PeerInfo{AS: 65000, LocalAS: 65000, ID: net.ParseIP("192.0.2.2"), Address: net.ParseIP("192.0.2.2")}
++	apply := func(area uint32, withdraw bool) *Path {
++		t.Helper()
++		paths := ProcessMessage(malformedOspfAreaUpdateForTest(t, area, withdraw), peer, time.Now())
++		if len(paths) != 1 {
++			t.Fatalf("received update produced %d paths, want one", len(paths))
++		}
++		if _, err := paths[0].GetNlri().Serialize(); err == nil {
++			t.Fatal("fixture must use the serialization-error identity fallback")
++		}
++		tbl.update(paths[0])
++		return paths[0]
++	}
++	path0, path1 := apply(0, false), apply(1, false)
++	if got := len(tbl.GetDestinations()); got != 2 {
++		t.Fatalf("malformed two-area nodes must retain supported descriptor identity; got %d destinations", got)
++	}
++	replacement := apply(0, false)
++	if replacement.GetPrefix() != path0.GetPrefix() || len(tbl.GetDestinations()) != 2 || len(tbl.GetDestination(path0.GetNlri()).knownPathList) != 1 {
++		t.Fatal("fresh malformed same-area replacement changed destination identity")
++	}
++	withdraw := apply(0, true)
++	if withdraw.GetPrefix() != path0.GetPrefix() {
++		t.Fatal("independently decoded malformed withdrawal changed destination identity")
++	}
++	selected, err := tbl.Select()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(selected.GetDestinations()) != 1 || selected.GetDestination(path0.GetNlri()) != nil {
++		t.Fatal("malformed area-zero withdrawal did not remove only its active destination")
++	}
++	remaining := selected.GetDestination(path1.GetNlri())
++	if remaining == nil || len(remaining.knownPathList) != 1 || remaining.knownPathList[0] != path1 {
++		t.Fatal("malformed area-zero withdrawal changed the area-one path")
++	}
++}

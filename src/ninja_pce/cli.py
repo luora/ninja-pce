@@ -94,6 +94,13 @@ def build_parser() -> argparse.ArgumentParser:
     lab.add_argument("--show-pruned", action="store_true", help="Print pruned links and reasons")
     lab.add_argument("--show-candidates", action="store_true", help="Print candidate paths")
 
+    lab_render = sub.add_parser("lab-render", help="Validate and render a data-driven lab extension without device access")
+    lab_render.add_argument("--profile", required=True, help="Explicit platform and topology intent YAML/JSON")
+    lab_render.add_argument("--output-dir", default="build/multi-area", help="Directory for reviewed configuration artifacts")
+    lab_render.add_argument("--bgpls-asn", type=int, help="Explicit observed AS for optional ABR identity policy")
+    lab_render.add_argument("--bgpls-instance-id", type=int, help="Explicit observed BGP-LS instance ID")
+    lab_render.add_argument("--bgpls-identifier", type=int, help="Explicit observed BGP-LS identifier")
+
     daemon = sub.add_parser(
         "daemon",
         help="Run multi-demand topology reconciliation from a daemon config",
@@ -230,6 +237,61 @@ def cmd_inventory_validate(args: argparse.Namespace) -> int:
     print(f"Nodes:    {len(topology.nodes)}")
     print(f"Devices:  {len(inventory.devices)}")
     print(f"Mapped:   {', '.join(mapped)}")
+    return 0
+
+
+def cmd_lab_render(args: argparse.Namespace) -> int:
+    from .lab_profile import (
+        lab_ospf_multi_area_policy,
+        lab_profile_summary,
+        load_lab_profile,
+        render_lab_configs,
+    )
+    from .live import _write_document
+    from .state import digest
+
+    source = Path(args.profile)
+    profile = load_lab_profile(source)
+    configs = render_lab_configs(profile)
+    output = Path(args.output_dir)
+    summary = lab_profile_summary(profile)
+    summary["profile_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+    summary["configuration_sha256"] = {
+        node: hashlib.sha256(config.encode()).hexdigest() for node, config in sorted(configs.items())
+    }
+    domain = (args.bgpls_asn, args.bgpls_instance_id, args.bgpls_identifier)
+    policy = None
+    if any(value is not None for value in domain):
+        if any(value is None for value in domain):
+            raise InputError("BGP-LS policy generation requires AS, instance ID and identifier together")
+        policy = lab_ospf_multi_area_policy(
+            profile, autonomous_system=args.bgpls_asn, instance_id=args.bgpls_instance_id,
+            bgpls_identifier=args.bgpls_identifier,
+        )
+        summary["ospf_multi_area_policy_digest"] = digest(policy)
+    node_map = {str(node.loopback): node.id for node in profile.nodes}
+    summary["node_map_digest"] = digest(node_map)
+    summary["plan_id"] = digest(summary)
+    targets = [output / (node + ".cfg") for node in configs] + [
+        output / "plan.json", output / "node-map.json", output / "ospf-multi-area-policy.json",
+    ]
+    if source.resolve() in {target.resolve() for target in targets}:
+        raise InputError("Lab profile input and generated outputs must be distinct")
+    output.mkdir(parents=True, exist_ok=True)
+    for node, config in configs.items():
+        target = output / (node + ".cfg")
+        if target.is_symlink():
+            raise InputError("Lab configuration output must not be a symlink")
+        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(config)
+    _write_document(output / "node-map.json", node_map)
+    if policy is not None:
+        _write_document(output / "ospf-multi-area-policy.json", policy)
+    else:
+        (output / "ospf-multi-area-policy.json").unlink(missing_ok=True)
+    _write_document(output / "plan.json", summary)
+    print(json.dumps(summary, sort_keys=True))
     return 0
 
 
@@ -549,6 +611,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_topology_summary(args)
         if args.command == "gns3-demo":
             return cmd_gns3_demo(args)
+        if args.command == "lab-render":
+            return cmd_lab_render(args)
         if args.command == "daemon":
             return cmd_daemon(args)
         if args.command == "dashboard":

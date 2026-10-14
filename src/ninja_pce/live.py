@@ -12,9 +12,12 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .state import write_state
+
+if TYPE_CHECKING:
+    from .bgpls import OspfMultiAreaPolicy
 
 
 def add_live_commands(subparsers: Any) -> None:
@@ -24,6 +27,7 @@ def add_live_commands(subparsers: Any) -> None:
     bgpls.add_argument("--proto", required=True, help="Read-only GoBGP API protobuf file")
     bgpls.add_argument("--peer", action="append", required=True, help="Required BGP-LS exporter IP; repeatable")
     bgpls.add_argument("--node-map", help="JSON object mapping advertised IPv4 router IDs to node names")
+    bgpls.add_argument("--ospf-multi-area-policy", help="Explicit JSON policy binding OSPF area identities")
     bgpls.add_argument("--output", required=True, help="Normalized topology JSON file")
     bgpls.add_argument("--status", required=True, help="Collector health JSON file")
     bgpls.add_argument("--raw", help="Optional raw binary-NLRI capture JSON file")
@@ -46,6 +50,7 @@ def add_live_commands(subparsers: Any) -> None:
     pcep.add_argument("--compute-topology", help="Live normalized topology feed; must remain available")
     pcep.add_argument("--compute-bgpls-peer", action="append", default=[], help="Required live BGP-LS exporter")
     pcep.add_argument("--compute-node-map", help="Advertised router-ID to node-name JSON map")
+    pcep.add_argument("--compute-ospf-multi-area-policy", help="Explicit JSON policy matching the collector")
     pcep.add_argument("--compute-headend", action="append", default=[],
                       help="Authorized PCC-IP=source-loopback; repeatable")
     pcep.add_argument("--compute-delegated-tunnel", action="append", default=[],
@@ -74,6 +79,17 @@ def _node_names(path: str | None) -> dict[str, str]:
     if not all(isinstance(key, str) and isinstance(value, str) for key, value in names.items()):
         raise ValueError("Node map must map router-ID strings to node-name strings")
     return names
+
+
+def _ospf_multi_area_policy(path: str | None) -> OspfMultiAreaPolicy | None:
+    if path is None:
+        return None
+    from .bgpls import parse_ospf_multi_area_policy
+    from .loaders import _load_mapping
+
+    if Path(path).suffix.lower() != ".json":
+        raise ValueError("OSPF multi-area policy must be an explicit JSON file")
+    return parse_ospf_multi_area_policy(_load_mapping(path))
 
 
 def _write_document(path: Path, document: dict[str, Any]) -> None:
@@ -109,16 +125,20 @@ def collect_bgpls(args: argparse.Namespace) -> int:
     for value, label in ((args.interval, "interval"), (args.timeout, "timeout"), (args.max_age, "max-age")):
         _positive(value, label)
     names = _node_names(args.node_map)
+    ospf_multi_area = _ospf_multi_area_policy(args.ospf_multi_area_policy)
     peers = tuple(args.peer)
     provider = GoBgpTopologyProvider(
         proto_path=Path(args.proto), endpoint=args.endpoint, grpcurl=args.grpcurl,
         required_peers=peers, node_names=names, timeout_seconds=args.timeout,
-        max_age_seconds=args.max_age,
+        max_age_seconds=args.max_age, ospf_multi_area=ospf_multi_area,
     )
     output, status = Path(args.output), Path(args.status)
     paths = [output, status] + ([Path(args.raw)] if args.raw else [])
     if len({path.resolve() for path in paths}) != len(paths):
         raise ValueError("Topology, status and raw capture paths must be distinct")
+    inputs = [Path(value).resolve() for value in (args.node_map, args.ospf_multi_area_policy) if value]
+    if any(path.resolve() in inputs for path in paths):
+        raise ValueError("Collector outputs must be distinct from node-map and OSPF policy inputs")
     previous_sigterm = signal.signal(signal.SIGTERM, _stop_collector)
     try:
         while True:
@@ -129,6 +149,7 @@ def collect_bgpls(args: argparse.Namespace) -> int:
                     _write_document(Path(args.raw), capture)
                 topology = parse_gobgp_snapshot(
                     capture, node_names=names, required_peers=peers, max_age_seconds=args.max_age,
+                    ospf_multi_area=ospf_multi_area,
                 )
                 if not topology.nodes or not topology.links:
                     raise ValueError("BGP-LS has no computable TE graph; inspect the raw capture and excluded objects")
@@ -169,7 +190,7 @@ async def _serve_pcep(args: argparse.Namespace) -> int:
     computation_args = [args.compute_bgpls_raw, args.compute_bgpls_status, args.compute_topology,
                         args.compute_bgpls_peer, args.compute_node_map, args.compute_headend]
     computer = None
-    if any(computation_args):
+    if any(computation_args) or args.compute_ospf_multi_area_policy:
         if not all(computation_args):
             raise ValueError("Computation requires raw, status, topology, exporter, node map and headend options")
         from .pcep_compute import PcepPathComputer
@@ -185,12 +206,15 @@ async def _serve_pcep(args: argparse.Namespace) -> int:
         paths = [Path(value).resolve() for value in
                  (args.capture, args.compute_bgpls_raw, args.compute_bgpls_status, args.compute_topology,
                   args.compute_node_map)]
+        if args.compute_ospf_multi_area_policy:
+            paths.append(Path(args.compute_ospf_multi_area_policy).resolve())
         if len(set(paths)) != len(paths):
-            raise ValueError("PCEP capture, raw, status, topology and node-map paths must be distinct")
+            raise ValueError("PCEP capture, raw, status, topology, node-map and OSPF policy paths must be distinct")
         computer = PcepPathComputer(
             raw_path=Path(args.compute_bgpls_raw), status_path=Path(args.compute_bgpls_status),
             topology_path=Path(args.compute_topology), required_peers=tuple(args.compute_bgpls_peer),
             node_names=_node_names(args.compute_node_map), headends=headends,
+            ospf_multi_area=_ospf_multi_area_policy(args.compute_ospf_multi_area_policy),
         )
     server_options: dict[str, Any] = {"capture_path": Path(args.capture)}
     if computer is not None:

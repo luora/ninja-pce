@@ -17,7 +17,7 @@ from ipaddress import IPv4Address
 from pathlib import Path
 from typing import Any
 
-from .bgpls import BgplsError, parse_gobgp_snapshot
+from .bgpls import BgplsError, OspfMultiAreaPolicy, parse_gobgp_snapshot, parse_ospf_multi_area_policy
 from .cspf import CspfNoPath, CspfSearchLimit, compute_cspf
 from .models import Affinity, PathConstraints, ServiceDemand, Topology, validate_identifier
 from .pcep import (
@@ -291,7 +291,7 @@ class PcepPathComputer:
 
     def __init__(self, *, raw_path: Path, status_path: Path, topology_path: Path,
                  required_peers: tuple[str, ...], node_names: dict[str, str], headends: dict[str, str],
-                 max_age_seconds: float = 30):
+                 max_age_seconds: float = 30, ospf_multi_area: OspfMultiAreaPolicy | None = None):
         if isinstance(max_age_seconds, bool) or not math.isfinite(max_age_seconds) or not 0 < max_age_seconds <= 30:
             raise ValueError("Computation freshness must be positive and at most 30 seconds")
         if not required_peers or len(set(required_peers)) != len(required_peers):
@@ -307,6 +307,14 @@ class PcepPathComputer:
         if len({path.resolve() for path in (self.raw_path, self.status_path, self.topology_path)}) != 3:
             raise ValueError("Collector raw, status and topology paths must be distinct")
         self.max_age_seconds = max_age_seconds
+        if ospf_multi_area is not None:
+            if not isinstance(ospf_multi_area, OspfMultiAreaPolicy):
+                raise ValueError("OSPF multi-area computation requires a validated identity policy")
+            ospf_multi_area = parse_ospf_multi_area_policy(ospf_multi_area.document())
+            for binding in ospf_multi_area.bindings:
+                if self.node_names.get(binding.te_router_id) != binding.node_id:
+                    raise ValueError("OSPF multi-area bindings must match the computation node map")
+        self.ospf_multi_area = ospf_multi_area
 
     def _snapshot(self) -> tuple[Topology, str]:
         paths = (self.raw_path, self.status_path, self.topology_path)
@@ -332,11 +340,18 @@ class PcepPathComputer:
         if not isinstance(feed.get("metadata"), dict) or feed["metadata"].get("timestamp") != timestamp:
             raise BgplsError("Collector feed does not identify this raw capture")
         topology = parse_gobgp_snapshot(capture, required_peers=self.required_peers,
-                                        node_names=self.node_names, now=now, max_age_seconds=self.max_age_seconds)
+                                        node_names=self.node_names, now=now, max_age_seconds=self.max_age_seconds,
+                                        ospf_multi_area=self.ospf_multi_area)
         for item in (metadata, feed["metadata"]):
             if (item.get("source") != "bgp-ls" or item.get("session_state") != "ESTABLISHED" or
                     item.get("required_peers") != sorted(self.required_peers)):
                 raise BgplsError("Collector provenance contradicts configured BGP-LS peers")
+            if self.ospf_multi_area is None:
+                if "ospf_multi_area" in item or "ospf_multi_area_digest" in item:
+                    raise BgplsError("Collector OSPF area policy differs from computation policy")
+            elif (item.get("ospf_multi_area") != self.ospf_multi_area.document() or
+                  item.get("ospf_multi_area_digest") != self.ospf_multi_area.digest):
+                raise BgplsError("Collector OSPF area policy differs from computation policy")
         if status.get("nodes") != len(topology.nodes) or status.get("directed_links") != len(topology.links):
             raise BgplsError("Collector status contradicts the raw graph size")
         if not topology.nodes or not topology.links or len(topology.nodes) > MAX_NODES or len(topology.links) > MAX_EDGES:
@@ -345,7 +360,10 @@ class PcepPathComputer:
             raise BgplsError("BGP-LS contains incomplete or unsupported TE objects")
         if before != tuple(_read_regular(path) for path in paths):
             raise BgplsError("Collector changed during topology validation; retry")
-        return topology, hashlib.sha256(before[0]).hexdigest()
+        evidence = before[0]
+        if self.ospf_multi_area is not None:
+            evidence += b"\0ospf-multi-area:" + self.ospf_multi_area.digest.encode("ascii")
+        return topology, hashlib.sha256(evidence).hexdigest()
 
     def validate_reply(self, reply: PathReply) -> bool:
         """Revalidate collector health/freshness and exact raw bytes before send."""

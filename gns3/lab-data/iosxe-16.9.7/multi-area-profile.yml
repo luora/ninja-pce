@@ -1,0 +1,141 @@
+# Intended, sanitized configuration manifest; not telemetry or a qualification.
+# Baseline links constrain validation and are never rendered for application.
+schema_version: 1
+name: eight-router-two-area-extension
+platform_profile: iosxe-16.9.7
+nodes:
+  - id: PE1
+    loopback: 10.255.0.1/32
+    loopback_area: 0
+    ospf_process: 100
+  - id: P1
+    loopback: 10.255.0.2/32
+    loopback_area: 0
+    ospf_process: 100
+    reserved_interfaces: [GigabitEthernet3]  # Existing controller attachment.
+  - id: P3
+    loopback: 10.255.0.3/32
+    loopback_area: 0
+    ospf_process: 100
+  - id: P4
+    loopback: 10.255.0.4/32
+    loopback_area: 0
+    ospf_process: 100
+  - id: P2
+    loopback: 10.255.0.5/32
+    loopback_area: 0
+    ospf_process: 100
+  - id: PE3
+    loopback: 10.255.0.6/32
+    loopback_area: 0
+    ospf_process: 100
+  - id: P5
+    loopback: 10.255.0.7/32
+    loopback_area: 1
+    ospf_process: 100
+    configure_loopback: true
+  - id: PE4
+    loopback: 10.255.0.8/32
+    loopback_area: 1
+    ospf_process: 100
+    configure_loopback: true
+links:
+  - id: PE1-P1
+    area: 0
+    configure: false
+    metric: 10
+    capacity_kbps: 1000000
+    reservable_kbps: 100000
+    endpoints:
+      - {node: PE1, interface: Gi1, address: 10.0.12.1/29}
+      - {node: P1, interface: Gi1, address: 10.0.12.2/29}
+  - id: PE1-P3
+    area: 0
+    configure: false
+    metric: 10
+    capacity_kbps: 1000000
+    reservable_kbps: 100000
+    endpoints:
+      - {node: PE1, interface: Gi2, address: 10.0.13.1/29}
+      - {node: P3, interface: Gi2, address: 10.0.13.3/29}
+  - id: P1-P2
+    area: 0
+    configure: false
+    metric: 10
+    capacity_kbps: 1000000
+    reservable_kbps: 100000
+    endpoints:
+      - {node: P1, interface: Gi2, address: 10.0.25.2/29}
+      - {node: P2, interface: Gi2, address: 10.0.25.5/29}
+  - id: P1-P3
+    area: 0
+    configure: false
+    metric: 10
+    capacity_kbps: 1000000
+    reservable_kbps: 100000
+    endpoints:
+      - {node: P1, interface: Gi4, address: 10.0.23.2/29}
+      - {node: P3, interface: Gi4, address: 10.0.23.3/29}
+  - id: P3-P4
+    area: 0
+    configure: false
+    metric: 10
+    capacity_kbps: 1000000
+    reservable_kbps: 100000
+    endpoints:
+      - {node: P3, interface: Gi3, address: 10.0.34.3/29}
+      - {node: P4, interface: Gi3, address: 10.0.34.4/29}
+  - id: P2-P4
+    area: 0
+    configure: false
+    metric: 10
+    capacity_kbps: 1000000
+    reservable_kbps: 100000
+    endpoints:
+      - {node: P2, interface: Gi1, address: 10.0.54.5/29}
+      - {node: P4, interface: Gi1, address: 10.0.54.4/29}
+  - id: P2-PE3
+    area: 0
+    configure: false
+    metric: 10
+    capacity_kbps: 1000000
+    reservable_kbps: 100000
+    endpoints:
+      - {node: P2, interface: Gi4, address: 10.0.56.5/29}
+      - {node: PE3, interface: Gi4, address: 10.0.56.6/29}
+  - id: P4-PE3
+    area: 0
+    configure: false
+    metric: 10
+    capacity_kbps: 1000000
+    reservable_kbps: 100000
+    endpoints:
+      - {node: P4, interface: Gi2, address: 10.0.46.4/29}
+      - {node: PE3, interface: Gi2, address: 10.0.46.6/29}
+  - id: P2-P5
+    area: 1
+    configure: true
+    metric: 10
+    capacity_kbps: 1000000
+    reservable_kbps: 100000
+    endpoints:
+      - {node: P2, interface: Gi5, address: 10.0.57.5/24}
+      - {node: P5, interface: Gi5, address: 10.0.57.7/24}
+  - id: P5-PE4
+    area: 1
+    configure: true
+    metric: 10
+    capacity_kbps: 1000000
+    reservable_kbps: 100000
+    endpoints:
+      - {node: P5, interface: Gi1, address: 10.0.78.7/24}
+      - {node: PE4, interface: Gi1, address: 10.0.78.8/24}
+  - id: P4-PE4
+    area: 1
+    configure: true
+    metric: 10
+    capacity_kbps: 1000000
+    reservable_kbps: 100000
+    endpoints:
+      - {node: P4, interface: Gi5, address: 10.0.48.4/24}
+      - {node: PE4, interface: Gi5, address: 10.0.48.8/24}

@@ -440,7 +440,7 @@ class PcepServer:
             data["valid_until"] = data.get("last_received_at", now) + ttl if fresh else None
             for report in data.get("reports", {}).values():
                 report["stale"] = not (fresh and data.get("synchronized", False))
-        return {
+        capture = {
             "kind": "passive_pcep_capture", "run_id": self._run_id, "generated_at": now,
             "listener_running": self._server is not None and self._server.is_serving(),
             "mode": "request_computation" if self.path_computer else "passive_stateful",
@@ -458,6 +458,11 @@ class PcepServer:
             "failure_recovery": self.failover.snapshot() if self.failover is not None else None,
             "peers": peers, "events": list(self._events),
         }
+        policy = getattr(self.path_computer, "ospf_multi_area", None)
+        if policy is not None:
+            capture["topology_policy"] = {"ospf_multi_area": policy.document(),
+                                          "ospf_multi_area_digest": policy.digest}
+        return capture
 
     def _persist(self) -> None:
         if self.capture_path is not None:

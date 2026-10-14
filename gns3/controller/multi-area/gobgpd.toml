@@ -1,0 +1,34 @@
+# Isolated multi-area collector candidate for GoBGP v3.37.0.
+# No inbound BGP listener: this process initiates only the explicit P2 session.
+# Keep the existing single-area GoBGP process and its gRPC endpoint separate.
+[global.config]
+  as = 65000
+  router-id = "172.16.100.10"
+  port = -1
+  local-address-list = ["172.16.100.10"]
+
+[global.apply-policy.config]
+  default-import-policy = "accept-route"
+  default-export-policy = "reject-route"
+
+[[neighbors]]
+  [neighbors.config]
+    neighbor-address = "10.255.0.5"
+    peer-as = 65000
+    description = "Explicit P2 two-area BGP-LS exporter, isolated lab"
+  [neighbors.transport.config]
+    local-address = "172.16.100.10"
+  [neighbors.timers.config]
+    hold-time = 30
+    keepalive-interval = 10
+  [neighbors.graceful-restart.config]
+    enabled = true
+    helper-only = true
+  [[neighbors.afi-safis]]
+    [neighbors.afi-safis.config]
+      afi-safi-name = "ls"
+    [neighbors.afi-safis.mp-graceful-restart.config]
+      enabled = true
+  [neighbors.apply-policy.config]
+    default-import-policy = "accept-route"
+    default-export-policy = "reject-route"

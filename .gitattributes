@@ -1,0 +1,2 @@
+# Unified patch context includes a leading space before Go tabs and blank lines.
+gns3/controller/gobgp/patches/*.patch whitespace=-space-before-tab,-blank-at-eol

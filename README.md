@@ -11,6 +11,8 @@
 > exact-plan router configuration backend that passed
 > [one private 1 Mbps IOS XE 16.9.7 trial](docs/dashboard_configuration_validation.md).
 > Shipped deployment examples remain disabled by default.
+> The [repeatable multi-area lab profile](docs/multi_area_lab.md) adds two routers
+> and explicit ABR identity handling; its validation scope is recorded separately.
 
 > Reliability remediation: current behavior and migration rules are documented in
 > [input schema](docs/input_schema.md), [reconciliation safety](docs/reconciliation.md),
@@ -80,6 +82,8 @@ This repository is now beyond the first MVP, but still intentionally safe:
 - Done: persistent reconciliation state and JSONL audit log
 - Done: multi-demand daemon with guarded autonomous delivery policy
 - Done: read-only live BGP-LS ingestion through GoBGP
+- Added: data-driven IOS XE 16.9.7 underlay rendering and opt-in OSPFv2 ABR
+  identity projection for an isolated multi-area collector
 - Done: passive stateful PCEP, bounded PCReq/PCRep and opt-in initial PCUpd
 - Done: opt-in one-tunnel withdrawal recovery, qualified for one IOS XE 16.9.7 lab scenario
 - Done: read-only local controller dashboard, with explicitly labelled demo mode
@@ -160,6 +164,9 @@ YAML/JSON topology  YAML/JSON demand  YAML/JSON inventory
   `/metrics`.
 - `bgpls.py` and `live.py` collect directional BGP-LS data from GoBGP, preserving
   withdrawals, source health and unknown attributes.
+- `lab_profile.py` validates topology intent and renders scoped underlay changes;
+  `lab-render` produces configuration hashes, a node map and optional explicit
+  ABR bindings without connecting to devices.
 - `pcep.py`, `pcep_compute.py` and `pcep_delegation.py` implement observation and
   the explicitly enabled computation profiles described in [PCEP scope](docs/pcep_computation.md).
   `pcep_failover.py` adds separately enabled
@@ -167,7 +174,7 @@ YAML/JSON topology  YAML/JSON demand  YAML/JSON inventory
 - `dashboard.py` and `web/` serve a read-only view of snapshots, reports and events.
 - `cli.py` is the command surface for `compute`, `validate`,
   `inventory-validate`, `push`, `reconcile`, `topology-summary`, `gns3-demo`,
-  `daemon`, `bgpls-collect`, `pcep-listen` and `dashboard`.
+  `daemon`, `lab-render`, `bgpls-collect`, `pcep-listen` and `dashboard`.
 
 ### Input and domain model
 
