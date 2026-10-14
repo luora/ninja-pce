@@ -152,6 +152,21 @@ def test_reinstatement_flag_requires_managed_profile(tmp_path, offline_server):
     assert not offline_server
 
 
+def test_startup_recovery_flag_requires_managed_profile(tmp_path, offline_server):
+    assert main([*base_args(tmp_path), "--managed-startup-recovery"]) == 1
+    assert not offline_server
+
+
+def test_startup_recovery_is_explicit_and_does_not_expand_initial_delegation(tmp_path, monkeypatch, offline_server):
+    planner, _, _, _ = managed_lab(tmp_path, monkeypatch)
+    assert main([*base_args(tmp_path), *qualified_options(tmp_path, planner), *managed_args(planner),
+                 "--managed-startup-recovery"]) == 0
+    configured = offline_server["options"]["managed_failover"]
+    assert configured.startup_recovery is True
+    assert configured.snapshot()["startup_recovery"]["total_attempts"] == 0
+    assert offline_server["options"]["delegated_computer"].allowed_tunnels == {}
+
+
 @pytest.mark.parametrize("target", ["pcep.json", "raw.json", "journal"])
 def test_reinstatement_request_cannot_alias_controller_inputs(tmp_path, monkeypatch, offline_server, target):
     planner, _, _, _ = managed_lab(tmp_path, monkeypatch)

@@ -842,7 +842,15 @@ class PcepServer:
             }
             connection.owned_plsps[current["plsp_id"]] = ownership_key(current)
 
-        await self._send(peer, connection, reply.messages[0], guard=authorized, prepare=prepare)
+        from .pcep_failover import RecoveryDeferred
+
+        try:
+            await self._send(peer, connection, reply.messages[0], guard=authorized, prepare=prepare)
+        except RecoveryDeferred:
+            # The planner persisted conservative holds without an intent. No
+            # SRP sequence or update record advanced; the watcher can retry
+            # against the next fresh topology without stopping recovery.
+            self._persist()
 
     async def _compute_delegations(self, peer: str, connection: _Connection,
                                    reports: list[dict[str, Any]], srps: tuple[int, ...]) -> None:

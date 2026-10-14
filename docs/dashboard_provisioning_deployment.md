@@ -232,6 +232,55 @@ delete recovery history or reset the attempt count to retry.
 workflow changes neither authentication nor firewall policy and adds no public
 API route. Keep request and review artifacts private and out of Git.
 
+### Automatic managed startup recovery
+
+For a verified tunnel that must return after its PCC reconnects, enable this
+separate opt-in alongside the exact existing managed operation and journal:
+
+```text
+--managed-startup-recovery
+```
+
+The immutable VERIFIED operation remains the source of the tunnel's identity,
+destination, bandwidth and priorities. The listener waits for a synchronized,
+live, administratively enabled, delegated DOWN report with an empty ERO and a
+fresh usable TED. Historical synchronization reports cannot trigger a write.
+PCEP does not distinguish a router reboot from a session reconnect; this policy
+covers both under the same exact tunnel profile.
+
+An exact post-synchronization report with delegation clear or administration
+disabled invalidates live authority and waits; it does not permanently block a
+later exact delegation. Removal likewise invalidates the observed path. A
+changed configured profile or immutable owner still blocks, and withdrawal
+with an outstanding pending update retains that uncertainty without replay.
+
+Startup delivery has its own persistent budget: one send per PCEP session, at
+most three sends in a rolling hour, with at least thirty seconds between sends.
+Its total attempt count is monotonic. Enabling this policy does not reset or
+consume the separate lifetime failure-recovery count. Rate-limited sessions
+remain eligible when capacity in the rolling window returns; an uncertain
+pending write or ownership/constraint mismatch still requires reconciliation.
+
+The policy uses the session owner's current observation, so an unchanged live
+delegation can wait for IGP/BGP-LS convergence beyond the local maintenance
+command's thirty-second report-age limit. Every send still revalidates the
+current PCC session, report, exact ownership, held resources and fresh graph.
+Old captures cannot grant startup authority. A topology refresh before durable
+intent discards the stale proposal and recomputes; any enlarged conservative
+hold is persisted first. Deferral spends no attempt and sends no message.
+Failure to persist that state stops recovery.
+
+Before sending `STARTUP_PATH`, the listener retains the union of existing and
+candidate resources and durably records the startup attempt and pending intent.
+A correlated processing acknowledgment alone is insufficient: the matching
+UP/ACTIVE path report must complete the operation. A pending startup write found
+on controller restart remains blocked and is never replayed.
+
+Inspect `managed_failure_recovery.startup_recovery` for policy, total attempts,
+current rate-window timestamps and recent attempt records. Disabling the flag
+stops new automatic startup deliveries while preserving that history. Keep
+Tunnel100's existing delegation and failure-recovery arguments unchanged.
+
 ## Authenticated HTTPS proxy
 
 Keep the existing TLS certificate, HTTPS Basic authentication, static dashboard

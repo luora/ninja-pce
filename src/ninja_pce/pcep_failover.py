@@ -27,6 +27,10 @@ _KIND = "bounded_pcep_failure_recovery"
 _OPERATIONS = {0: "DOWN", 1: "UP", 2: "ACTIVE", 3: "GOING_DOWN", 4: "GOING_UP"}
 
 
+class RecoveryDeferred(ValueError):
+    """No intent or write occurred; retained holds permit a fresh proposal."""
+
+
 def _positive(value: Any, label: str, maximum: float = 3600) -> float:
     try:
         valid = (not isinstance(value, bool) and isinstance(value, (float, int)) and
@@ -568,7 +572,8 @@ class FailureRecoveryPlanner:
                 "outcome": copy.deepcopy(outcome), "message_hex": reply.messages[0].hex(),
                 **(extra or {}),
         }
-        self._data.update(attempts=self._data["attempts"] + 1, last_attempt_at=now,
+        self._record_attempt(self._data["pending"])
+        self._data.update(last_attempt_at=now,
                               status="AWAITING_REPORT", reason="durable_intent_before_network_write")
         self._proposal = None
         try:
@@ -576,6 +581,10 @@ class FailureRecoveryPlanner:
         except (ValueError, OSError):
             self._data.update(blocked=True, status="RECOVERY_REQUIRED", reason="pending_persistence_failed")
             raise
+
+    def _record_attempt(self, pending: dict[str, Any]) -> None:
+        """Keep the legacy lifetime budget separate from explicitly scoped modes."""
+        self._data["attempts"] += 1
 
     def failed(self, reason: str) -> None:
         with self._lock:

@@ -54,3 +54,6 @@ The full suite passed 1,580 tests; Ruff and mypy passed. This result qualifies
 explicit reinstatement of this exact single-tunnel IOS XE profile. It does not
 qualify unattended recovery after a router reboot, general reconciliation of
 uncertain writes, repeated failures, throughput or other vendors.
+
+The later [managed startup recovery trial](managed_startup_recovery_validation.md)
+separately qualifies automatic recovery of the saved profile after a router reload.
