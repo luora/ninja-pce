@@ -78,8 +78,10 @@ cannot emit it.
 initial-path adapter. It requires all computation inputs and an authorized
 head-end binding. Only those PCCs receive update capability `U=1`; both sides
 must advertise it before delegation is accepted. Initiation capability stays
-clear. The final lab allowlist contains PE1 Tunnel100 only. Temporary
-Tunnel101 used during qualification is not a persistent authorization.
+clear. The original single-area qualification authorized PE1 Tunnel100 only.
+The later [manual inter-area tunnel trial](manual_tunnel_delegation.md)
+separately authorized Tunnel1003. Temporary Tunnel101 used during the original
+qualification is not a persistent authorization.
 
 The adapter considers a synchronized, live PCRpt only when:
 
@@ -146,9 +148,12 @@ general autonomous recovery, other images or the remaining failure/restart cases
 
 The default observer and initial-only configuration retain their existing
 behavior. General active optimization, active PCReq reoptimization and
-PCInitiate remain unsupported. Dashboard
-[headend/destination/bandwidth creation](dashboard_tunnel_creation.md) is a
-separate proposal, with no implemented button or mutation API.
+PCInitiate remain unsupported for general operation. Dashboard
+[configuration provisioning](dashboard_provisioning_deployment.md) is a
+separate implemented profile: its SSH adapter creates an owned router
+configuration and grants initial PCEP authority through the exact operation
+journal. A manually created interface does not acquire that ownership merely
+by using a tunnel number in the dashboard's allocation range.
 
 ## Freshness, session scope and limits
 
