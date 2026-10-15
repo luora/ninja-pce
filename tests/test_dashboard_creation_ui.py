@@ -6,6 +6,7 @@ controller, router or external browser dependency is contacted.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import threading
@@ -15,8 +16,24 @@ from pathlib import Path
 import pytest
 
 WEB = Path(__file__).parents[1] / "src/ninja_pce/web"
-CHROME = next((path for path in (shutil.which("chromium"), shutil.which("google-chrome"),
-                                 "/opt/google/chrome/chrome") if path and Path(path).is_file()), None)
+
+
+def browser_executable() -> str | None:
+    explicit = os.environ.get("NINJA_PCE_TEST_BROWSER")
+    if explicit:
+        executable = shutil.which(explicit)
+        if executable is None or not Path(executable).is_file():
+            raise ValueError("NINJA_PCE_TEST_BROWSER must identify an available browser executable")
+        return executable
+    # Hosted Ubuntu images can supply both native Chrome and a Chromium launcher
+    # whose runtime depends on snap services. Prefer the native installation.
+    return next((path for path in (shutil.which("google-chrome"), shutil.which("google-chrome-stable"),
+                                   "/opt/google/chrome/chrome", shutil.which("chromium"),
+                                   shutil.which("chromium-browser"))
+                 if path and Path(path).is_file()), None)
+
+
+CHROME = browser_executable()
 
 HARNESS = r"""
 const calls = JSON.parse(sessionStorage.getItem("test-calls") || "[]");
@@ -126,6 +143,27 @@ CASES = {
       assert($test("creation-status").textContent.includes("Operation "+newer.id),"Old response replaced the newer operation status");
     """,
 }
+
+
+def test_browser_selection_prefers_native_chrome_over_chromium(tmp_path, monkeypatch):
+    native, launcher = tmp_path / "chrome", tmp_path / "chromium"
+    native.touch()
+    launcher.touch()
+    monkeypatch.delenv("NINJA_PCE_TEST_BROWSER", raising=False)
+    monkeypatch.setattr(shutil, "which", lambda name: {"google-chrome": str(native),
+                                                      "chromium": str(launcher)}.get(name))
+    assert browser_executable() == str(native)
+
+
+def test_explicit_browser_selection_is_used_and_missing_override_fails(tmp_path, monkeypatch):
+    selected = tmp_path / "browser"
+    selected.touch()
+    monkeypatch.setenv("NINJA_PCE_TEST_BROWSER", str(selected))
+    monkeypatch.setattr(shutil, "which", lambda name: str(selected) if name == str(selected) else None)
+    assert browser_executable() == str(selected)
+    selected.unlink()
+    with pytest.raises(ValueError, match="NINJA_PCE_TEST_BROWSER"):
+        browser_executable()
 
 
 @pytest.mark.skipif(CHROME is None, reason="Optional headless Chromium is unavailable")

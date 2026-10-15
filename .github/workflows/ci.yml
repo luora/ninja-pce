@@ -15,6 +15,20 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
       - run: python -m pip install -e '.[dev]'
+      - name: Verify native headless browser
+        shell: bash
+        run: |
+          ninja_test_browser="$(command -v google-chrome || command -v google-chrome-stable)"
+          test -n "$ninja_test_browser"
+          echo "NINJA_PCE_TEST_BROWSER=$ninja_test_browser" >> "$GITHUB_ENV"
+          "$ninja_test_browser" --version
+          ninja_browser_profile="$(mktemp -d)"
+          trap 'rm -rf "$ninja_browser_profile"' EXIT
+          timeout 20s "$ninja_test_browser" --headless --no-sandbox --disable-gpu \
+            --disable-dev-shm-usage --disable-background-networking --no-first-run \
+            --no-default-browser-check --disable-sync --user-data-dir="$ninja_browser_profile" \
+            --dump-dom 'data:text/html,<p>ninja-pce-browser-ready</p>' | \
+            grep -q ninja-pce-browser-ready
       - run: ruff check src tests tools gns3/validation
       - run: mypy
       - run: pytest --cov=ninja_pce --cov-report=term-missing --cov-report=xml
