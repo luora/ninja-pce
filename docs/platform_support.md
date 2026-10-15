@@ -1,18 +1,31 @@
 # RSVP-TE rendering and operational evidence
 
 These are documentation-checked configuration candidates and conservative CLI
-parsers, **not a platform certification or an executed GNS3 result**. All files
+parsers, **not a platform certification or a CLI provisioning qualification**. All files
 under `tests/fixtures/operational/*.mock.txt` are synthetic mocks. The golden
 render fixtures describe intended configuration text; they are not router output.
 Those initial renderer/parser checks did not contact a router. Subsequent
 [live GNS3 qualification](live_pcep_computation_validation.md) exercised
 BGP-LS and initial delegated PCEP paths on CSR1000v IOS XE 16.9.7. That
-protocol qualification does not expand the automated CLI release gates below.
+protocol qualification is separate from CLI provisioning. Captured IOS XE
+16.9.7 operational output now supports the narrow evidence dialect described below.
+One subsequent [configuration-provisioning trial](dashboard_configuration_validation.md)
+created a 1 Mbps PE1-to-PE3 tunnel with initial PCEP control and independently
+observed RSVP reservations. This result applies only to that bounded lab profile.
+
+The separate [OSPF multi-area lab profile](multi_area_lab.md) passed underlay,
+isolated BGP-LS ingestion and local PE1-to-PE4 path computation checks on IOS XE
+16.9.7. It requires the documented GoBGP identity correction and explicit ABR
+bindings. The subsequent [topology-domain trial](topology_domain_validation.md)
+qualified automatic initial paths from PE1, PE4 and transit router P5, with
+inter-area RSVP reservations, MPLS echo/trace and healthy controller reconnect.
+Those results apply to the recorded IOS XE profile; other images and vendors
+need their own live qualification.
 
 | Adapter | Documentation / candidate release scope | Numbered IPv4 strict ERO | Operational evidence dialect |
 |---|---|---|---|
 | `iosxr` | ASR 9000 IOS XR 7.9.x; XRv/XRv9000 requires independent image validation | `index N next-address strict ipv4 unicast REMOTE_INTERFACE_IP` | Version 7.9.x, one tunnel identity/destination, admin/oper up, valid path, connected signaling, bandwidth, current LSP ERO/Tspec and Resv Fspec |
-| `iosxe` | IOS XE 17.x command family; parser restricted to 17.12.x | `next-address strict REMOTE_INTERFACE_IP` | Version 17.12.x, tunnel identity/destination, admin/oper up, valid path, connected signaling, bandwidth, RSVP Path ERO and Resv Fspec |
+| `iosxe` | IOS XE 17.12.x and exact observed 16.09.07 / 16.9.7 | `next-address strict REMOTE_INTERFACE_IP` | One tunnel identity/destination, admin/oper up, valid path, connected signaling, bandwidth, current RSVP Path ERO/Tspec and Resv Fspec |
 | `junos` | Junos MPLS documented syntax; parser restricted to 23.4R | `set protocols mpls path NAME REMOTE_INTERFACE_IP strict` | Version 23.4R, one LSP identity/destination, LSP up, active primary up, bandwidth, computed ERO and received RRO |
 | `generic` | Descriptive output, no delivery support | Explicit selected link, address and hop type | None |
 
@@ -54,13 +67,27 @@ not certify this unidentified virtual appliance. Use the initial setup and
 read-only capture procedure in [GNS3 validation](gns3_validation.md). The
 separate two-router profile is for offline preview and lab qualification only.
 
-The IOS XE verifier and write gate remain restricted to **17.12.x**. A 16.9.7
-version is rejected before configuration. `verify_plan` still retains raw
-version and tunnel output read-only, returning `VERIFICATION_FAILED` rather
-than `VERIFIED`. Real complete up/down, RSVP bandwidth and ERO captures must
-support parser changes before expanding that release scope. The separate
-PCEP listener now supports observation, a bounded PCReq profile, and opt-in
-initial delegated PCUpd; see [its implemented scope](pcep_computation.md).
+The IOS XE evidence parser accepts **17.12.x and exactly 16.09.07 / 16.9.7**;
+other Fuji patches remain rejected. Its 16.9.7 fixtures include a captured
+50 Mbps Tunnel100 and a captured zero-bandwidth PCE-created auto-tunnel.
+The parser accepts the observed multiword tunnel description and optional
+`Ifhandle` header, reads the current RSVP Path and Resv sections, and ignores
+the separate unconstrained shortest-path display. This image appends the
+destination loopback to the RSVP ERO display; only that exact terminal endpoint
+is normalized after matching every selected strict hop. Both Path Tspec and
+Resv Fspec must match the intended reservation. Fixture provenance and
+sanitization are recorded in
+[`tests/fixtures/operational/README.md`](../tests/fixtures/operational/README.md).
+
+Recognizing this operational dialect does not qualify automatic CLI provisioning
+or enable dashboard creation. An exact approved CLI plan is still required, and
+any dashboard provisioning service must keep its independent qualification gate
+closed until its exact delivery workflow passes a controlled live test. The
+bounded PE1-to-PE3 1 Mbps profile has
+[one such recorded result](dashboard_configuration_validation.md); shipped
+configuration examples remain disabled by default.
+The separate PCEP listener supports observation, a bounded PCReq profile, and
+opt-in initial delegated PCUpd; see [its implemented scope](pcep_computation.md).
 
 ## Delivery boundary and recovery
 
@@ -72,6 +99,19 @@ alias), then rechecks integrity immediately before configuration. Optional
 `approval_expires_at` is an aware datetime/ISO timestamp. Reconciliation also
 checks current file revisions, because an isolated plan cannot observe a file
 change by itself. `NINJA_PCE_PREVIEW_ONLY` blocks every write at this boundary.
+An optional `qualified_versions` tuple narrows the supported evidence dialects
+to exact releases approved for a delivery profile. It is checked against the
+router's current version before configuration, so recognizing another release
+does not silently extend that profile after a software upgrade.
+
+`build_pce_push_plan` is an explicit IOS XE variant for strict numbered IPv4
+paths without affinity constraints. It adds primary path-option 1 using the
+specified PCE address, sets affinity and mask to zero, and retains the selected
+explicit path-option 10 as fallback. These commands are part of the exact
+reviewed plan identity; ordinary `build_push_plan` output remains explicit-only.
+The CLI postcheck proves RSVP state, bandwidth and current route. PCE selection,
+delegation and authorization of the new tunnel identity require separate
+evidence and controller policy; the configuration helper cannot establish them.
 
 The driver executes bounded read-only version, destination route and scoped
 configuration prechecks, captures state and a diff, and rejects unknown releases

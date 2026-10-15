@@ -1,0 +1,52 @@
+show mpls traffic-eng tunnels Tunnel100
+
+Name: ninja-pce CUSTOMER_A_PE1_PE3_50M PE1 to PE3 (Tunnel100) Destination: 10.255.0.6
+  Status:
+    Admin: up         Oper: up     Path: valid       Signalling: connected
+    path option 10, type explicit EP_CUSTOMER_A_PE1_PE3 (Basis for Setup, path weight 30)
+    path option 1, (PCE address 172.16.100.10) type dynamic
+
+  Config Parameters:
+    Bandwidth: 50000    kbps (Global)  Priority: 7  7   Affinity: 0x0/0xFFFF
+    Metric Type: TE (default)
+    Path-selection Tiebreaker:
+      Global: not set   Tunnel Specific: not set   Effective: min-fill (default)
+    Hop Limit: disabled [ignore: Explicit Path Option with all Strict Hops]
+    Cost Limit: disabled
+    Path-invalidation timeout: 10000 msec (default), Action: Tear
+    AutoRoute: disabled LockDown: disabled Loadshare: 50000 [40000] bw-based
+    auto-bw: disabled
+    Fault-OAM: disabled, Wrap-Protection: disabled, Wrap-Capable: No
+  Active Path Option Parameters:
+    State: explicit path option 10 is active
+    BandwidthOverride: disabled  LockDown: disabled  Verbatim: disabled
+  Node Hop Count: 3
+
+  InLabel  :  -
+  OutLabel : GigabitEthernet2, 28
+  Next Hop : 10.0.13.3
+  RSVP Signalling Info:
+       Src 10.255.0.1, Dst 10.255.0.6, Tun_Id 100, Tun_Instance 223
+    RSVP Path Info:
+      My Address: 10.0.13.1
+      Explicit Route: 10.0.13.3 10.0.34.4 10.0.46.6 10.255.0.6
+      Record   Route:   NONE
+      Tspec: ave rate=50000 kbits, burst=1000 bytes, peak rate=50000 kbits
+    RSVP Resv Info:
+      Record   Route:   NONE
+      Fspec: ave rate=50000 kbits, burst=1000 bytes, peak rate=50000 kbits
+  Shortest Unconstrained Path Info:
+    Path Weight: 30 (TE)
+    Explicit Route: 10.0.12.2 10.0.25.5 10.0.56.6 10.255.0.6
+
+  History:
+    Tunnel:
+      Time since created: 1 hours, 9 minutes
+      Time since path change: 9 seconds
+      Number of LSP IDs (Tun_Instances) used: 223
+    Current LSP: [ID: 223]
+      Uptime: 9 seconds
+      Selection: reoptimization
+    Prior LSP: [ID: 222]
+      ID: path option unknown
+      Removal Trigger: configuration changed (severe)

@@ -177,6 +177,8 @@ def extract_config_commands(rendered_config: str, output_format: str) -> tuple[s
                 rf"tunnel destination {IP}",
                 r"tunnel mpls traffic-eng bandwidth [0-9]+",
                 r"tunnel mpls traffic-eng priority [0-7] [0-7]",
+                r"tunnel mpls traffic-eng affinity 0x0 mask 0x0",
+                rf"tunnel mpls traffic-eng path-option 1 dynamic pce address {IP}",
                 rf"tunnel mpls traffic-eng path-option 10 explicit name {IDENTIFIER}",
             )
         if not any(re.fullmatch(pattern, line) for pattern in patterns):
@@ -257,6 +259,64 @@ def build_push_plan(result: CspfResult, topology: Topology, device: ManagedDevic
     return replace(plan, plan_id=plan.calculated_id())
 
 
+def build_pce_push_plan(
+    result: CspfResult, topology: Topology, device: ManagedDevice, pce_address: str
+) -> PushPlan:
+    """Build an IOS XE PCE path-option plan with the selected explicit fallback.
+
+    This is an explicit opt-in variant; ordinary rendering and ``build_push_plan``
+    continue to create an explicit-only tunnel. A configured PCE path-option does
+    not prove delegation or authorize a PCEP writer for this new tunnel identity.
+    """
+    if not isinstance(pce_address, str):
+        raise SouthboundError("PCE address must be a canonical unicast IPv4 address")
+    try:
+        address = IPv4Address(pce_address)
+    except ValueError as exc:
+        raise SouthboundError("PCE address must be a canonical unicast IPv4 address") from exc
+    if (
+        str(address) != pce_address
+        or address.is_unspecified
+        or address.is_multicast
+        or address == IPv4Address("255.255.255.255")
+    ):
+        raise SouthboundError("PCE address must be a canonical unicast IPv4 address")
+    if any(asdict(result.demand.affinity).values()):
+        raise SouthboundError("PCE-aware configuration supports the no-affinity profile only")
+    if any(hop.hop_type != "strict" for hop in result.explicit_hops):
+        raise SouthboundError("PCE-aware configuration requires a strict numbered IPv4 ERO")
+    plan = build_push_plan(result, topology, device)
+    if plan.output_format != "iosxe":
+        raise SouthboundError("PCE-aware configuration delivery supports IOS XE only")
+    fallback = (
+        " tunnel mpls traffic-eng path-option 10 explicit name "
+        f"{result.demand.output.explicit_path_name}\n"
+    )
+    if plan.rendered_config.count(fallback) != 1:
+        raise SouthboundError("PCE plan requires exactly one selected explicit fallback")
+    rendered = plan.rendered_config.replace(
+        fallback,
+        " tunnel mpls traffic-eng affinity 0x0 mask 0x0\n"
+        f" tunnel mpls traffic-eng path-option 1 dynamic pce address {pce_address}\n{fallback}",
+    )
+    updated = replace(
+        plan,
+        rendered_config=rendered,
+        commands=extract_config_commands(rendered, plan.output_format),
+        # A not-yet-created Tunnel interface can reject the interface-form show
+        # command. An anchored section query returns an empty snapshot instead,
+        # while still exposing any existing exact resource before a write.
+        precheck_commands=(
+            plan.precheck_commands[0],
+            f"show running-config | section ^interface Tunnel{result.demand.output.tunnel_id}$",
+            *plan.precheck_commands[2:],
+        ),
+        config_revision=_digest(rendered),
+        plan_id="",
+    )
+    return replace(updated, plan_id=updated.calculated_id())
+
+
 def config_diff(previous: str | None, desired: str) -> str:
     return "".join(
         unified_diff(
@@ -295,6 +355,7 @@ def _validate_plan(plan: PushPlan) -> None:
         "iosxe": (
             r"show version",
             r"show running-config interface Tunnel[0-9]{1,5}",
+            r"show running-config \| section \^interface Tunnel[0-9]{1,5}\$",
             rf"show running-config \| section \^ip explicit-path name {IDENTIFIER}",
             rf"show ip route {IP}",
             r"show mpls traffic-eng tunnels tunnel [0-9]{1,5}",
@@ -479,6 +540,7 @@ def push_plan(
     verification_attempts: int = 3,
     read_timeout: float = 20,
     pre_write_guard: Callable[[], None] | None = None,
+    qualified_versions: tuple[str, ...] | None = None,
 ) -> PushResult:
     """Execute an exact approved plan. No device contact is made without approval.
 
@@ -487,6 +549,14 @@ def push_plan(
     """
     _validate_plan(plan)
     _bounds(verification_attempts, read_timeout)
+    if qualified_versions is not None and (
+        not isinstance(qualified_versions, tuple)
+        or not 1 <= len(qualified_versions) <= 16
+        or any(not isinstance(value, str) or not re.fullmatch(r"[0-9][A-Za-z0-9.-]{0,63}", value)
+               for value in qualified_versions)
+        or len(set(qualified_versions)) != len(qualified_versions)
+    ):
+        raise SouthboundError("Qualified version policy must contain bounded distinct exact release strings")
     if execute is not True or approved is not True:
         raise SouthboundError("Refusing configuration without execute=True and approved=True")
     approval_id = approved_plan_id or approved_plan_hash
@@ -523,8 +593,11 @@ def push_plan(
                 raise SouthboundError(f"Precheck command rejected: {command}")
             prechecks.append((command, _redact(value, secrets)))
         version = prechecks[0][1]
-        if supported_version(plan.output_format, version) is None:
+        release = supported_version(plan.output_format, version)
+        if release is None:
             raise SouthboundError("Unsupported or missing software version; no configuration sent")
+        if qualified_versions is not None and release not in qualified_versions:
+            raise SouthboundError("Software version is outside the exact qualified delivery policy; no configuration sent")
         snapshot = "\n".join(value for command, value in prechecks if "config" in command)
         assert plan.expectation is not None
         destination = plan.expectation.destination

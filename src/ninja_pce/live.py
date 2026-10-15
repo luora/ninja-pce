@@ -12,9 +12,18 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .state import write_state
+
+if TYPE_CHECKING:
+    from .bgpls import OspfMultiAreaPolicy
+
+
+def _computation_age(value: str) -> int | float:
+    """Keep whole durations identical to historic managed-policy JSON values."""
+    parsed = float(value)
+    return int(parsed) if math.isfinite(parsed) and parsed.is_integer() else parsed
 
 
 def add_live_commands(subparsers: Any) -> None:
@@ -24,6 +33,7 @@ def add_live_commands(subparsers: Any) -> None:
     bgpls.add_argument("--proto", required=True, help="Read-only GoBGP API protobuf file")
     bgpls.add_argument("--peer", action="append", required=True, help="Required BGP-LS exporter IP; repeatable")
     bgpls.add_argument("--node-map", help="JSON object mapping advertised IPv4 router IDs to node names")
+    bgpls.add_argument("--ospf-multi-area-policy", help="Explicit JSON policy binding OSPF area identities")
     bgpls.add_argument("--output", required=True, help="Normalized topology JSON file")
     bgpls.add_argument("--status", required=True, help="Collector health JSON file")
     bgpls.add_argument("--raw", help="Optional raw binary-NLRI capture JSON file")
@@ -35,7 +45,7 @@ def add_live_commands(subparsers: Any) -> None:
     pcep = subparsers.add_parser("pcep-listen", help="Observe lab PCEP; enable computation with explicit options")
     pcep.add_argument("--listen-host", default="127.0.0.1", help="Bind address; select the lab NIC explicitly")
     pcep.add_argument("--port", type=int, default=4189)
-    pcep.add_argument("--allow-peer", action="append", required=True, help="Allowed PCC source IP; repeatable")
+    pcep.add_argument("--allow-peer", action="append", default=[], help="Static allowed PCC source IP; repeatable")
     pcep.add_argument("--capture", required=True, help="Atomic session and LSP-report capture JSON")
     pcep.add_argument("--keepalive", type=int, default=30)
     pcep.add_argument("--deadtimer", type=int, default=120)
@@ -45,11 +55,29 @@ def add_live_commands(subparsers: Any) -> None:
     pcep.add_argument("--compute-bgpls-status", help="Live collector checksummed health file")
     pcep.add_argument("--compute-topology", help="Live normalized topology feed; must remain available")
     pcep.add_argument("--compute-bgpls-peer", action="append", default=[], help="Required live BGP-LS exporter")
+    pcep.add_argument("--compute-max-age", type=_computation_age, default=30,
+                      help="Maximum computation topology age in seconds; positive and at most 30")
     pcep.add_argument("--compute-node-map", help="Advertised router-ID to node-name JSON map")
+    pcep.add_argument("--compute-ospf-multi-area-policy", help="Explicit JSON policy matching the collector")
     pcep.add_argument("--compute-headend", action="append", default=[],
                       help="Authorized PCC-IP=source-loopback; repeatable")
+    pcep.add_argument("--compute-domain-policy",
+                      help="Managed BGP-LS domain policy for automatic PCC and initial LSP discovery")
     pcep.add_argument("--compute-delegated-tunnel", action="append", default=[],
                       help="Opt in to initial delegated path provision for PCC-IP=tunnel-ID; repeatable")
+    pcep.add_argument("--failover-tunnel", help="Opt in to recovery of one delegated PCC-IP=tunnel-ID")
+    pcep.add_argument("--failover-state", help="Persistent failure-recovery journal; required with --failover-tunnel")
+    pcep.add_argument("--managed-failover-operation", help="Exact VERIFIED provisioning operation UUID for recovery")
+    pcep.add_argument("--managed-failover-state", help="Separate persistent managed-recovery journal")
+    pcep.add_argument("--managed-reinstate-request", help="Private one-use request for explicit managed reinstatement")
+    pcep.add_argument("--managed-startup-recovery", action="store_true",
+                      help="Restore the exact verified managed profile once per fresh PCC session, rate limited")
+    pcep.add_argument("--provisioning-state", help="Exact owned CLI-provisioning journal for initial delegation")
+    pcep.add_argument("--creation-state", help="Opt in to private lab creation with a durable state directory")
+    pcep.add_argument("--creation-socket", help="Owner-only Unix console socket; required for lab creation")
+    pcep.add_argument("--creation-headend", action="append", default=[], help="Authorized node-name=PCC-IP")
+    pcep.add_argument("--creation-destination", action="append", default=[], help="Authorized destination node name")
+    pcep.add_argument("--creation-max-bandwidth", type=int, default=1_000_000, help="Lab creation cap in bits/s")
 
 
 def _positive(value: float, label: str) -> None:
@@ -66,6 +94,17 @@ def _node_names(path: str | None) -> dict[str, str]:
     if not all(isinstance(key, str) and isinstance(value, str) for key, value in names.items()):
         raise ValueError("Node map must map router-ID strings to node-name strings")
     return names
+
+
+def _ospf_multi_area_policy(path: str | None) -> OspfMultiAreaPolicy | None:
+    if path is None:
+        return None
+    from .bgpls import parse_ospf_multi_area_policy
+    from .loaders import _load_mapping
+
+    if Path(path).suffix.lower() != ".json":
+        raise ValueError("OSPF multi-area policy must be an explicit JSON file")
+    return parse_ospf_multi_area_policy(_load_mapping(path))
 
 
 def _write_document(path: Path, document: dict[str, Any]) -> None:
@@ -101,16 +140,20 @@ def collect_bgpls(args: argparse.Namespace) -> int:
     for value, label in ((args.interval, "interval"), (args.timeout, "timeout"), (args.max_age, "max-age")):
         _positive(value, label)
     names = _node_names(args.node_map)
+    ospf_multi_area = _ospf_multi_area_policy(args.ospf_multi_area_policy)
     peers = tuple(args.peer)
     provider = GoBgpTopologyProvider(
         proto_path=Path(args.proto), endpoint=args.endpoint, grpcurl=args.grpcurl,
         required_peers=peers, node_names=names, timeout_seconds=args.timeout,
-        max_age_seconds=args.max_age,
+        max_age_seconds=args.max_age, ospf_multi_area=ospf_multi_area,
     )
     output, status = Path(args.output), Path(args.status)
     paths = [output, status] + ([Path(args.raw)] if args.raw else [])
     if len({path.resolve() for path in paths}) != len(paths):
         raise ValueError("Topology, status and raw capture paths must be distinct")
+    inputs = [Path(value).resolve() for value in (args.node_map, args.ospf_multi_area_policy) if value]
+    if any(path.resolve() in inputs for path in paths):
+        raise ValueError("Collector outputs must be distinct from node-map and OSPF policy inputs")
     previous_sigterm = signal.signal(signal.SIGTERM, _stop_collector)
     try:
         while True:
@@ -121,6 +164,7 @@ def collect_bgpls(args: argparse.Namespace) -> int:
                     _write_document(Path(args.raw), capture)
                 topology = parse_gobgp_snapshot(
                     capture, node_names=names, required_peers=peers, max_age_seconds=args.max_age,
+                    ospf_multi_area=ospf_multi_area,
                 )
                 if not topology.nodes or not topology.links:
                     raise ValueError("BGP-LS has no computable TE graph; inspect the raw capture and excluded objects")
@@ -159,10 +203,17 @@ async def _serve_pcep(args: argparse.Namespace) -> int:
     from .pcep import PcepServer, PcepServerConfig
 
     computation_args = [args.compute_bgpls_raw, args.compute_bgpls_status, args.compute_topology,
-                        args.compute_bgpls_peer, args.compute_node_map, args.compute_headend]
+                        args.compute_bgpls_peer]
+    domain_policy = None
+    if args.compute_domain_policy:
+        from .pcep_domain_policy import DomainDelegationPolicy
+
+        domain_policy = DomainDelegationPolicy.from_path(Path(args.compute_domain_policy))
     computer = None
-    if any(computation_args):
-        if not all(computation_args):
+    if (any(computation_args) or args.compute_ospf_multi_area_policy or args.compute_node_map or
+            args.compute_headend or domain_policy is not None):
+        if not all(computation_args) or domain_policy is None and not all(
+                (args.compute_node_map, args.compute_headend)):
             raise ValueError("Computation requires raw, status, topology, exporter, node map and headend options")
         from .pcep_compute import PcepPathComputer
 
@@ -176,18 +227,23 @@ async def _serve_pcep(args: argparse.Namespace) -> int:
             headends[peer] = source
         paths = [Path(value).resolve() for value in
                  (args.capture, args.compute_bgpls_raw, args.compute_bgpls_status, args.compute_topology,
-                  args.compute_node_map)]
+                  args.compute_node_map, args.compute_domain_policy) if value]
+        if args.compute_ospf_multi_area_policy:
+            paths.append(Path(args.compute_ospf_multi_area_policy).resolve())
         if len(set(paths)) != len(paths):
-            raise ValueError("PCEP capture, raw, status, topology and node-map paths must be distinct")
+            raise ValueError("PCEP capture, raw, status, topology, node-map and OSPF policy paths must be distinct")
         computer = PcepPathComputer(
             raw_path=Path(args.compute_bgpls_raw), status_path=Path(args.compute_bgpls_status),
             topology_path=Path(args.compute_topology), required_peers=tuple(args.compute_bgpls_peer),
             node_names=_node_names(args.compute_node_map), headends=headends,
+            max_age_seconds=args.compute_max_age,
+            ospf_multi_area=_ospf_multi_area_policy(args.compute_ospf_multi_area_policy),
+            domain_policy=domain_policy,
         )
     server_options: dict[str, Any] = {"capture_path": Path(args.capture)}
     if computer is not None:
         server_options["path_computer"] = computer
-    if args.compute_delegated_tunnel:
+    if args.compute_delegated_tunnel or args.provisioning_state or domain_policy is not None:
         if computer is None:
             raise ValueError("Delegated path provision requires all computation options")
         from .pcep_delegation import DelegatedPathComputer
@@ -201,10 +257,93 @@ async def _serve_pcep(args: argparse.Namespace) -> int:
             if not tunnel.isascii() or not tunnel.isdecimal():
                 raise ValueError("Delegated tunnel ID must be decimal")
             allowed_tunnels[peer] = (*allowed_tunnels.get(peer, ()), int(tunnel))
-        server_options["delegated_computer"] = DelegatedPathComputer(computer, allowed_tunnels)
+        provisioning_authorizer = None
+        if args.provisioning_state:
+            from .pcep_provisioning import JournalProvisioningAuthorization
+
+            provisioning_path = Path(args.provisioning_state).resolve()
+            if provisioning_path in paths:
+                raise ValueError("Configuration provisioning journal must be distinct from capture and live inputs")
+            provisioning_authorizer = JournalProvisioningAuthorization(provisioning_path, computer.headends)
+        server_options["delegated_computer"] = DelegatedPathComputer(
+            computer, allowed_tunnels, provisioning_authorizer=provisioning_authorizer,
+        )
+    if bool(args.failover_tunnel) != bool(args.failover_state):
+        raise ValueError("Failure recovery requires both --failover-tunnel and --failover-state")
+    if args.failover_tunnel:
+        delegated = server_options.get("delegated_computer")
+        if computer is None or delegated is None:
+            raise ValueError("Failure recovery requires computation and explicit delegated tunnel authorization")
+        if args.failover_tunnel.count("=") != 1:
+            raise ValueError("Failure recovery binding must be PCC-IP=tunnel-ID")
+        address, tunnel = args.failover_tunnel.split("=")
+        peer = str(ipaddress.IPv4Address(address))
+        if not tunnel.isascii() or not tunnel.isdecimal():
+            raise ValueError("Failure recovery tunnel ID must be decimal")
+        tunnel_id = int(tunnel)
+        if tunnel_id not in delegated.allowed_tunnels.get(peer, ()):
+            raise ValueError("Failure recovery tunnel must already be explicitly authorized for delegation")
+        journal = Path(args.failover_state).resolve()
+        if journal in paths or args.provisioning_state and journal == Path(args.provisioning_state).resolve():
+            raise ValueError("Failure recovery journal must be distinct from capture and live input files")
+        from .pcep_failover import FailureRecoveryPlanner
+
+        server_options["failover"] = FailureRecoveryPlanner(
+            computer, peer=peer, tunnel_id=tunnel_id, journal_path=journal,
+        )
+    if bool(args.managed_failover_operation) != bool(args.managed_failover_state):
+        raise ValueError("Managed recovery requires --managed-failover-operation and --managed-failover-state")
+    if args.managed_reinstate_request and not args.managed_failover_operation:
+        raise ValueError("Managed reinstatement requires an existing managed recovery profile")
+    if args.managed_startup_recovery and not args.managed_failover_operation:
+        raise ValueError("Managed startup recovery requires an existing managed recovery profile")
+    if args.managed_failover_operation:
+        if computer is None or not args.provisioning_state:
+            raise ValueError("Managed recovery requires computation and --provisioning-state")
+        journal = Path(args.managed_failover_state).resolve()
+        protected = set(paths) | {Path(args.provisioning_state).resolve()}
+        if args.failover_state:
+            protected.add(Path(args.failover_state).resolve())
+        if journal in protected:
+            raise ValueError("Managed recovery journal must be distinct from live inputs and other journals")
+        if args.managed_reinstate_request and Path(args.managed_reinstate_request).resolve() in protected | {journal}:
+            raise ValueError("Managed reinstatement request must be separate from live inputs and journals")
+        from .pcep_managed_failover import ManagedFailureRecoveryPlanner
+
+        managed = ManagedFailureRecoveryPlanner(
+            computer, operation_journal=Path(args.provisioning_state),
+            operation_id=args.managed_failover_operation, journal_path=Path(args.managed_failover_state),
+            reinstatement_path=Path(args.managed_reinstate_request) if args.managed_reinstate_request else None,
+            startup_recovery=args.managed_startup_recovery,
+        )
+        legacy = server_options.get("failover")
+        if legacy is not None and (legacy.peer, legacy.tunnel_id) == (managed.peer, managed.tunnel_id):
+            raise ValueError("Recovery profiles must control distinct scoped tunnels")
+        server_options["managed_failover"] = managed
+    creation_args = [args.creation_state, args.creation_socket, args.creation_headend, args.creation_destination]
+    if any(creation_args):
+        if not all(creation_args) or computer is None:
+            raise ValueError("Private creation requires state, socket, endpoints and live computation options")
+        from .pcep_creation import CreationSession
+        from .tunnel_creation import CreationManager
+
+        creation_headends = {}
+        for binding in args.creation_headend:
+            if binding.count("=") != 1:
+                raise ValueError("Creation headend binding must be node-name=PCC-IP")
+            name, address = binding.split("=")
+            if name in creation_headends:
+                raise ValueError("Creation headends must be distinct")
+            creation_headends[name] = str(ipaddress.IPv4Address(address))
+        server_options["creation"] = CreationSession(CreationManager(
+            computer, Path(args.creation_state), creation_headends, tuple(args.creation_destination),
+            max_bandwidth_bps=args.creation_max_bandwidth,
+        ), Path(args.creation_socket))
     server = PcepServer(
         PcepServerConfig(
             listen_host=args.listen_host, port=args.port, allowed_peers=tuple(args.allow_peer),
+            allowed_peer_networks=tuple(str(network) for network in domain_policy.pcc_prefixes)
+            if domain_policy is not None else (),
             keepalive=args.keepalive, deadtimer=args.deadtimer,
             stateless_peers=tuple(args.stateless_peer),
         ),

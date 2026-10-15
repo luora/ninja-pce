@@ -1,0 +1,10 @@
+# Sanitized isolated-lab profile. Match the SSH username and pinned host key
+# to your router before qualification. No credentials belong in this file.
+devices:
+  PE1:
+    topology_node_id: PE1
+    host: 10.255.0.1
+    device_type: cisco_ios
+    username: pce-provisioner
+    port: 22
+    password_env: NINJA_PCE_PE1_PASSWORD

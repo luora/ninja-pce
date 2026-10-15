@@ -2,7 +2,8 @@
 
 The default profile observes RSVP LSP reports. Explicitly configured responders
 can answer PCReq or provision an initial, authorized empty-ERO delegation using
-PCUpd. There is no PCInitiate or automatic rerouting of active LSPs. Captures
+PCUpd. An additional opt-in profile recovers one delegated tunnel after a
+validated topology withdrawal. Private lab initiation is separately opt-in. Captures
 are evidence, not a TED or reservation confirmation. Plain TCP provides no
 cryptographic peer identity.
 """
@@ -13,27 +14,32 @@ import copy
 import ipaddress
 import json
 import math
+import os
 import struct
 import time
 import uuid
 from collections import deque
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
+from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from .pcep_compute import PcepPathComputer
+    from .pcep_creation import CreationSession
     from .pcep_delegation import DelegatedPathComputer
+    from .pcep_failover import FailureRecoveryPlanner
+    from .pcep_managed_failover import ManagedFailureRecoveryPlanner
 
-from .state import load_state, write_state
+from .state import digest, load_state, write_state
 
 OPEN, KEEPALIVE, PCREQ, PCREP, NOTIFICATION, ERROR, CLOSE = range(1, 8)
-PCRPT, PCUPD = 10, 11
+PCRPT, PCUPD, PCINITIATE = 10, 11, 12
 MESSAGE_NAMES = {
     OPEN: "OPEN", KEEPALIVE: "KEEPALIVE", PCREQ: "PCReq", PCREP: "PCRep",
     NOTIFICATION: "PCNtf", ERROR: "PCErr", CLOSE: "CLOSE", PCRPT: "PCRpt",
-    PCUPD: "PCUpd",
+    PCUPD: "PCUpd", PCINITIATE: "PCInitiate",
 }
 
 
@@ -70,14 +76,18 @@ def encode_message(message_type: int, body: bytes = b"") -> bytes:
 
 
 def encode_open(keepalive: int = 30, deadtimer: int = 120, sid: int = 0, *, stateful: bool = True,
-                updates: bool = False) -> bytes:
+                updates: bool = False, initiation: bool = False) -> bytes:
     for value in (keepalive, deadtimer, sid):
         if type(value) is not int or not 0 <= value <= 255:
             raise ValueError("OPEN fields must be unsigned octets")
     if updates and not stateful:
         raise ValueError("LSP updates require stateful capability")
-    # U is opt-in for the bounded initial-delegation adapter; I stays clear.
-    capability = struct.pack("!HHI", 16, 4, int(updates)) if stateful else b""
+    if type(initiation) is not bool or initiation and (not stateful or not updates):
+        raise ValueError("LSP initiation requires explicit stateful update capability")
+    # U and I remain opt-in. Initiation advertises only RSVP (PST 0), not SR.
+    capability = struct.pack("!HHI", 16, 4, int(updates) | (4 if initiation else 0)) if stateful else b""
+    if initiation:
+        capability += struct.pack("!HH", 34, 5) + bytes((0, 0, 0, 1, 0, 0, 0, 0))
     return encode_message(OPEN, encode_object(1, bytes((0x20, keepalive, deadtimer, sid)) + capability))
 
 
@@ -177,7 +187,7 @@ def _lsp(obj: PcepObject) -> dict[str, Any]:
     tlvs = parse_tlvs(obj.body[4:])
     data: dict[str, Any] = {
         "plsp_id": bits >> 12, "delegate": bool(bits & 1), "sync": bool(bits & 2),
-        "removed": bool(bits & 4), "administrative_up": bool(bits & 8),
+        "removed": bool(bits & 4), "administrative_up": bool(bits & 8), "created": bool(bits & 128),
         "operational_code": (bits >> 4) & 7,
         "tlvs": [{"type": kind, "value_hex": value.hex()} for kind, value in tlvs],
     }
@@ -297,11 +307,14 @@ class PcepServerConfig:
     computation_timeout: float = 5.0
     max_computations: int = 4
     update_ack_timeout: float = 60.0
+    allowed_peer_networks: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         ipaddress.ip_address(self.listen_host)
-        if not isinstance(self.allowed_peers, tuple) or not self.allowed_peers or len(self.allowed_peers) > 256:
-            raise ValueError("Explicit nonempty tuple of allowed peer IP addresses required (maximum256)")
+        if (not isinstance(self.allowed_peers, tuple) or len(self.allowed_peers) > 256 or
+                not isinstance(self.allowed_peer_networks, tuple) or len(self.allowed_peer_networks) > 256 or
+                not self.allowed_peers and not self.allowed_peer_networks):
+            raise ValueError("Explicit allowed peers or policy-scoped peer networks required (maximum256 each)")
         normalized = []
         for peer in self.allowed_peers:
             address = ipaddress.ip_address(peer)
@@ -311,6 +324,15 @@ class PcepServerConfig:
         if len(set(normalized)) != len(normalized):
             raise ValueError("Duplicate allowed peers")
         object.__setattr__(self, "allowed_peers", tuple(normalized))
+        networks = []
+        for value in self.allowed_peer_networks:
+            if not isinstance(value, str):
+                raise ValueError("Peer networks require canonical IPv4 CIDRs")
+            network = ipaddress.ip_network(value, strict=True)
+            if (network.version != 4 or str(network) != value or network.prefixlen == 0 or
+                    network.is_multicast or network in networks):
+                raise ValueError("Peer networks require distinct, bounded canonical IPv4 CIDRs")
+            networks.append(network)
         if (not isinstance(self.stateless_peers, tuple) or
                 not set(self.stateless_peers) <= set(self.allowed_peers)):
             raise ValueError("Stateless peers must be a tuple contained in the allowlist")
@@ -351,6 +373,8 @@ class _Connection:
     srp_sequence: int = 0
     delegation_attempts: set[str] = dataclass_field(default_factory=set)
     owned_plsps: dict[int, tuple[Any, ...]] = dataclass_field(default_factory=dict)
+    delegation_deferred: dict[str, float] = dataclass_field(default_factory=dict)
+    delegation_retry: asyncio.TimerHandle | None = None
 
 
 class PcepServer:
@@ -358,21 +382,76 @@ class PcepServer:
 
     def __init__(self, config: PcepServerConfig, *, capture_path: Path | None = None,
                  path_computer: PcepPathComputer | None = None,
-                 delegated_computer: DelegatedPathComputer | None = None):
+                 delegated_computer: DelegatedPathComputer | None = None,
+                 failover: FailureRecoveryPlanner | None = None,
+                 managed_failover: ManagedFailureRecoveryPlanner | None = None,
+                 creation: CreationSession | None = None):
         self.config = config
         self.capture_path = capture_path
         self.path_computer = path_computer
         self.delegated_computer = delegated_computer
+        self.failover = failover
+        self.managed_failover = managed_failover
+        self.creation = creation
+        if config.allowed_peer_networks and (path_computer is None or
+                                            getattr(path_computer, "domain_policy", None) is None):
+            raise ValueError("Peer network admission requires fresh topology-domain authority")
+        self._peer_networks = tuple(ipaddress.ip_network(value) for value in config.allowed_peer_networks)
+        delegated_peers = (getattr(delegated_computer, "authorized_peers", delegated_computer.allowed_tunnels)
+                           if delegated_computer is not None else ())
+        if creation is not None and (
+                path_computer is not creation.manager.computer or not config.keepalive or
+                not set(creation.manager.headends.values()) <= set(config.allowed_peers) or
+                set(creation.manager.headends.values()) & set(config.stateless_peers)):
+            raise ValueError("Creation requires the same computer and explicitly allowed stateful PCCs")
         if delegated_computer is not None and (
                 path_computer is None or not config.keepalive or
-                not set(delegated_computer.allowed_tunnels) <= set(config.allowed_peers) or
-                set(delegated_computer.allowed_tunnels) & set(config.stateless_peers)):
+                not set(delegated_peers) <= set(config.allowed_peers) or
+                set(delegated_peers) & set(config.stateless_peers)):
             raise ValueError("Delegation requires computation and allowed stateful PCCs")
+        if failover is not None and (
+                delegated_computer is None or path_computer is not failover.computer or
+                failover.tunnel_id not in delegated_computer.allowed_tunnels.get(failover.peer, ())):
+            raise ValueError("Failure recovery requires the same computer and an authorized delegated tunnel")
+        if failover is not None:
+            inputs = [failover.computer.raw_path, failover.computer.status_path, failover.computer.topology_path]
+            if capture_path is not None:
+                inputs.append(capture_path)
+            if failover.path.resolve() in {path.resolve() for path in inputs}:
+                raise ValueError("Failure recovery journal must be distinct from observation files")
+        if managed_failover is not None:
+            from .pcep_managed_failover import ManagedFailureRecoveryPlanner
+            from .pcep_provisioning import JournalProvisioningAuthorization
+
+            authorizer = getattr(delegated_computer, "provisioning_authorizer", None)
+            if (not isinstance(managed_failover, ManagedFailureRecoveryPlanner) or
+                    delegated_computer is None or path_computer is not managed_failover.computer or
+                    delegated_computer.computer is not path_computer or
+                    not isinstance(authorizer, JournalProvisioningAuthorization) or
+                    authorizer.path.resolve() != managed_failover.operation_journal.resolve() or
+                    managed_failover.peer not in config.allowed_peers or
+                    managed_failover.peer in config.stateless_peers or not config.keepalive or
+                    not managed_failover.validate_authority()):
+                raise ValueError("Managed recovery requires the same computer and exact provisioning journal authority")
+            inputs = [managed_failover.computer.raw_path, managed_failover.computer.status_path,
+                      managed_failover.computer.topology_path, managed_failover.operation_journal]
+            if capture_path is not None:
+                inputs.append(capture_path)
+            if failover is not None:
+                inputs.append(failover.path)
+                if (failover.peer, failover.tunnel_id) == (managed_failover.peer, managed_failover.tunnel_id):
+                    raise ValueError("Recovery profiles must control distinct scoped tunnels")
+            if managed_failover.path.resolve() in {path.resolve() for path in inputs}:
+                raise ValueError("Managed recovery journal must be distinct from other live files")
+            if failover is not None and failover.path.resolve() == managed_failover.operation_journal.resolve():
+                raise ValueError("Legacy recovery journal must be distinct from the provisioning journal")
         self._compute_slots = asyncio.Semaphore(config.max_computations)
         self._workers: set[asyncio.Task[Any]] = set()
         self._server: asyncio.Server | None = None
         self._serving_task: asyncio.Task[None] | None = None
+        self._failover_task: asyncio.Task[None] | None = None
         self._connections: dict[str, _Connection] = {}
+        self._admitting: set[str] = set()
         self._tasks: set[asyncio.Task[None]] = set()
         self._peers: dict[str, dict[str, Any]] = {}
         self._events: deque[dict[str, Any]] = deque(maxlen=config.max_capture_events)
@@ -381,15 +460,41 @@ class PcepServer:
         self._capture_error: str | None = None
         self._closing = False
         self._rejected = 0
+        self._recovery_cursor = 0
         if capture_path is not None and capture_path.exists():
             previous = load_state(capture_path)
             if previous.get("kind") != "passive_pcep_capture":
                 raise ValueError("Capture path contains unrelated controller state")
             for peer, data in previous.get("peers", {}).items():
-                if peer in config.allowed_peers and isinstance(data, dict):
+                if self._peer_candidate(peer) and isinstance(data, dict):
                     data.update(state="DISCONNECTED", fresh=False, synchronized=False,
                                 stale_reason="process_restart")
                     self._peers[peer] = data
+
+    def _peer_candidate(self, peer: str) -> bool:
+        address = ipaddress.ip_address(peer)
+        return peer in self.config.allowed_peers or any(address in network for network in self._peer_networks)
+
+    async def _validate_dynamic_peer(self, peer: str) -> bool:
+        """A CIDR is only a transport filter; fresh TED ownership grants entry."""
+        computer = self.path_computer
+        if computer is None or self._compute_slots.locked():
+            return False
+        await self._compute_slots.acquire()
+        worker = asyncio.create_task(asyncio.to_thread(computer.validated_peer, peer))
+        self._workers.add(worker)
+
+        def finished(task: asyncio.Task[Any]) -> None:
+            self._workers.discard(task)
+            self._compute_slots.release()
+            if not task.cancelled():
+                task.exception()
+
+        worker.add_done_callback(finished)
+        try:
+            return await asyncio.wait_for(asyncio.shield(worker), self.config.computation_timeout) is True
+        except (asyncio.TimeoutError, ValueError, OSError, RuntimeError):
+            return False
 
     @property
     def addresses(self) -> list[tuple[Any, ...]]:
@@ -409,18 +514,35 @@ class PcepServer:
             data["valid_until"] = data.get("last_received_at", now) + ttl if fresh else None
             for report in data.get("reports", {}).values():
                 report["stale"] = not (fresh and data.get("synchronized", False))
-        return {
+        capture = {
             "kind": "passive_pcep_capture", "run_id": self._run_id, "generated_at": now,
             "listener_running": self._server is not None and self._server.is_serving(),
             "mode": "request_computation" if self.path_computer else "passive_stateful",
             "authoritative": False, "complete": False,
-            "capabilities": {"stateful": bool(set(self.config.allowed_peers) - set(self.config.stateless_peers)),
-                             "lsp_update": self.delegated_computer is not None, "lsp_initiation": False,
+            "capabilities": {"stateful": bool(self.config.allowed_peer_networks or
+                                              set(self.config.allowed_peers) - set(self.config.stateless_peers)),
+                             "lsp_update": self.delegated_computer is not None or self.creation is not None,
+                             "lsp_initiation": self.creation is not None,
+                             "configuration_provisioning": getattr(
+                                 self.delegated_computer, "provisioning_authorizer", None) is not None,
                              "path_computation": self.path_computer is not None},
+            "provisioning_policy_digest": getattr(
+                getattr(self.delegated_computer, "provisioning_authorizer", None), "policy_digest", None),
             "stateless_peers": list(self.config.stateless_peers),
             "capture_error": self._capture_error, "rejected_connections": self._rejected,
+            "failure_recovery": self.failover.snapshot() if self.failover is not None else None,
             "peers": peers, "events": list(self._events),
         }
+        policy = getattr(self.path_computer, "ospf_multi_area", None)
+        if policy is not None:
+            capture["topology_policy"] = {"ospf_multi_area": policy.document(),
+                                          "ospf_multi_area_digest": policy.digest}
+        if self.managed_failover is not None:
+            capture["managed_failure_recovery"] = self.managed_failover.snapshot()
+        return capture
+
+    def _recovery_planners(self) -> tuple[FailureRecoveryPlanner, ...]:
+        return tuple(planner for planner in (self.failover, self.managed_failover) if planner is not None)
 
     def _persist(self) -> None:
         if self.capture_path is not None:
@@ -447,11 +569,17 @@ class PcepServer:
                                                  limit=self.config.max_message_bytes + 4, backlog=32)
         try:
             self._persist()
-        except OSError:
+            if self.creation is not None:
+                await self.creation.start(self)
+        except (OSError, ValueError):
+            if self.creation is not None:
+                await self.creation.close()
             self._server.close()
             await self._server.wait_closed()
             self._server = None
             raise
+        if self._recovery_planners():
+            self._failover_task = asyncio.create_task(self._watch_failover())
 
     async def serve_forever(self) -> None:
         if self._server is None:
@@ -465,6 +593,12 @@ class PcepServer:
 
     async def close(self) -> None:
         self._closing = True
+        if self.creation is not None:
+            await self.creation.close()
+        if self._failover_task is not None:
+            self._failover_task.cancel()
+            await asyncio.gather(self._failover_task, return_exceptions=True)
+            self._failover_task = None
         server, self._server = self._server, None
         if server is not None:
             server.close()
@@ -487,10 +621,14 @@ class PcepServer:
             self._serving_task = None
         self._persist()
 
-    async def _send(self, peer: str, connection: _Connection, raw: bytes) -> None:
+    async def _send(self, peer: str, connection: _Connection, raw: bytes, *,
+                    guard: Callable[[], bool] | None = None,
+                    prepare: Callable[[], None] | None = None) -> None:
         async with connection.send_lock:
-            if connection.terminal:
+            if connection.terminal or guard is not None and not guard():
                 return
+            if prepare is not None:
+                prepare()
             connection.writer.write(raw)
             await asyncio.wait_for(connection.writer.drain(), timeout=self.config.handshake_timeout)
             connection.last_tx = time.monotonic()
@@ -544,40 +682,379 @@ class PcepServer:
         elif not self._closing and not connection.terminal and self._connections.get(peer) is connection:
             self._schedule_delegations(peer, connection)
 
-    def _schedule_delegations(self, peer: str, connection: _Connection) -> None:
-        from .pcep_delegation import ownership_key, report_key
+    def _defer_delegation(self, peer: str, connection: _Connection, report: dict[str, Any]) -> None:
+        key = self._delegation_attempt_key(report)
+        connection.delegation_attempts.discard(key)
+        connection.delegation_deferred[key] = time.monotonic() + 3
+        if connection.delegation_retry is None or connection.delegation_retry.cancelled():
+            def retry() -> None:
+                connection.delegation_retry = None
+                self._schedule_delegations(peer, connection)
+
+            connection.delegation_retry = asyncio.get_running_loop().call_later(3, retry)
+
+    async def _adopt_policy_active(self, peer: str, connection: _Connection,
+                                  reports: list[dict[str, Any]]) -> None:
+        from .pcep_delegation import ownership_key, report_fingerprint, report_key
 
         computer = self.delegated_computer
-        if (computer is None or peer not in computer.allowed_tunnels or not connection.state["synchronized"] or
+        assert computer is not None
+        for report in reports:
+            self._defer_delegation(peer, connection, report)
+            current = connection.state["reports"].get(report_key(report))
+            if current is not None:
+                current["delegation_accepted"] = False
+        if self._compute_slots.locked():
+            return
+        await self._compute_slots.acquire()
+        worker = asyncio.create_task(asyncio.to_thread(
+            lambda: [computer.adopt_active(peer, report) for report in reports]))
+        self._workers.add(worker)
+
+        def finished(task: asyncio.Task[Any]) -> None:
+            self._workers.discard(task)
+            self._compute_slots.release()
+            if not task.cancelled():
+                task.exception()
+
+        worker.add_done_callback(finished)
+        try:
+            decisions = await asyncio.wait_for(asyncio.shield(worker), self.config.computation_timeout)
+        except (asyncio.TimeoutError, ValueError, RuntimeError, OSError):
+            return
+        if self._connections.get(peer) is not connection or not self._recovery_session_fresh(connection):
+            return
+        async with connection.send_lock:
+            for original, decision in zip(reports, decisions):
+                latest = connection.state["reports"].get(report_key(original))
+                selected = self._policy_selection(peer, connection)
+                if (decision is not True or latest is None or latest["sync"] or
+                        not self._recovery_session_fresh(connection) or
+                        selected is not None and ownership_key(latest) not in selected or
+                        report_fingerprint(latest) != report_fingerprint(original)):
+                    continue
+                # This is passive adoption of a reported delegation, not
+                # evidence that this controller sent or owns its path. Keep
+                # it out of owned_plsps and recheck domain authority on retry.
+                latest["delegation_accepted"] = True
+        self._persist()
+
+    @staticmethod
+    def _delegation_attempt_key(report: dict[str, Any]) -> str:
+        from .pcep_delegation import ownership_key
+
+        # RSVP recreates LSP instances with new IDs when setup fails. That is
+        # the same request, not another authorization or a new refusal budget.
+        # A real configuration change remains distinguishable within bounds.
+        return digest({"ownership": ownership_key(report), "attributes": report["attributes"],
+                       "symbolic_name_hex": report.get("symbolic_name_hex")})
+
+    @staticmethod
+    def _uncertain_update(update: dict[str, Any]) -> bool:
+        if update.get("status") == "DELEGATION_RETURNED":
+            return False
+        if update.get("status") == "ACK_TIMEOUT" or update.get("acknowledged") is not True:
+            return True
+        return update.get("status") != "PCC_ERROR" and update.get(
+            "latest_reported_state", update.get("reported_state")) not in {"UP", "ACTIVE", "REMOVED"}
+
+    @staticmethod
+    def _make_update_room(connection: _Connection, additional: int = 1) -> bool:
+        """Bound outstanding control state without treating audit history as load."""
+        updates = connection.state["updates"]
+        needed = len(updates) + additional - 32
+        if needed <= 0:
+            return True
+        now = time.time()
+        removable = []
+        for srp, update in updates.items():
+            refused = update.get("status") == "DELEGATION_RETURNED"
+            settled = update.get("acknowledged") is True and (
+                update.get("status") == "PCC_ERROR" or
+                update.get("latest_reported_state", update.get("reported_state")) in {"UP", "ACTIVE", "REMOVED"})
+            # Provisioning verification consumes this correlated evidence for
+            # its complete 120-second authority window. Do not evict it early.
+            verifying = update.get("provisioning_plan_id") is not None and now - update.get("sent_at", now) <= 120
+            if (refused or settled) and not verifying and update.get("status") != "ACK_TIMEOUT":
+                removable.append(srp)
+        if len(removable) < needed:
+            return False  # Never discard pending positive writes to admit more.
+        archive = connection.state.setdefault("update_archive", [])
+        for srp in removable[:needed]:
+            archive.append({**updates.pop(srp), "srp_id": int(srp), "archived_at": now})
+        del archive[:-32]
+        return True
+
+    def _policy_selection(self, peer: str, connection: _Connection) -> set[tuple[Any, ...]] | None:
+        """Select current ownerships deterministically within the headend cap."""
+        from .pcep_delegation import ownership_key
+
+        computer = self.delegated_computer
+        limit = computer.concurrent_limit(peer) if computer is not None and hasattr(computer, "concurrent_limit") else None
+        if limit is None:
+            return None
+        current: dict[tuple[Any, ...], dict[str, Any]] = {}
+        for report in connection.state["reports"].values():
+            if report["removed"]:
+                continue
+            owner = ownership_key(report)
+            previous = current.get(owner)
+            if previous is None or report.get("received_at", 0) > previous.get("received_at", 0):
+                current[owner] = report
+
+        def protected(report: dict[str, Any]) -> bool:
+            return bool(self.creation is not None and self.creation.owns(peer, report) or
+                        any(planner.matches(peer, report) for planner in self._recovery_planners()))
+
+        def priority(item: tuple[tuple[Any, ...], dict[str, Any]]) -> tuple[Any, ...]:
+            owner, report = item
+            owned = connection.owned_plsps.get(report["plsp_id"]) == owner or report.get("delegation_accepted") is True
+            return (not protected(report), not owned, report["plsp_id"], repr(owner))
+
+        # Include every live reported ownership, even an unsupported profile.
+        # Invalid requests cannot create extra capacity by escaping policy.
+        return {owner for owner, _ in sorted(current.items(), key=priority)[:limit]}
+
+    def _schedule_delegations(self, peer: str, connection: _Connection) -> None:
+        from .pcep_delegation import ownership_key
+
+        computer = self.delegated_computer
+        authorized_peers = getattr(computer, "authorized_peers", computer.allowed_tunnels) if computer else ()
+        domain_peer = computer is not None and getattr(computer, "domain_enabled", False) and self._peer_candidate(peer)
+        if (computer is None or peer not in authorized_peers and not domain_peer or not connection.state["synchronized"] or
                 connection.terminal or self._closing or
                 connection.computation is not None and not connection.computation.done()):
             return
-        reports = []
+        reports: list[dict[str, Any]] = []
+        active_reports: list[dict[str, Any]] = []
+        current_keys = {self._delegation_attempt_key(report) for report in connection.state["reports"].values()}
+        retained_keys = current_keys | {update["delegation_attempt_key"] for update in connection.state["updates"].values()
+                                        if self._uncertain_update(update) and "delegation_attempt_key" in update}
+        connection.delegation_attempts.intersection_update(retained_keys)
+        if hasattr(connection, "delegation_deferred"):
+            connection.delegation_deferred = {key: until for key, until in connection.delegation_deferred.items()
+                                              if key in current_keys}
+        selected = self._policy_selection(peer, connection)
         for report in connection.state["reports"].values():
-            key = report_key(report)
+            key = self._delegation_attempt_key(report)
             if not report["delegate"] or report["removed"]:
+                continue
+            if self.creation is not None and self.creation.owns(peer, report):
+                continue
+            if self.managed_failover is not None and self.managed_failover.matches(peer, report):
+                # A verified provisioned tunnel belongs exclusively to its
+                # recovery policy, including DOWN/empty-ERO reports on restart.
+                # Recovery authority never becomes initial-path authority.
+                continue
+            recovery_state = self.failover.snapshot() if self.failover is not None else {}
+            if self.failover is not None and self.failover.matches(peer, report) and (
+                    report["ero"] or recovery_state.get("baseline") or recovery_state.get("pending")):
+                # The opt-in recovery policy validates/adopts the existing
+                # path independently. Do not return its delegation merely
+                # because it was not initially provisioned in this session.
                 continue
             if connection.owned_plsps.get(report["plsp_id"]) == ownership_key(report) and report["ero"]:
                 report["delegation_accepted"] = True
                 continue
+            if getattr(connection, "delegation_deferred", {}).get(key, 0) > time.monotonic():
+                continue
+            policy_active = getattr(computer, "headend_policy", None) is not None or domain_peer
+            if policy_active and report["ero"] and report["operational_code"] in (1, 2):
+                # An ACTIVE path is observation, never an initial request. If
+                # authority or topology is temporarily unavailable, retain the
+                # report and retry without returning D=0 on the shared session.
+                if (not report["sync"] and report["administrative_up"] and
+                        (selected is None or ownership_key(report) in selected) and len(active_reports) < 8):
+                    active_reports.append(copy.deepcopy(report))
+                continue
             if key in connection.delegation_attempts:
                 continue
+            if len(connection.delegation_attempts) + len(reports) >= self.config.max_reports_per_peer:
+                continue  # Bounded work history never tears down shared PCC transport.
             reports.append(copy.deepcopy(report))
             if len(reports) == 8:
                 break
+        if active_reports:
+            connection.request_body = None
+            connection.computation = asyncio.create_task(self._adopt_policy_active(peer, connection, active_reports))
+            connection.computation.add_done_callback(lambda task: self._delegation_done(peer, connection, task))
+            return
         if not reports:
             return
-        if (len(connection.delegation_attempts) + len(reports) > self.config.max_reports_per_peer or
-                len(connection.state["updates"]) + len(reports) > 32 or
+        if (not self._make_update_room(connection, len(reports)) or
                 connection.srp_sequence + len(reports) >= 0xFFFFFFFF):
-            connection.writer.close()
             return
         srps = tuple(range(connection.srp_sequence + 1, connection.srp_sequence + len(reports) + 1))
         connection.srp_sequence = srps[-1]
-        connection.delegation_attempts.update(report_key(report) for report in reports)
+        connection.delegation_attempts.update(self._delegation_attempt_key(report) for report in reports)
         connection.request_body = None
         connection.computation = asyncio.create_task(self._compute_delegations(peer, connection, reports, srps))
         connection.computation.add_done_callback(lambda task: self._delegation_done(peer, connection, task))
+
+    def _recovery_report(self, peer: str, connection: _Connection,
+                         planner: FailureRecoveryPlanner | None = None) -> dict[str, Any] | None:
+        recovery = planner if planner is not None else self.failover
+        if recovery is None:
+            return None
+        reports = [report for report in connection.state["reports"].values()
+                   if recovery.matches(peer, report)]
+        # Prefer the latest report, including revocation. An older ACTIVE
+        # incarnation must not conceal a newer DOWN or undelegated report.
+        if not reports:
+            return None
+        pending = recovery.snapshot().get("pending")
+        if pending:
+            def priority(report: dict[str, Any]) -> tuple[bool, bool, float]:
+                recent = report.get("received_at", 0) >= pending["created_at"]
+                addresses = [hop.get("address") for hop in report["ero"]]
+                return (recent and addresses == pending["ero"],
+                        recent and report["srp_id"] == pending["srp_id"], report.get("received_at", 0))
+            return max(reports, key=priority)
+        return max(reports, key=lambda report: report.get("received_at", 0))
+
+    def _recovery_session_fresh(self, connection: _Connection) -> bool:
+        ttl = min(connection.remote_deadtimer or self.config.observation_ttl,
+                  self.config.observation_ttl)
+        return bool(not self._closing and not connection.terminal and
+                    connection.state["state"] == "ESTABLISHED" and
+                    connection.state["synchronized"] and
+                    (connection.state.get("peer_open", {}).get("stateful_flags") or 0) & 1 and
+                    time.monotonic() - connection.last_rx < ttl)
+
+    def _recovery_failed(self, reason: str, planner: FailureRecoveryPlanner | None = None) -> None:
+        recovery = planner if planner is not None else self.failover
+        if recovery is None:
+            return
+        try:
+            recovery.failed(reason)
+        except (OSError, ValueError) as exc:
+            # Journal errors stop the monitor without bypassing transport
+            # cleanup or masking the original session failure.
+            self._capture_error = f"Failure journal unavailable: {exc}"
+
+    async def _watch_failover(self) -> None:
+        """Watch topology independently of incoming PCRpt and keepalive traffic."""
+        planners = self._recovery_planners()
+        assert planners
+        try:
+            while not self._closing:
+                await asyncio.sleep(1)
+                if self._capture_error is not None:
+                    for recovery in planners:
+                        self._recovery_failed("capture_unavailable", recovery)
+                    return
+                # One per-session computation and SRP sequence cover both
+                # profiles. Rotate first consideration so a healthy legacy
+                # tunnel cannot starve a failed managed tunnel on the same PCC.
+                start = self._recovery_cursor % len(planners)
+                self._recovery_cursor += 1
+                for recovery in planners[start:] + planners[:start]:
+                    peer = recovery.peer
+                    connection = self._connections.get(peer)
+                    if connection is None or not self._recovery_session_fresh(connection):
+                        self._recovery_failed("session_unavailable_or_stale", recovery)
+                        continue
+                    if connection.computation is not None and not connection.computation.done():
+                        continue
+                    report = self._recovery_report(peer, connection, recovery)
+                    if report is None:
+                        self._recovery_failed("controlled_tunnel_unavailable", recovery)
+                        continue
+                    recovery.observe(peer, report, fresh=True, synchronized=True)
+                    if not report["delegate"] or not report["administrative_up"] or report["removed"]:
+                        self._persist()
+                        continue
+                    connection.request_body = None
+                    connection.computation = asyncio.create_task(
+                        self._compute_failure(peer, connection, report, recovery))
+                    connection.computation.add_done_callback(
+                        partial(self._recovery_task_done, peer, connection, planner=recovery))
+        except (OSError, ValueError, RuntimeError) as exc:
+            for recovery in planners:
+                self._recovery_failed(f"recovery_monitor_failed:{type(exc).__name__}", recovery)
+            self._capture_error = f"Failure recovery stopped: {exc}"
+
+    def _recovery_task_done(self, peer: str, connection: _Connection, task: asyncio.Task[None], *,
+                            planner: FailureRecoveryPlanner | None = None) -> None:
+        if not task.cancelled() and task.exception() is not None:
+            self._recovery_failed("recovery_task_failed", planner)
+            self._capture_error = f"Failure recovery stopped: {task.exception()}"
+        elif not self._closing and not connection.terminal and self._connections.get(peer) is connection:
+            self._schedule_delegations(peer, connection)
+
+    async def _compute_failure(self, peer: str, connection: _Connection,
+                               report: dict[str, Any], planner: FailureRecoveryPlanner | None = None) -> None:
+        from .pcep_delegation import ownership_key, report_fingerprint
+
+        recovery = planner if planner is not None else self.failover
+        assert recovery is not None
+        if (self._compute_slots.locked() or connection.srp_sequence >= 0xFFFFFFFE or
+                not self._make_update_room(connection)):
+            return
+        original = copy.deepcopy(report)
+        srp = connection.srp_sequence + 1
+        await self._compute_slots.acquire()
+        worker = asyncio.create_task(asyncio.to_thread(recovery.compute, peer, original, srp))
+        self._workers.add(worker)
+
+        def finished(task: asyncio.Task[Any]) -> None:
+            self._workers.discard(task)
+            self._compute_slots.release()
+            if not task.cancelled():
+                task.exception()
+
+        worker.add_done_callback(finished)
+        try:
+            reply = await asyncio.wait_for(asyncio.shield(worker), self.config.computation_timeout)
+        except (asyncio.TimeoutError, ValueError, RuntimeError, OSError):
+            self._recovery_failed("recovery_computation_failed", recovery)
+            return
+        if reply is None:
+            self._persist()
+            return
+        current = self._recovery_report(peer, connection, recovery)
+        if (self._connections.get(peer) is not connection or not self._recovery_session_fresh(connection) or
+                current is None or report_fingerprint(current) != report_fingerprint(original)):
+            return
+        if os.environ.get("NINJA_PCE_PREVIEW_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}:
+            return
+        if not recovery.computer.validate_reply(reply):
+            return
+        def authorized() -> bool:
+            latest = self._recovery_report(peer, connection, recovery)
+            return bool(self._capture_error is None and self._connections.get(peer) is connection and
+                        self._recovery_session_fresh(connection) and latest is not None and
+                        connection.srp_sequence + 1 == srp and len(connection.state["updates"]) < 32 and
+                        report_fingerprint(latest) == report_fingerprint(original) and
+                        os.environ.get("NINJA_PCE_PREVIEW_ONLY", "").strip().lower() not in
+                        {"1", "true", "yes", "on"} and recovery.computer.validate_reply(reply) and
+                        (recovery is not self.managed_failover or self.managed_failover.validate_authority()))
+
+        def prepare() -> None:
+            # This runs inside the send lock, immediately before writer.write.
+            # Persist uncertainty before exposing bytes to the transport.
+            recovery.prepare_send(peer, current, reply)
+            connection.srp_sequence = srp
+            outcome = reply.outcomes[0]
+            connection.state["updates"][str(srp)] = {
+                **outcome, "sent_at": time.time(), "acknowledged": False,
+                "plsp_id": current["plsp_id"], "srp_id": srp,
+                "sender": current["identifiers"]["sender"],
+                "endpoint": current["identifiers"]["endpoint"],
+                "tunnel_id": current["identifiers"]["tunnel_id"],
+                "ownership_key": list(ownership_key(current)), "topology_digest": reply.topology_digest,
+            }
+            connection.owned_plsps[current["plsp_id"]] = ownership_key(current)
+
+        from .pcep_failover import RecoveryDeferred
+
+        try:
+            await self._send(peer, connection, reply.messages[0], guard=authorized, prepare=prepare)
+        except RecoveryDeferred:
+            # The planner persisted conservative holds without an intent. No
+            # SRP sequence or update record advanced; the watcher can retry
+            # against the next fresh topology without stopping recovery.
+            self._persist()
 
     async def _compute_delegations(self, peer: str, connection: _Connection,
                                    reports: list[dict[str, Any]], srps: tuple[int, ...]) -> None:
@@ -586,6 +1063,9 @@ class PcepServer:
 
         computer = self.delegated_computer
         assert computer is not None
+        selected = self._policy_selection(peer, connection)
+        admitted = [index for index, report in enumerate(reports)
+                    if selected is None or ownership_key(report) in selected]
 
         def refused(reason: str) -> PathReply:
             return PathReply(tuple(return_delegation(report, srp) for report, srp in zip(reports, srps)),
@@ -598,8 +1078,27 @@ class PcepServer:
             await self._compute_slots.acquire()
 
             def run() -> PathReply:
-                result = computer(peer, reports, srps)
-                return result if computer.validate_reply(result) else refused("topology_changed_or_unavailable")
+                if getattr(computer, "domain_enabled", False) and not computer.computer.validated_peer(peer):
+                    return refused("topology_domain_temporarily_unavailable")
+                # Quota admission is performed against the whole current peer
+                # state before the batch, so parallel candidates cannot each
+                # independently claim the last available slot.
+                result = computer(peer, [reports[index] for index in admitted],
+                                  tuple(srps[index] for index in admitted)) if admitted else None
+                if result is not None and not computer.validate_reply(result):
+                    return refused("topology_changed_or_unavailable")
+                messages, outcomes = [], []
+                results = dict(zip(admitted, zip(result.messages, result.outcomes))) if result is not None else {}
+                for index, (report, srp) in enumerate(zip(reports, srps)):
+                    if index in results:
+                        message, outcome = results[index]
+                    else:
+                        message = return_delegation(report, srp)
+                        outcome = {"srp_id": srp, "plsp_id": report["plsp_id"],
+                                   "status": "DELEGATION_RETURNED", "reason": "headend_concurrent_limit"}
+                    messages.append(message)
+                    outcomes.append(outcome)
+                return PathReply(tuple(messages), tuple(outcomes), result.topology_digest if result is not None else None)
 
             worker = asyncio.create_task(asyncio.to_thread(run))
             self._workers.add(worker)
@@ -620,17 +1119,47 @@ class PcepServer:
         for original, message, outcome in zip(reports, reply.messages, reply.outcomes):
             current = connection.state["reports"].get(report_key(original))
             if current is None or report_fingerprint(current) != report_fingerprint(original):
+                self._defer_delegation(peer, connection, original)
                 continue  # Revoked, changed, or removed while the worker ran.
-            srp = str(outcome["srp_id"])
-            connection.state["updates"][srp] = {**outcome, "sent_at": time.time(), "acknowledged": False,
-                                               "ownership_key": list(ownership_key(original)),
-                                               "topology_digest": reply.topology_digest}
-            if outcome["status"] == "INITIAL_PATH":
-                connection.owned_plsps[original["plsp_id"]] = ownership_key(original)
-                current["delegation_accepted"] = True
-            else:
-                connection.owned_plsps.pop(original["plsp_id"], None)
-            await self._send(peer, connection, message)
+            if os.environ.get("NINJA_PCE_PREVIEW_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}:
+                continue
+            reason = str(outcome.get("reason", ""))
+            if outcome["status"] == "DELEGATION_RETURNED" and (
+                    reason in {"topology_changed_or_unavailable", "computation_capacity_exceeded",
+                               "topology_domain_temporarily_unavailable", "headend_concurrent_limit"} or
+                    reason.startswith("initial_computation_unavailable:")):
+                self._defer_delegation(peer, connection, original)
+                continue
+            def authorized_initial() -> bool:
+                latest = connection.state["reports"].get(report_key(original))
+                selected_now = self._policy_selection(peer, connection)
+                return bool(self._capture_error is None and self._connections.get(peer) is connection and
+                            self._recovery_session_fresh(connection) and latest is not None and
+                            len(connection.state["updates"]) < 32 and
+                            (outcome["status"] != "INITIAL_PATH" or selected_now is None or
+                             ownership_key(latest) in selected_now) and
+                            report_fingerprint(latest) == report_fingerprint(original) and
+                            os.environ.get("NINJA_PCE_PREVIEW_ONLY", "").strip().lower() not in
+                            {"1", "true", "yes", "on"} and
+                            (not hasattr(computer, "validate_authorization") or
+                             computer.validate_authorization(peer, latest, outcome)) and
+                            computer.validate_reply(reply))
+
+            def prepare_initial() -> None:
+                srp = str(outcome["srp_id"])
+                connection.state["updates"][srp] = {**outcome, "sent_at": time.time(), "acknowledged": False,
+                                                   "ownership_key": list(ownership_key(original)),
+                                                   "delegation_attempt_key": self._delegation_attempt_key(original),
+                                                   "topology_digest": reply.topology_digest}
+                if outcome["status"] == "INITIAL_PATH":
+                    connection.owned_plsps[original["plsp_id"]] = ownership_key(original)
+                    current["delegation_accepted"] = True
+                else:
+                    connection.owned_plsps.pop(original["plsp_id"], None)
+
+            await self._send(peer, connection, message, guard=authorized_initial, prepare=prepare_initial)
+            if str(outcome["srp_id"]) not in connection.state["updates"]:
+                self._defer_delegation(peer, connection, original)
 
     def _acknowledge_updates(self, connection: _Connection, reports: list[dict[str, Any]]) -> None:
         from .pcep_delegation import ownership_key
@@ -690,12 +1219,25 @@ class PcepServer:
         self._tasks.add(task)
         address = writer.get_extra_info("peername")
         peer = str(ipaddress.ip_address(address[0])) if address else ""
-        if (self._closing or self._capture_error is not None or peer not in self.config.allowed_peers or
-                peer in self._connections or len(self._connections) >= self.config.max_sessions):
+        if (self._closing or self._capture_error is not None or not self._peer_candidate(peer) or
+                peer in self._connections or peer in self._admitting or
+                len(self._connections) + len(self._admitting) >= self.config.max_sessions):
             self._rejected += 1
             # RFC 5440 errata2940 allows ephemeral PCC source ports. Identity is the IP.
             if peer in self._connections:
                 writer.write(encode_error(9, 0))
+            writer.close()
+            await writer.wait_closed()
+            self._tasks.discard(task)
+            return
+        self._admitting.add(peer)
+        try:
+            approved = peer in self.config.allowed_peers or await self._validate_dynamic_peer(peer)
+        finally:
+            self._admitting.discard(peer)
+        if (not approved or self._closing or self._capture_error is not None or peer in self._connections or
+                len(self._connections) >= self.config.max_sessions):
+            self._rejected += 1
             writer.close()
             await writer.wait_closed()
             self._tasks.discard(task)
@@ -706,7 +1248,7 @@ class PcepServer:
             "peer_ip": peer, "peer_port": address[1], "source": f"pcep:{peer}",
             "connected_at": time.time(), "fresh": False, "synchronized": False,
             "reports": {}, "lsp_names": {}, "stale_reason": "synchronization_incomplete",
-            "updates": {},
+            "updates": {}, "update_archive": [],
         }
         connection = _Connection(writer, state, time.monotonic(), time.monotonic())
         self._connections[peer] = connection
@@ -715,10 +1257,16 @@ class PcepServer:
         reason = "transport_closed"
         try:
             local_stateful = peer not in self.config.stateless_peers
-            local_updates = self.delegated_computer is not None and peer in self.delegated_computer.allowed_tunnels
+            local_initiation = self.creation is not None and self.creation.allows(peer)
+            local_updates = local_initiation or (
+                self.delegated_computer is not None and (peer in getattr(
+                    self.delegated_computer, "authorized_peers", self.delegated_computer.allowed_tunnels) or
+                    getattr(self.delegated_computer, "domain_enabled", False) and self._peer_candidate(peer)))
             state["local_stateful"] = local_stateful
+            state["local_initiation"] = local_initiation
             await self._send(peer, connection, encode_open(
-                self.config.keepalive, self.config.deadtimer, self._sid, stateful=local_stateful, updates=local_updates))
+                self.config.keepalive, self.config.deadtimer, self._sid, stateful=local_stateful,
+                updates=local_updates, initiation=local_initiation))
             raw = await asyncio.wait_for(self._read(reader), self.config.handshake_timeout)
             self._event(peer, "rx", raw)
             if raw[1] != OPEN:
@@ -786,9 +1334,14 @@ class PcepServer:
                     for obj in objects:
                         if obj.object_class == 33 and obj.object_type == 1 and len(obj.body) >= 8:
                             srp = str(int.from_bytes(obj.body[4:8], "big"))
+                            if self.creation is not None:
+                                self.creation.peer_error(peer, state["session_id"], int(srp), state["last_peer_errors"])
                             update = state["updates"].get(srp)
                             if update is not None:
                                 update.update(acknowledged=True, status="PCC_ERROR", errors=state["last_peer_errors"])
+                                for recovery in self._recovery_planners():
+                                    if recovery.peer == peer and update.get("tunnel_id") == recovery.tunnel_id:
+                                        self._recovery_failed("pcc_error", recovery)
                                 connection.owned_plsps.pop(update["plsp_id"], None)
                 elif message_type == PCRPT:
                     if not remote["stateful"] or not local_stateful:
@@ -796,8 +1349,25 @@ class PcepServer:
                     allow_delegation = bool(local_updates and (remote["stateful_flags"] or 0) & 1)
                     reports = parse_reports(raw[4:], allow_delegation=allow_delegation)
                     self._apply_reports(state, reports)
+                    if self.creation is not None:
+                        self.creation.observe(peer, reports)
                     if allow_delegation:
                         self._acknowledge_updates(connection, reports)
+                        for recovery in self._recovery_planners():
+                            if recovery.peer != peer:
+                                continue
+                            revoked = any(recovery.matches(peer, item) and not item["removed"] and
+                                          (not item["delegate"] or not item["administrative_up"])
+                                          for item in reports)
+                            current = self._recovery_report(peer, connection, recovery)
+                            if revoked:
+                                self._recovery_failed("delegation_revoked_or_administratively_disabled", recovery)
+                            elif current is not None:
+                                recovery.observe(peer, current, fresh=True, synchronized=state["synchronized"])
+                            elif any(item["removed"] and (recovery.matches(peer, item) or
+                                     item["plsp_id"] == (recovery.snapshot().get("baseline") or {}).get("plsp_id"))
+                                     for item in reports):
+                                self._recovery_failed("controlled_tunnel_removed", recovery)
                         self._schedule_delegations(peer, connection)
                 elif message_type == PCREQ and self.path_computer is not None:
                     if connection.computation is not None and not connection.computation.done():
@@ -852,6 +1422,8 @@ class PcepServer:
             reason = f"transport_or_capture_error:{exc}"
         finally:
             connection.terminal = True
+            if connection.delegation_retry is not None:
+                connection.delegation_retry.cancel()
             if connection.computation is not None:
                 connection.computation.cancel()
                 await asyncio.gather(connection.computation, return_exceptions=True)
@@ -859,6 +1431,11 @@ class PcepServer:
                 keepalive_task.cancel()
                 await asyncio.gather(keepalive_task, return_exceptions=True)
             self._connections.pop(peer, None)
+            if self.creation is not None:
+                self.creation.disconnected(peer)
+            for recovery in self._recovery_planners():
+                if recovery.peer == peer:
+                    self._recovery_failed("pcep_session_disconnected", recovery)
             state.update(state="DISCONNECTED", fresh=False, synchronized=False, disconnected_at=time.time(),
                          stale_reason="server_shutdown" if self._closing else reason)
             writer.close()
@@ -919,26 +1496,39 @@ class PcepServer:
                 if previous_name is None:
                     raise PcepProtocolError("Initial report missing symbolic path name")
                 report.update(symbolic_name=previous_name["name"], symbolic_name_hex=previous_name["hex"])
-            if previous_name and previous_name["hex"] != report["symbolic_name_hex"]:
+            if (previous_name and previous_name["hex"] != report["symbolic_name_hex"] and
+                    any(item["plsp_id"] == report["plsp_id"] for item in working.values())):
                 raise PcepProtocolError("PLSP-ID symbolic path name changed during session")
+            # Retain omitted-name support across RSVP path removal, but allow
+            # explicit PLSP allocator reuse once all old incarnations are gone.
             if any(value["hex"] == report["symbolic_name_hex"] and other != plsp
                    for other, value in names.items()):
                 raise PcepProtocolError("Symbolic path name maps to multiple PLSP-IDs")
+            names.pop(plsp, None)
             names[plsp] = {"name": report["symbolic_name"], "hex": report["symbolic_name_hex"]}
-            if len(names) > self.config.max_reports_per_peer:
-                raise PcepProtocolError("LSP name binding storage limit exceeded")
+            report.update(received_at=time.time(), source=state["source"], session_id=state["session_id"],
+                          authoritative=False, delegation_accepted=False)
             if report["removed"]:
                 if identifiers["all_zero"]:
                     working = {name: value for name, value in working.items()
                                if value["plsp_id"] != report["plsp_id"]}
                 else:
                     working.pop(key, None)
-                continue
-            report.update(received_at=time.time(), source=state["source"], session_id=state["session_id"],
-                          authoritative=False, delegation_accepted=False)
-            working[key] = report
+            else:
+                working[key] = report
             if len(working) > self.config.max_reports_per_peer:
                 raise PcepProtocolError("Report storage limit exceeded")
+            if len(names) > self.config.max_reports_per_peer:
+                protected_names = {str(item["plsp_id"]) for item in working.values()}
+                protected_names.update(str(update["plsp_id"]) for update in state.get("updates", {}).values()
+                                       if self._uncertain_update(update) and "plsp_id" in update)
+                for other in list(names):
+                    if len(names) <= self.config.max_reports_per_peer:
+                        break
+                    if other not in protected_names:
+                        names.pop(other)
+                if len(names) > self.config.max_reports_per_peer:
+                    raise PcepProtocolError("LSP name binding storage limit exceeded")
         if len(json.dumps({"reports": working, "lsp_names": names}, allow_nan=False).encode()) > \
                 self.config.max_report_bytes_per_peer:
             raise PcepProtocolError("Report byte storage limit exceeded")

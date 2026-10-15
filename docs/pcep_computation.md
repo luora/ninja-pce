@@ -1,9 +1,15 @@
-# PCEP computation and initial path provision
+# PCEP computation, initial provision and bounded recovery
 
-Ninja-PCE has three separate PCEP profiles: default passive observation,
+Ninja-PCE has separate PCEP profiles: default passive observation,
 opt-in PCReq/PCRep path advice, and a further opt-in for an initial PCUpd to
-an explicitly authorized PCC and tunnel. The PCC performs RSVP signalling
-and admission. A computed route, a TCP write and a protocol acknowledgment
+an authorized delegated tunnel. The [topology-domain policy](topology_domain_delegation.md)
+discovers eligible PCCs and new tunnel IDs from a fresh managed-domain TED,
+without individual controller registrations. Legacy explicit bindings remain
+available. Another opt-in profile provides
+[one-tunnel withdrawal recovery](pcep_failure_recovery.md), with unit/socket
+coverage and [one qualified IOS XE 16.9.7 lab trial](pcep_failure_recovery_validation.md).
+The PCC performs RSVP signalling and admission. A computed route, a TCP write
+and a protocol acknowledgment
 establish different facts; none alone proves reservation or forwarding.
 
 One live initial delegated PCRpt/PCUpd provision to PE1 Tunnel100 succeeded
@@ -23,7 +29,8 @@ results and do not validate these new computation profiles.
 Without computation flags, `pcep-listen` maintains allowlisted sessions and
 captures LSP reports. It advertises stateful capability with update capability
 clear (`U=0`) and initiation capability clear. It sends no path updates or
-initiation messages. P1 remains an observation peer in this lab.
+initiation messages. Transit routers can become PCCs under the domain policy;
+their role does not restrict initial-path eligibility.
 
 The IP allowlist identifies the permitted TCP source; it is not cryptographic
 authentication. Bind to the isolated lab NIC. Authenticated PCEPS remains
@@ -31,9 +38,10 @@ future work.
 
 ## PCReq/PCRep profile
 
-Computation requires an authorized PCC-IP to head-end-loopback binding and
-fresh, healthy BGP-LS inputs. An allowed reporting peer without that binding
-cannot request a path for another source. Each request describes one
+Computation requires fresh, healthy BGP-LS inputs and either an explicit
+PCC/headend binding or a current unique managed-domain node whose TE loopback
+equals the PCC source. Neither grants permission to impersonate another
+source. Each request describes one
 unidirectional, numbered IPv4 RSVP-TE path.
 
 | Object | Implemented local profile |
@@ -75,8 +83,10 @@ cannot emit it.
 initial-path adapter. It requires all computation inputs and an authorized
 head-end binding. Only those PCCs receive update capability `U=1`; both sides
 must advertise it before delegation is accepted. Initiation capability stays
-clear. The final lab allowlist contains PE1 Tunnel100 only. Temporary
-Tunnel101 used during qualification is not a persistent authorization.
+clear. The original single-area qualification authorized PE1 Tunnel100 only.
+The later [manual inter-area tunnel trial](manual_tunnel_delegation.md)
+separately authorized Tunnel1003. Temporary Tunnel101 used during the original
+qualification is not a persistent authorization.
 
 The adapter considers a synchronized, live PCRpt only when:
 
@@ -98,8 +108,8 @@ The adapter considers a synchronized, live PCRpt only when:
 The PCUpd contains a fresh SRP ID, the existing PLSP-ID, `D=1`, a strict
 numbered ERO and requested LSPA/bandwidth/TE attributes. It supplies an initial
 route to an already configured PCC tunnel. It does not create a tunnel or
-update an active route. Later reports are observed without repeatedly
-recomputing or rerouting that LSP.
+update an active route. With only this initial-path profile enabled, later
+reports are observed without repeatedly recomputing or rerouting that LSP.
 
 A refused delegation receives an empty PCUpd with `D=0`, including SRP, LSP
 and an empty ERO object. This returns control to the PCC. It is not rollback
@@ -114,6 +124,41 @@ PCRpt/PCUpd; it cannot issue PCReq while that delegation remains in effect.
 The [Cisco 16.9 Dynamic PCC guide](https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/seg_routing/configuration/xe-16-9/segrt-xe-16-9-book/sr-dynamic-pcc.html)
 documents RSVP-TE and SR-TE delegation, but its examples do not establish this
 lab's exact interoperability.
+
+## Opt-in withdrawal recovery
+
+The [failure recovery runbook](pcep_failure_recovery.md) defines a separate
+`--failover-tunnel`/`--failover-state` profile for one already authorized tunnel.
+It first maps a synchronized, delegated UP/ACTIVE strict numbered path, then
+requires a later validated withdrawal or explicit down state of a selected
+edge. Stable failure evidence can trigger a replacement PCUpd with unchanged
+endpoints, bandwidth, priorities and LSPA. No existing-reservation credit or
+preemption is granted.
+
+Healthy-path metric/bandwidth changes and restoration do not trigger updates.
+A durable journal records intent before sending and retains uncertain pending
+operations across restart for manual review; it does not integrate PCEP with
+the shared reservation ledger or establish durable delegated ownership.
+`RECOVERED` requires correlated processing and matching reported route/state;
+it is control-plane convergence, not independent forwarding proof.
+
+On 2026-10-11, a P1 → P2 withdrawal moved PE1 Tunnel100 from
+PE1 → P1 → P2 → PE3 to PE1 → P3 → P4 → PE3 through exactly one failure PCUpd.
+Requested bandwidth remained 50 Mbps with priorities 7/7. Correlated DOWN then
+ACTIVE reports were corroborated by transit RSVP reservations, MPLS echo 5/5
+and a matching trace. Restoring the failed interface did not trigger switchback.
+The [dated qualification record](pcep_failure_recovery_validation.md) contains
+the exact topology revision and evidence. This single trial does not qualify
+general autonomous recovery, other images or the remaining failure/restart cases.
+
+The default observer and initial-only configuration retain their existing
+behavior. General active optimization, active PCReq reoptimization and
+PCInitiate remain unsupported for general operation. Dashboard
+[configuration provisioning](dashboard_provisioning_deployment.md) is a
+separate implemented profile: its SSH adapter creates an owned router
+configuration and grants initial PCEP authority through the exact operation
+journal. A manually created interface does not acquire that ownership merely
+by using a tunnel number in the dashboard's allocation range.
 
 ## Freshness, session scope and limits
 
@@ -175,7 +220,8 @@ includes:
 ```
 
 `--compute-headend` means **PCC TCP source IP = requested head-end loopback**.
-The tunnel binding authorizes only initial PCUpd, not every reported LSP.
+By itself, the tunnel binding authorizes initial PCUpd, not every reported LSP
+or withdrawal recovery. The latter requires its separate explicit opt-in.
 Do not combine this peer's delegation binding with `--stateless-peer`;
 delegation requires stateful capability. P1 has no initial-path authorization.
 
@@ -225,6 +271,8 @@ races.
 [RFC 5440](https://www.rfc-editor.org/rfc/rfc5440.html) defines PCReq/PCRep;
 [RFC 3209](https://www.rfc-editor.org/rfc/rfc3209.html) defines RSVP-TE admission
 and signalling. Label local codec/socket tests separately from live evidence.
-General active rerouting, PCInitiate, durable ownership/recovery, reservation
-ledger integration, preemption, authenticated transport and automatic
-reoptimization remain future work.
+General active optimization, PCReq reoptimization, PCInitiate, durable delegated
+ownership/recovery, reservation ledger integration, preemption and authenticated
+transport remain future work. Additional recovery scenarios still need live
+qualification; the recorded withdrawal and historical initial-provision evidence
+do not qualify broader recovery.

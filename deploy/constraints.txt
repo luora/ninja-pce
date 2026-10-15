@@ -1,0 +1,7 @@
+# Core bundle tested on Ubuntu 24.04 / CPython 3.12.
+# Download a wheelhouse separately on each target Python/platform combination.
+networkx==3.7; python_version >= "3.12"
+networkx==3.4.2; python_version < "3.12"
+PyYAML==6.0.3
+Jinja2==3.1.6
+MarkupSafe==3.0.4

@@ -49,7 +49,7 @@ def supported_version(output_format: str, version_output: str) -> str | None:
     }
     releases = {
         "iosxr": r"7\.9\.\d+[A-Za-z0-9.-]*",
-        "iosxe": r"17\.12\.\d+[A-Za-z0-9.-]*",
+        "iosxe": r"(?:17\.12\.\d+[A-Za-z0-9.-]*|16\.09\.07|16\.9\.7)",
         "junos": r"23\.4R\d+[A-Za-z0-9.-]*",
     }
     pattern = patterns.get(output_format)
@@ -85,7 +85,7 @@ def _bandwidth(value: str | None, unit: str = "bps") -> int | None:
 
 
 class CliOperationalVerifier:
-    """IOS XR 7.9.x, IOS XE 17.12.x, Junos 23.4R CLI evidence dialects."""
+    """IOS XR 7.9.x, IOS XE 17.12.x/16.9.7, Junos 23.4R CLI dialects."""
 
     def verify(
         self,
@@ -118,17 +118,26 @@ class CliOperationalVerifier:
         bandwidth: int | None = None
         hops: tuple[tuple[str, str], ...] = ()
         if output_format in {"iosxr", "iosxe"}:
-            headers = list(
-                re.finditer(
-                    r"^\s*Name:\s*(\S+)(?:\s+\((Tunnel\d+)\))?\s+Destination:\s*(\d+\.\d+\.\d+\.\d+)\s*$",
-                    text,
-                    re.M | re.I,
-                )
+            iosxe_16_9 = output_format == "iosxe" and version in {"16.09.07", "16.9.7"}
+            header_pattern = (
+                r"^\s*Name:\s*[^\r\n]+?\s+\((Tunnel\d+)\)\s+Destination:\s*"
+                r"(\d+\.\d+\.\d+\.\d+)"
+                r"(?:\s+Ifhandle:\s*0x[0-9a-fA-F]+(?:\s+\(auto-tunnel for pce client\))?)?\s*$"
+                if iosxe_16_9
+                else r"^\s*Name:\s*(\S+)(?:\s+\((Tunnel\d+)\))?\s+Destination:\s*"
+                r"(\d+\.\d+\.\d+\.\d+)\s*$"
             )
-            header = headers[0] if len(headers) == 1 else None
+            headers = list(
+                re.finditer(header_pattern, text, re.M | re.I)
+            )
+            header = (
+                headers[0]
+                if len(headers) == 1 and len(re.findall(r"^\s*Name:", text, re.M | re.I)) == 1
+                else None
+            )
             if header:
-                identity = header.group(2) or header.group(1)
-                destination = header.group(3)
+                identity = header.group(1) if iosxe_16_9 else header.group(2) or header.group(1)
+                destination = header.group(2) if iosxe_16_9 else header.group(3)
             state_labels = (r"\bAdmin:", r"\bOper:", r"\bPath:", r"\bSignall?ing:")
             if any(len(re.findall(label, text, re.I)) != 1 for label in state_labels) or not re.search(
                 r"Admin:\s*up\s+Oper:\s*up\s+Path:\s*valid\s+Signall?ing:\s*connected\b", text, re.I
@@ -181,30 +190,59 @@ class CliOperationalVerifier:
                 ):
                     errors.append("Ambiguous current RSVP bandwidth evidence")
             else:
-                route = re.search(
-                    r"RSVP Path Info:.*?Explicit Route:\s*([^\n]*(?:\n[ \t]+(?:\d+\.\d+\.\d+\.\d+\s*)+)*)(?:\n|\Z)",
+                path_sections = re.findall(
+                    r"^\s*RSVP Path Info:\s*\n(.*?)(?=^\s*RSVP Resv Info:|\Z)",
                     text,
-                    re.S | re.I,
+                    re.S | re.M | re.I,
+                )
+                resv_sections = re.findall(
+                    r"^\s*RSVP Resv Info:\s*\n(.*?)(?=^\s*(?:Shortest Unconstrained Path Info|History):|\Z)",
+                    text,
+                    re.S | re.M | re.I,
+                )
+                path_text = path_sections[0] if len(path_sections) == 1 else ""
+                resv_text = resv_sections[0] if len(resv_sections) == 1 else ""
+                ipv4 = r"\d+\.\d+\.\d+\.\d+"
+                route = re.search(
+                    rf"^[ \t]*Explicit Route:[ \t]*({ipv4}(?:[ \t]+{ipv4})*"
+                    rf"(?:[ \t]*\n[ \t]+{ipv4}(?:[ \t]+{ipv4})*)*)[ \t]*$",
+                    path_text,
+                    re.M | re.I,
                 )
                 if route:
                     hops = tuple(
                         ("strict", ip) for ip in re.findall(r"\b\d+\.\d+\.\d+\.\d+\b", route.group(1))
                     )
+                    # This image appends the destination loopback to its RSVP
+                    # display, although the computed strict ERO ends at the
+                    # tail-end's incoming interface. Remove only that exact
+                    # terminal endpoint, never a mismatched or internal hop.
+                    if iosxe_16_9 and hops == (*expected.hops, ("strict", expected.destination)):
+                        hops = hops[:-1]
                 if (
-                    len(re.findall(r"RSVP Path Info:", text, re.I)) != 1
-                    or len(re.findall(r"Explicit Route:", text, re.I)) != 1
+                    len(path_sections) != 1
+                    or len(resv_sections) != 1
+                    or len(re.findall(r"RSVP Path Info:", text, re.I)) != 1
+                    or len(re.findall(r"RSVP Resv Info:", text, re.I)) != 1
+                    or len(re.findall(r"Explicit Route:", path_text, re.I)) != 1
                 ):
                     errors.append("Ambiguous RSVP path explicit route")
-                # Configured bandwidth alone is insufficient: require a Resv Fspec.
+                # Configured bandwidth alone is insufficient: require matching
+                # current Path Tspec and Resv Fspec, bound to their sections.
+                tspec = _single(
+                    r"Tspec:\s*ave rate\s*=\s*(\d+(?:\.\d+)?)\s*kbits\b", path_text, re.I
+                )
                 fspec = re.search(
-                    r"RSVP Resv Info:.*?Fspec:\s*ave rate\s*=\s*(\d+(?:\.\d+)?)\s*kbits\b", text, re.S | re.I
+                    r"Fspec:\s*ave rate\s*=\s*(\d+(?:\.\d+)?)\s*kbits\b", resv_text, re.I
                 )
                 if (
                     not fspec
-                    or len(re.findall(r"\bFspec:", text, re.I)) != 1
+                    or len(re.findall(r"\bFspec:", resv_text, re.I)) != 1
                     or _bandwidth(fspec.group(1), "kbits") != expected.bandwidth_bps
                 ):
                     errors.append("Missing or mismatched RSVP reservation Fspec")
+                if _bandwidth(tspec, "kbits") != expected.bandwidth_bps:
+                    errors.append("Missing or mismatched RSVP Path Tspec")
         elif output_format == "junos":
             identity = _single(r"^\s*LSPname:\s*(\S+)\s*$", text, re.M)
             destination = _single(r"^\s*To:\s*(\d+\.\d+\.\d+\.\d+),\s*From:", text, re.M)

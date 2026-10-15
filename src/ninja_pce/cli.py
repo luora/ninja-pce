@@ -11,6 +11,8 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
+from . import __version__
+from .controller import add_controller_commands, controller_command
 from .cspf import CspfNoPath, CspfSearchLimit, compute_cspf
 from .daemon import HealthState, load_daemon_config, run_daemon_cycle, start_health_server
 from .inventory import device_for_node, validate_inventory
@@ -30,6 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="ninja-pce",
         description="CSPF, topology reconciliation, and approved RSVP-TE config delivery.",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     compute = sub.add_parser("compute", help="Compute CSPF path and generate dry-run configs")
@@ -94,6 +97,13 @@ def build_parser() -> argparse.ArgumentParser:
     lab.add_argument("--show-pruned", action="store_true", help="Print pruned links and reasons")
     lab.add_argument("--show-candidates", action="store_true", help="Print candidate paths")
 
+    lab_render = sub.add_parser("lab-render", help="Validate and render a data-driven lab extension without device access")
+    lab_render.add_argument("--profile", required=True, help="Explicit platform and topology intent YAML/JSON")
+    lab_render.add_argument("--output-dir", default="build/multi-area", help="Directory for reviewed configuration artifacts")
+    lab_render.add_argument("--bgpls-asn", type=int, help="Explicit observed AS for optional ABR identity policy")
+    lab_render.add_argument("--bgpls-instance-id", type=int, help="Explicit observed BGP-LS instance ID")
+    lab_render.add_argument("--bgpls-identifier", type=int, help="Explicit observed BGP-LS identifier")
+
     daemon = sub.add_parser(
         "daemon",
         help="Run multi-demand topology reconciliation from a daemon config",
@@ -108,7 +118,20 @@ def build_parser() -> argparse.ArgumentParser:
     daemon.add_argument("--health-host", help="Override health endpoint host")
     daemon.add_argument("--health-port", type=int, help="Override health endpoint port")
     daemon.add_argument("--no-health", action="store_true", help="Disable the health/metrics HTTP server")
+    dashboard = sub.add_parser("dashboard", help="Serve a read-only controller web dashboard")
+    dashboard.add_argument("--host", default="127.0.0.1", help="Bind address; default is loopback only")
+    dashboard.add_argument("--port", type=int, default=8088, help="Dashboard HTTP port (default: 8088)")
+    dashboard.add_argument("--topology", default="build/live/topology.json", help="Normalized live topology JSON")
+    dashboard.add_argument("--bgpls-status", default="build/live/bgpls-status.json", help="Collector health JSON")
+    dashboard.add_argument("--bgpls-raw", default="build/live/bgpls-raw.json", help="Raw collector JSON")
+    dashboard.add_argument("--ospf-multi-area-policy", help="Explicit JSON policy matching the BGP-LS collector")
+    dashboard.add_argument("--pcep", default="build/live/pcep.json", help="Checksummed PCEP observation JSON")
+    dashboard.add_argument("--state-dir", default="build/state", help="Existing shared reservation directory")
+    dashboard.add_argument("--max-age", type=float, default=30.0, help="Observation freshness limit in seconds")
+    dashboard.add_argument("--refresh", type=float, default=5.0, help="Browser polling interval in seconds")
+    dashboard.add_argument("--demo", action="store_true", help="Use labelled synthetic examples, without live files")
     add_live_commands(sub)
+    add_controller_commands(sub)
     return parser
 
 
@@ -219,6 +242,61 @@ def cmd_inventory_validate(args: argparse.Namespace) -> int:
     print(f"Nodes:    {len(topology.nodes)}")
     print(f"Devices:  {len(inventory.devices)}")
     print(f"Mapped:   {', '.join(mapped)}")
+    return 0
+
+
+def cmd_lab_render(args: argparse.Namespace) -> int:
+    from .lab_profile import (
+        lab_ospf_multi_area_policy,
+        lab_profile_summary,
+        load_lab_profile,
+        render_lab_configs,
+    )
+    from .live import _write_document
+    from .state import digest
+
+    source = Path(args.profile)
+    profile = load_lab_profile(source)
+    configs = render_lab_configs(profile)
+    output = Path(args.output_dir)
+    summary = lab_profile_summary(profile)
+    summary["profile_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+    summary["configuration_sha256"] = {
+        node: hashlib.sha256(config.encode()).hexdigest() for node, config in sorted(configs.items())
+    }
+    domain = (args.bgpls_asn, args.bgpls_instance_id, args.bgpls_identifier)
+    policy = None
+    if any(value is not None for value in domain):
+        if any(value is None for value in domain):
+            raise InputError("BGP-LS policy generation requires AS, instance ID and identifier together")
+        policy = lab_ospf_multi_area_policy(
+            profile, autonomous_system=args.bgpls_asn, instance_id=args.bgpls_instance_id,
+            bgpls_identifier=args.bgpls_identifier,
+        )
+        summary["ospf_multi_area_policy_digest"] = digest(policy)
+    node_map = {str(node.loopback): node.id for node in profile.nodes}
+    summary["node_map_digest"] = digest(node_map)
+    summary["plan_id"] = digest(summary)
+    targets = [output / (node + ".cfg") for node in configs] + [
+        output / "plan.json", output / "node-map.json", output / "ospf-multi-area-policy.json",
+    ]
+    if source.resolve() in {target.resolve() for target in targets}:
+        raise InputError("Lab profile input and generated outputs must be distinct")
+    output.mkdir(parents=True, exist_ok=True)
+    for node, config in configs.items():
+        target = output / (node + ".cfg")
+        if target.is_symlink():
+            raise InputError("Lab configuration output must not be a symlink")
+        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(config)
+    _write_document(output / "node-map.json", node_map)
+    if policy is not None:
+        _write_document(output / "ospf-multi-area-policy.json", policy)
+    else:
+        (output / "ospf-multi-area-policy.json").unlink(missing_ok=True)
+    _write_document(output / "plan.json", summary)
+    print(json.dumps(summary, sort_keys=True))
     return 0
 
 
@@ -496,6 +574,31 @@ def cmd_daemon(args: argparse.Namespace) -> int:
             server.shutdown()
 
 
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    from .dashboard import DashboardConfig, create_dashboard_server
+    from .live import _ospf_multi_area_policy
+
+    config = DashboardConfig(
+        topology_path=Path(args.topology), bgpls_status_path=Path(args.bgpls_status),
+        bgpls_raw_path=Path(args.bgpls_raw), pcep_path=Path(args.pcep), state_dir=Path(args.state_dir),
+        host=args.host, port=args.port, max_age_seconds=args.max_age, refresh_seconds=args.refresh, demo=args.demo,
+        ospf_multi_area=_ospf_multi_area_policy(args.ospf_multi_area_policy),
+    )
+    try:
+        server = create_dashboard_server(config)
+    except OSError as exc:
+        raise ValueError(f"Cannot bind dashboard listener: {exc}") from exc
+    print(f"Ninja-PCE dashboard: http://{config.host}:{server.server_address[1]}/", flush=True)
+    print("Synthetic demo data" if config.demo else "Read-only controller observations", flush=True)
+    try:
+        server.serve_forever(poll_interval=0.25)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -515,12 +618,18 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_topology_summary(args)
         if args.command == "gns3-demo":
             return cmd_gns3_demo(args)
+        if args.command == "lab-render":
+            return cmd_lab_render(args)
         if args.command == "daemon":
             return cmd_daemon(args)
+        if args.command == "dashboard":
+            return cmd_dashboard(args)
         if args.command == "bgpls-collect":
             return collect_bgpls(args)
         if args.command == "pcep-listen":
             return listen_pcep(args)
+        if args.command == "controller":
+            return controller_command(args)
         parser.error(f"Unknown command: {args.command}")
         return 2
     except CspfSearchLimit as exc:

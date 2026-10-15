@@ -1,0 +1,4 @@
+# Observed IOS XE 16.9.7 lab compatibility, not a global package constraint.
+# Paramiko 5 removed the SHA-1 KEX/RSA algorithms offered by this old image.
+netmiko==4.8.0
+paramiko==4.0.0

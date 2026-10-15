@@ -1,0 +1,20 @@
+[Unit]
+Description=Ninja-PCE read-only controller dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ninja-pce
+ExecStart=/home/ubuntu/ninja-pce/.venv/bin/ninja-pce dashboard --host 127.0.0.1 --port 8088
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

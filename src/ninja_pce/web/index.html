@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Ninja-PCE · Controller</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23006fff'/%3E%3Ctext x='16' y='23' text-anchor='middle' font-family='Arial,sans-serif' font-size='23' font-weight='600' fill='white'%3EN%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to controller</a>
+  <div class="app-shell">
+    <nav class="rail" aria-label="Controller sections">
+      <a class="logo" href="#overview" aria-label="Ninja-PCE overview">N</a>
+      <button class="rail-button" data-view="overview" aria-label="Overview" title="Overview" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></button>
+      <button class="rail-button" data-view="topology" aria-label="Topology" title="Topology"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="m11 7-5 9m7-9 5 9M8 18h8"/></svg></button>
+      <button class="rail-button" data-view="peers" aria-label="Peers" title="Peers"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7" width="7" height="10" rx="2"/><rect x="15" y="7" width="7" height="10" rx="2"/><path d="M9 12h6M5 10v4m14-4v4"/></svg></button>
+      <button class="rail-button" data-view="lsps" aria-label="LSPs" title="LSPs"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="4" cy="18" r="2"/><circle cx="20" cy="6" r="2"/><path d="M6 18h7a4 4 0 0 0 0-8h-2a2 2 0 0 1 0-4h7"/></svg></button>
+      <button class="rail-button" data-view="activity" aria-label="Activity" title="Activity"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></button>
+      <div class="spacer"></div>
+      <button class="rail-button" id="info-toggle" aria-label="Controller information" title="Controller information"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.5"/></svg></button>
+      <button class="rail-button" id="theme-toggle" aria-label="Switch to light theme" title="Switch to light theme"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.4A9 9 0 0 1 9.6 3.5a9 9 0 1 0 10.9 10.9Z"/></svg></button>
+    </nav>
+
+    <aside class="panel">
+      <div class="panel-title">Ninja-PCE <span class="version-tag">Controller</span></div>
+      <div class="panel-label">Workspace</div>
+      <nav class="section-nav" aria-label="Workspace">
+        <button class="nav-link on" data-view="overview" aria-current="page"><span>Overview</span></button>
+        <button class="nav-link" data-view="topology"><span>Topology</span><span class="n" id="nav-nodes">—</span></button>
+        <button class="nav-link" data-view="peers"><span>Peers</span><span class="n" id="nav-peers">—</span></button>
+        <button class="nav-link" data-view="lsps"><span>LSPs</span><span class="n" id="nav-lsps">—</span></button>
+        <button class="nav-link" data-view="activity"><span>Activity</span><span class="n" id="nav-events">—</span></button>
+      </nav>
+      <div class="panel-divider"></div>
+      <div class="panel-label">Data sources</div>
+      <div id="sidebar-sources" class="sidebar-sources"><p class="muted">Waiting for controller…</p></div>
+      <div class="panel-footer"><span class="read-only-icon" aria-hidden="true">◈</span><div>Read-only workspace<small>Observe, inspect and compare</small></div></div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-location"><span class="breadcrumb">Controller</span><span class="breadcrumb-divider">/</span><h1 id="page-title">Overview</h1></div>
+        <span class="connection-status" id="connection-status"><span class="dot unknown"></span><span>Connecting</span></span>
+        <div class="spacer"></div>
+        <button class="button compact" id="create-tunnel-button">Create tunnel</button>
+        <button class="button compact" id="poll-toggle" aria-pressed="false" title="Pause automatic refresh">Pause</button>
+        <button class="button primary compact" id="refresh-button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 17.9 17"/></svg><span>Refresh</span></button>
+      </header>
+
+      <div class="content" id="main-content" tabindex="-1">
+        <div class="banner demo-banner" id="demo-banner" role="status" hidden><span class="dot warn"></span><div><strong>Demo workspace</strong><span>Synthetic example data. No live controller or forwarding claim.</span></div><span class="banner-tag">Demo</span></div>
+        <div class="banner error-banner" id="error-banner" role="status" hidden></div>
+        <div class="page-intro"><div><h2 id="view-heading">Controller overview</h2><p id="view-description">Live topology and reported RSVP-TE state in one workspace.</p></div><div class="snapshot-meta"><span id="snapshot-label">Awaiting first snapshot</span><span id="poll-label">Read-only · automatic refresh</span></div></div>
+
+        <section class="stats" data-views="overview" aria-label="Controller summary">
+          <article class="card stat"><div class="stat-label">Topology nodes</div><div class="stat-value" id="stat-nodes">—</div><div class="stat-detail" id="stat-links">No topology snapshot</div></article>
+          <article class="card stat"><div class="stat-label">PCEP peers</div><div class="stat-value" id="stat-peers">—</div><div class="stat-detail" id="stat-peer-detail">Session state unavailable</div></article>
+          <article class="card stat"><div class="stat-label">Reported active LSPs</div><div class="stat-value" id="stat-lsps">—</div><div class="stat-detail" id="stat-lsp-detail">Not forwarding verification</div></article>
+          <article class="card stat"><div class="stat-label">Path computations</div><div class="stat-value" id="stat-computations">—</div><div class="stat-detail" id="stat-computation-detail">No computation snapshot</div></article>
+        </section>
+
+        <section class="two-column" data-views="overview topology lsps" aria-label="Topology and selected LSP">
+          <article class="card topology-card">
+            <header><div class="card-heading"><h3>Network topology</h3><span id="topology-name" class="header-detail">Awaiting data</span></div><span class="tag" id="topology-freshness">Unknown</span></header>
+            <div class="topology-body"><div id="topology-empty" class="empty-state"><span class="empty-mark" aria-hidden="true">◇</span><strong>No topology available</strong><p>Configure controller snapshot sources to see the network.</p></div><svg id="topology-svg" viewBox="0 0 650 300" role="img" aria-label="Directed TE topology and selected reported ERO" hidden></svg></div>
+            <div class="topology-caption" id="topology-caption">Select an LSP to inspect its reported explicit route.</div>
+            <div class="legend"><span><i class="swatch green"></i>Under 50%</span><span><i class="swatch amber"></i>50–80%</span><span><i class="swatch red"></i>Over 80%</span><span><i class="swatch selected"></i>Selected ERO</span><span><i class="swatch"></i>Unavailable / not advertised</span><span class="legend-note" title="First value: left to right, or top to bottom for vertical links. Second value: reverse direction. Hover a label for named directions.">RSVP % · forward / reverse</span></div>
+            <div class="topology-inspector" id="topology-inspector" hidden></div>
+          </article>
+          <article class="card details-card"><header><h3>Selected LSP</h3><span class="header-detail" id="selected-lsp-label">None selected</span></header><div class="card-body" id="lsp-details"><div class="empty-state detail-empty"><strong>Select an LSP</strong><p>Inspect reported state, requested bandwidth and explicit route.</p></div></div></article>
+        </section>
+
+        <section class="card" data-views="overview lsps" aria-labelledby="lsps-heading">
+          <header class="table-header"><div class="card-heading"><h3 id="lsps-heading">Label switched paths</h3><span class="header-detail" id="lsp-count">0 reported</span></div><div class="table-controls"><label class="search-box"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input id="lsp-search" type="search" placeholder="Find an LSP" aria-label="Find an LSP" autocomplete="off"><kbd>/</kbd></label><div class="segmented" aria-label="LSP filter"><button data-lsp-filter="all" aria-pressed="true">All</button><button data-lsp-filter="active" aria-pressed="false">Active</button><button data-lsp-filter="issues" aria-pressed="false">Issues</button></div></div></header>
+          <div class="tbl-wrap"><table><thead><tr><th scope="col">Name</th><th scope="col">Reported state</th><th scope="col">Freshness</th><th scope="col">Head end → tail end</th><th scope="col">Bandwidth</th><th scope="col">ERO hops</th><th scope="col">PLSP-ID</th></tr></thead><tbody id="lsp-table-body"><tr><td colspan="7" class="table-empty">No LSP reports available.</td></tr></tbody></table></div>
+          <footer class="card-footer">Reported state is control-plane evidence. RSVP admission and forwarding require independent checks.</footer>
+        </section>
+
+        <section class="card" data-views="topology" aria-labelledby="links-heading" hidden><header><div class="card-heading"><h3 id="links-heading">Directed TE links</h3><span class="header-detail">Advertised bandwidth</span></div><span class="header-detail" id="link-count">0 links</span></header><div class="tbl-wrap"><table><thead><tr><th scope="col">Direction</th><th scope="col">Receiving interface</th><th scope="col">TE metric</th><th scope="col">Reservable</th><th scope="col">Reserved</th><th scope="col">Available</th><th scope="col">Reservation</th></tr></thead><tbody id="link-table-body"></tbody></table></div><footer class="card-footer">Values come from the topology snapshot, not sums of LSP reports. Unknown values remain unknown.</footer></section>
+
+        <section class="source-grid" data-views="peers" id="source-cards" aria-label="Source health" hidden></section>
+        <section class="card" data-views="peers" aria-labelledby="peers-heading" hidden><header><h3 id="peers-heading">Protocol peers</h3><span class="header-detail">Observed sessions</span></header><div class="tbl-wrap"><table><thead><tr><th scope="col">Peer</th><th scope="col">Protocol</th><th scope="col">Session</th><th scope="col">Freshness</th><th scope="col">Synchronization</th><th scope="col">Capabilities</th><th scope="col">Reports</th></tr></thead><tbody id="peer-table-body"></tbody></table></div></section>
+        <section class="card" data-views="peers" aria-labelledby="ledger-heading" hidden><header><h3 id="ledger-heading">Reservation ledger</h3><span class="tag" id="ledger-status">Unconfigured</span></header><div id="ledger-body" class="card-body"></div></section>
+
+        <section class="card" data-views="activity" aria-labelledby="computations-heading" hidden><header><h3 id="computations-heading">Computation outcomes</h3><span class="header-detail">Advice and initial-path attempts</span></header><div class="tbl-wrap"><table><thead><tr><th scope="col">Time</th><th scope="col">Peer</th><th scope="col">Outcome</th><th scope="col">Path / reason</th><th scope="col">Bandwidth</th><th scope="col">Acknowledgment</th></tr></thead><tbody id="computation-table-body"></tbody></table></div><footer class="card-footer">Acknowledgment means processing was reported; it does not establish RSVP admission or operational success.</footer></section>
+        <section class="card log-card" data-views="overview activity" aria-labelledby="events-heading"><header><div class="card-heading"><h3 id="events-heading">Controller activity</h3><span class="header-detail" id="event-count">Latest 80 events</span></div><div class="segmented" aria-label="Activity filter"><button data-log-filter="all" aria-pressed="true">All</button><button data-log-filter="warning" aria-pressed="false">Warnings</button><button data-log-filter="error" aria-pressed="false">Errors</button></div></header><div id="event-log" class="log-viewer" role="log" aria-label="Controller events" aria-live="off" tabindex="0"><p class="log-empty">No controller events available.</p></div><footer class="card-footer"><span id="log-timezone">Times shown in your browser’s local timezone.</span><span>No simulated event feed</span></footer></section>
+        <footer class="workspace-footer"><span>Ninja-PCE · Experimental controller</span><span>Read-only observation</span></footer>
+      </div>
+    </main>
+  </div>
+  <dialog id="info-dialog" aria-labelledby="info-heading"><div class="dialog-heading"><h2 id="info-heading">Controller information</h2><button class="button compact" id="info-close">Close</button></div><p>This dashboard reads local controller snapshots. Tunnel creation requires separate operator access and a qualified headend. There is no public teardown control.</p><dl class="kv"><dt>Endpoint</dt><dd class="mono">GET /api/controller</dd><dt>Refresh</dt><dd id="info-refresh">Waiting for snapshot</dd><dt>Mode</dt><dd id="info-mode">Unknown</dd></dl><p class="muted">A reported ACTIVE LSP, a PCUpd acknowledgment and advertised reserved bandwidth are separate observations. None alone proves forwarding.</p><div id="info-sources"></div></dialog>
+  <dialog id="create-tunnel-dialog" aria-labelledby="create-tunnel-heading">
+    <div class="dialog-heading"><h2 id="create-tunnel-heading">Create tunnel</h2><button class="button compact" id="create-tunnel-close" type="button">Close</button></div>
+    <p class="muted">Create an RSVP-TE LSP between two routers. Customer traffic steering is configured separately.</p>
+    <p id="creation-policy" class="creation-policy">Checking operator access and headend support…</p>
+    <form id="create-tunnel-form">
+      <fieldset id="creation-fields" disabled>
+        <div class="creation-grid"><label>Headend<select id="creation-headend" required></select></label><label>Destination<select id="creation-destination" required></select></label></div>
+        <label class="creation-bandwidth">Bandwidth <span class="muted">Mbps</span><input id="creation-bandwidth" type="number" min="0.000001" step="0.000001" value="1" required inputmode="decimal"></label>
+      </fieldset>
+      <section id="creation-preview" class="creation-preview" aria-labelledby="creation-preview-heading" hidden>
+        <h3 id="creation-preview-heading">Configuration preview</h3>
+        <p id="creation-preview-path" class="mono"></p>
+        <p id="creation-preview-bandwidth"></p>
+        <pre id="creation-preview-config" class="mono" tabindex="0" aria-label="Generated router configuration"></pre>
+        <p id="creation-preview-expiry" class="muted"></p>
+      </section>
+      <div id="creation-status" class="creation-status" role="status" aria-live="polite"></div>
+      <div class="creation-actions"><button class="button" id="creation-check" type="button" hidden>Check status</button><button class="button primary" id="creation-submit" type="submit" disabled>Create tunnel</button></div>
+    </form>
+  </dialog>
+</body>
+</html>

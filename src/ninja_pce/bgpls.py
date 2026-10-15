@@ -14,9 +14,9 @@ import math
 import struct
 import subprocess
 import tempfile
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from ipaddress import ip_address
+from ipaddress import IPv4Address, ip_address
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -28,6 +28,97 @@ _AF = {"afi": "AFI_LS", "safi": "SAFI_LS"}
 
 class BgplsError(ValueError):
     """A poll cannot establish a usable, current topology snapshot."""
+
+
+@dataclass(frozen=True)
+class OspfAbrBinding:
+    """Trusted physical-router identity, independently supplied by an operator."""
+
+    node_id: str
+    te_router_id: str
+    igp_router_id: str
+    areas: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class OspfMultiAreaPolicy:
+    """An explicit, single-domain OSPFv2 area-identity projection policy.
+
+    Matching loopbacks alone never establish router equivalence. Each allowed
+    ABR must also match the complete trusted domain, IGP router ID, and area
+    membership. This policy grants graph equivalence, never delivery authority.
+    Use :func:`parse_ospf_multi_area_policy` to validate external configuration.
+    """
+
+    protocol_id: int
+    instance_id: int
+    autonomous_system: int
+    bgpls_identifier: int
+    bindings: tuple[OspfAbrBinding, ...]
+
+    def document(self) -> dict[str, Any]:
+        return {
+            "schema_version": 1, "protocol_id": self.protocol_id,
+            "instance_id": self.instance_id, "autonomous_system": self.autonomous_system,
+            "bgpls_identifier": self.bgpls_identifier,
+            "bindings": [{"node_id": binding.node_id, "te_router_id": binding.te_router_id,
+                          "igp_router_id": binding.igp_router_id, "areas": list(binding.areas)}
+                         for binding in self.bindings],
+        }
+
+    @property
+    def digest(self) -> str:
+        return hashlib.sha256(json.dumps(self.document(), sort_keys=True,
+                                         separators=(",", ":")).encode()).hexdigest()
+
+
+def parse_ospf_multi_area_policy(value: Any) -> OspfMultiAreaPolicy:
+    """Validate opt-in identity bindings without inferring names or memberships."""
+    data = _object(value, "OSPF multi-area policy")
+    fields = {"schema_version", "protocol_id", "instance_id", "autonomous_system",
+              "bgpls_identifier", "bindings"}
+    if set(data) != fields or type(data["schema_version"]) is not int or data["schema_version"] != 1:
+        raise BgplsError("OSPF multi-area policy requires exactly schema version 1 fields")
+    for name, maximum in (("protocol_id", 255), ("instance_id", 2**64 - 1),
+                          ("autonomous_system", 2**32 - 1), ("bgpls_identifier", 2**32 - 1)):
+        if type(data[name]) is not int or not 0 <= data[name] <= maximum:
+            raise BgplsError(f"OSPF multi-area policy {name} must be an unsigned integer")
+    if data["protocol_id"] != 3:
+        raise BgplsError("OSPF multi-area projection supports only protocol ID 3 (OSPFv2)")
+    entries = _list(data["bindings"], "OSPF ABR bindings")
+    if not entries or len(entries) > 256:
+        raise BgplsError("OSPF multi-area policy requires between 1 and 256 explicit ABR bindings")
+    bindings = []
+    for entry in entries:
+        item = _object(entry, "OSPF ABR binding")
+        if set(item) != {"node_id", "te_router_id", "igp_router_id", "areas"}:
+            raise BgplsError("OSPF ABR binding has missing or unknown fields")
+        try:
+            node_id = validate_identifier(item["node_id"], "OSPF ABR node id")
+            te_router_id = _policy_ipv4(item["te_router_id"], "TE router ID")
+            igp_router_id = _policy_ipv4(item["igp_router_id"], "IGP router ID")
+            areas = tuple(_policy_ipv4(area, "OSPF area")
+                          for area in _list(item["areas"], "OSPF ABR areas"))
+        except ValueError as exc:
+            raise BgplsError(str(exc)) from exc
+        if not 2 <= len(areas) <= 256 or len(set(areas)) != len(areas):
+            raise BgplsError("OSPF ABR areas must contain between 2 and 256 unique area IDs")
+        bindings.append(OspfAbrBinding(node_id, te_router_id, igp_router_id,
+                                       tuple(sorted(areas, key=IPv4Address))))
+    for label in ("node_id", "te_router_id", "igp_router_id"):
+        if len({getattr(binding, label) for binding in bindings}) != len(bindings):
+            raise BgplsError(f"OSPF ABR bindings contain overlapping {label} identities")
+    return OspfMultiAreaPolicy(data["protocol_id"], data["instance_id"], data["autonomous_system"],
+                               data["bgpls_identifier"], tuple(sorted(bindings, key=lambda b: b.node_id)))
+
+
+def _policy_ipv4(value: Any, label: str) -> str:
+    if not isinstance(value, str) or "/" in value or "%" in value:
+        raise BgplsError(f"{label} must be an IPv4 address string")
+    try:
+        return str(IPv4Address(value))
+    except ValueError as exc:
+        raise BgplsError(f"{label} must be an IPv4 address string") from exc
 
 
 def _object(value: Any, label: str) -> dict[str, Any]:
@@ -201,6 +292,7 @@ def _peers(responses: Any, required: tuple[str, ...]) -> dict[str, tuple[Any, ..
 def parse_gobgp_snapshot(
     capture: Mapping[str, Any], *, node_names: Mapping[str, str] | None = None,
     required_peers: tuple[str, ...], now: datetime | None = None, max_age_seconds: float = 30,
+    ospf_multi_area: OspfMultiAreaPolicy | None = None,
 ) -> Topology:
     """Replace the entire topology from one bounded, quiescent GoBGP RIB poll.
 
@@ -212,6 +304,13 @@ def parse_gobgp_snapshot(
         raise BgplsError("Supply unique trusted required_peers")
     if isinstance(max_age_seconds, bool) or not math.isfinite(max_age_seconds) or max_age_seconds <= 0:
         raise BgplsError("max_age_seconds must be finite and positive")
+    if ospf_multi_area is not None:
+        if not isinstance(ospf_multi_area, OspfMultiAreaPolicy):
+            raise BgplsError("OSPF multi-area projection requires a validated explicit policy")
+        # Frozen dataclasses can still be instantiated directly; do not let a
+        # caller bypass the external policy parser's strict identity checks.
+        ospf_multi_area = parse_ospf_multi_area_policy(ospf_multi_area.document())
+    bindings = {binding.te_router_id: binding for binding in ospf_multi_area.bindings} if ospf_multi_area else {}
     if capture.get("schema_version") != 1 or capture.get("source") != "gobgp-v3.37.0-grpc":
         raise BgplsError("Unsupported GoBGP capture schema/source")
     current = now or datetime.now(timezone.utc)
@@ -270,19 +369,54 @@ def parse_gobgp_snapshot(
             descriptor = _required(values, 256)
             identity = _node_key(protocol, instance, descriptor)
             router = _address(attrs, 1028)
-            node_id = (node_names or {}).get(router, identity)
-            validate_identifier(node_id, "BGP-LS node mapping")
-            if node_id in nodes or identity in identities:
-                raise BgplsError("Node mapping merges distinct BGP-LS identities")
             descriptor_values = _tlvs(descriptor)
             area = str(ip_address(descriptor_values[514])) if 514 in descriptor_values else None
-            nodes[node_id] = Node(id=node_id, loopback=router, area=area)
+            binding = bindings.get(router)
+            if binding is None and ospf_multi_area is not None:
+                # A bound IGP identity with a different advertised TE router ID
+                # is inconsistent evidence, not a new independently routable
+                # router. Do not silently create a second physical identity.
+                for expected_binding in ospf_multi_area.bindings:
+                    if (protocol == ospf_multi_area.protocol_id
+                            and int.from_bytes(instance, "big") == ospf_multi_area.instance_id
+                            and descriptor_values.get(512) == ospf_multi_area.autonomous_system.to_bytes(4, "big")
+                            and descriptor_values.get(513) == ospf_multi_area.bgpls_identifier.to_bytes(4, "big")
+                            and descriptor_values.get(515) == IPv4Address(expected_binding.igp_router_id).packed):
+                        raise BgplsError("OSPF ABR advertised TE router ID conflicts with its trusted binding")
+            if binding is not None:
+                assert ospf_multi_area is not None
+                _validate_ospf_binding(ospf_multi_area, binding, protocol, instance, descriptor_values, area)
+                node_id = binding.node_id
+                mapped_name = (node_names or {}).get(router)
+                if mapped_name is not None and mapped_name != node_id:
+                    raise BgplsError("OSPF ABR binding conflicts with the trusted node name mapping")
+            else:
+                node_id = (node_names or {}).get(router, identity)
+            validate_identifier(node_id, "BGP-LS node mapping")
+            if identity in identities or (node_id in nodes and binding is None):
+                raise BgplsError("Node mapping merges distinct BGP-LS identities")
+            if node_id in nodes and (nodes[node_id].loopback != router
+                                     or details[node_id].get("projection") != "explicit-ospf-abr"):
+                raise BgplsError("OSPF ABR binding collides with another physical router")
+            nodes[node_id] = Node(id=node_id, loopback=router, area=None if binding else area)
             identities[identity] = node_id
-            details[node_id] = {"identity": identity, "protocol_id": protocol,
-                                "instance_id": int.from_bytes(instance, "big"),
-                                "descriptors": {str(k): v.hex() for k, v in descriptor_values.items()},
-                                "advertised_name": attrs.get(1026, b"").decode("utf-8", errors="replace"),
-                                "unknown_attributes": ["role", "capabilities"]}
+            detail = {"identity": identity, "protocol_id": protocol,
+                      "instance_id": int.from_bytes(instance, "big"),
+                      "descriptors": {str(k): v.hex() for k, v in descriptor_values.items()},
+                      "advertised_name": attrs.get(1026, b"").decode("utf-8", errors="replace"),
+                      "unknown_attributes": ["role", "capabilities"]}
+            if binding is None:
+                details[node_id] = detail
+            else:
+                assert ospf_multi_area is not None
+                previous = details.get(node_id, {}).get("identities", [])
+                memberships = sorted([*previous, {**detail, "area": area}], key=lambda item: item["identity"])
+                details[node_id] = {"projection": "explicit-ospf-abr",
+                                    "policy_digest": ospf_multi_area.digest,
+                                    "identities": memberships,
+                                    "areas": sorted(item["area"] for item in memberships),
+                                    "expected_areas": list(binding.areas),
+                                    "unknown_attributes": ["role", "capabilities"]}
         except BgplsError as exc:
             diagnostics.append({"identity": key, "reason": str(exc)})
     links = []
@@ -290,8 +424,15 @@ def parse_gobgp_snapshot(
         if kind != 2:
             continue
         try:
-            source = identities[_node_key(protocol, instance, _required(values, 256))]
-            target = identities[_node_key(protocol, instance, _required(values, 257))]
+            source_identity = _node_key(protocol, instance, _required(values, 256))
+            target_identity = _node_key(protocol, instance, _required(values, 257))
+            source, target = identities[source_identity], identities[target_identity]
+            source_area = nodes[source].area
+            if ospf_multi_area is not None and protocol == 3:
+                local_descriptor, remote_descriptor = _tlvs(values[256]), _tlvs(values[257])
+                if any(local_descriptor.get(kind) != remote_descriptor.get(kind) for kind in (512, 513, 514)):
+                    raise BgplsError("OSPF physical link endpoints disagree on AS, domain identifier, or area")
+                source_area = str(ip_address(_required(local_descriptor, 514, 4)))
             if 261 in values or 262 in values or 263 in values:
                 raise BgplsError("IPv6 and multi-topology link descriptors require a separate adapter")
             local, remote = _address(values, 259), _address(values, 260)
@@ -317,7 +458,7 @@ def parse_gobgp_snapshot(
                 admin_groups=tuple(f"bit-{bit}" for bit in range(32) if group & (1 << bit)),
                 srlg=tuple(str(int.from_bytes(srlgs[i:i + 4], "big"))
                            for i in range(0, len(srlgs), 4)) if srlgs is not None else (),
-                area=nodes[source].area, provenance_source="bgp-ls", timestamp=observed.isoformat(),
+                area=source_area, provenance_source="bgp-ls", timestamp=observed.isoformat(),
             )
             links.append(link)
             details[key] = {"protocol_id": protocol, "instance_id": int.from_bytes(instance, "big"),
@@ -327,6 +468,11 @@ def parse_gobgp_snapshot(
                             "unknown_attributes": ["physical_admin_state", "physical_oper_state",
                                                    "local_interface", "remote_interface", "protection"]
                             + (["srlg"] if srlgs is None else [])}
+            if ospf_multi_area is not None:
+                details[key].update(source_identity=source_identity, target_identity=target_identity,
+                                    area=source_area,
+                                    source_node_descriptors={str(k): v.hex() for k, v in _tlvs(values[256]).items()},
+                                    target_node_descriptors={str(k): v.hex() for k, v in _tlvs(values[257]).items()})
         except (BgplsError, KeyError, ValueError) as exc:
             diagnostics.append({"identity": key, "reason": str(exc)})
     metadata = {
@@ -338,8 +484,25 @@ def parse_gobgp_snapshot(
                         "no per-LSP reservation ownership", "no PCEP or RSVP signaling"],
         "excluded_objects": diagnostics, "bgpls_objects": details,
     }
+    if ospf_multi_area is not None:
+        metadata.update(ospf_multi_area=ospf_multi_area.document(),
+                        ospf_multi_area_digest=ospf_multi_area.digest)
     return Topology(name="gobgp-live-ted", nodes=dict(sorted(nodes.items())),
                     links=sorted(links, key=lambda link: link.id), raw_metadata=metadata)
+
+
+def _validate_ospf_binding(policy: OspfMultiAreaPolicy, binding: OspfAbrBinding,
+                           protocol: int, instance: bytes, descriptors: dict[int, bytes],
+                           area: str | None) -> None:
+    if set(descriptors) != {512, 513, 514, 515}:
+        raise BgplsError("OSPF ABR binding requires exactly the trusted AS, domain, area and IGP descriptors")
+    expected = {512: policy.autonomous_system.to_bytes(4, "big"),
+                513: policy.bgpls_identifier.to_bytes(4, "big"),
+                515: IPv4Address(binding.igp_router_id).packed}
+    if (protocol != policy.protocol_id or int.from_bytes(instance, "big") != policy.instance_id
+            or any(descriptors[kind] != value for kind, value in expected.items())
+            or area not in binding.areas):
+        raise BgplsError("OSPF ABR advertisement does not match the trusted domain, router ID, or area binding")
 
 
 def topology_document(topology: Topology) -> dict[str, Any]:
@@ -372,6 +535,7 @@ class GoBgpTopologyProvider:
     def __init__(self, *, proto_path: str | Path, required_peers: tuple[str, ...],
                  node_names: Mapping[str, str] | None = None, endpoint: str = "127.0.0.1:50051",
                  grpcurl: str = "grpcurl", timeout_seconds: float = 10, max_age_seconds: float = 30,
+                 ospf_multi_area: OspfMultiAreaPolicy | None = None,
                  runner: Callable[..., Any] = subprocess.run,
                  clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> None:
         if not required_peers or len(set(required_peers)) != len(required_peers):
@@ -389,6 +553,10 @@ class GoBgpTopologyProvider:
             raise BgplsError("GoBGP read-only protobuf definition is missing")
         self.required_peers = tuple(required_peers)
         self.node_names = dict(node_names or {})
+        if ospf_multi_area is not None and not isinstance(ospf_multi_area, OspfMultiAreaPolicy):
+            raise BgplsError("OSPF multi-area projection requires a validated explicit policy")
+        self.ospf_multi_area = (parse_ospf_multi_area_policy(ospf_multi_area.document())
+                                if ospf_multi_area is not None else None)
         self.endpoint, self.grpcurl = endpoint, grpcurl
         self.timeout_seconds, self.max_age_seconds = timeout_seconds, max_age_seconds
         self.runner, self.clock = runner, clock
@@ -424,10 +592,11 @@ class GoBgpTopologyProvider:
                    "captured_at": self.clock().isoformat(), "peers_before": before, "rib": rib,
                    "peers_after": after}
         parse_gobgp_snapshot(capture, node_names=self.node_names, required_peers=self.required_peers,
-                             now=self.clock(), max_age_seconds=self.max_age_seconds)
+                             now=self.clock(), max_age_seconds=self.max_age_seconds,
+                             ospf_multi_area=self.ospf_multi_area)
         return capture
 
     def snapshot(self) -> Topology:
         return parse_gobgp_snapshot(self.capture(), node_names=self.node_names,
                                     required_peers=self.required_peers, now=self.clock(),
-                                    max_age_seconds=self.max_age_seconds)
+                                    max_age_seconds=self.max_age_seconds, ospf_multi_area=self.ospf_multi_area)

@@ -1,0 +1,328 @@
+{
+  "artifacts": {
+    "P1-failure-result.txt": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/P1-failure-result.txt",
+      "sha256": "fbc85ebc112a0878845f056ed3df2ec70050e0e8bb4e6c3c382b7b62af698751"
+    },
+    "P1-final.txt": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/P1-final.txt",
+      "sha256": "bbe519a00695dcacd783e1cc998eec0dd26690f9152e1d75b49c0b193d48f443"
+    },
+    "P1-restored-state.txt": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/P1-restored-state.txt",
+      "sha256": "c0fdd4c6b1635c42e1685b952b12439a3784dd09691e02d930c3d6273a9deaa5"
+    },
+    "P1-restored.txt": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/P1-restored.txt",
+      "sha256": "f1bc123bf3dfdc93098f95b5ed766540b9c117fc3fc37c982eb97419a7bd2f72"
+    },
+    "P1-shutdown.txt": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/P1-shutdown.txt",
+      "sha256": "2adeb1cad113fcc10b6f5f1a143514925343bee10c810b69b04698961c804b87"
+    },
+    "P2-failure-result.txt": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/P2-failure-result.txt",
+      "sha256": "75cd8198a7f5050360728013ab84a501f056de198fa0ccc64ee464180dbb1dae"
+    },
+    "P3-failure-result.txt": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/P3-failure-result.txt",
+      "sha256": "20bc5b3a4575cfe4f81b0086df3781d1a9d00d92a01779d90ae840206da077b6"
+    },
+    "P4-failure-result.txt": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/P4-failure-result.txt",
+      "sha256": "e8331bb6c9a44860b275c0d9f0e66616e1a64bbe37d1d50d0429ecd62b854e4a"
+    },
+    "PE1-baseline.txt": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/PE1-baseline.txt",
+      "sha256": "eeedf569d56f91a6bd3f938b959db5902fa236b27d2656f3704aea40b9c846ec"
+    },
+    "PE1-failure-result.txt": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/PE1-failure-result.txt",
+      "sha256": "8682fc3249bd8fd87aecd47868a02e65179e767d7c243ec69c0c33380cb99b06"
+    },
+    "PE1-restored.txt": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/PE1-restored.txt",
+      "sha256": "1fb8d740d212dbd5b76aaf8e7e0e59dff9b32d781102174e265980963e7dddaf"
+    },
+    "controller-evidence.tar.gz": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller-evidence.tar.gz",
+      "sha256": "bce664b075a41503c9272bb70212b7b8cf3250d0017e29415311a316dd5db097"
+    },
+    "controller/baseline/bgpls-raw.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/baseline/bgpls-raw.json",
+      "sha256": "737c9acfb7f1c17809c11ab5f13a1461f18876526c7ad891e3c22ca287e0bdfc"
+    },
+    "controller/baseline/bgpls-status.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/baseline/bgpls-status.json",
+      "sha256": "5de795da7b2400c8ad94275cd864d0516c3ac332c1db48c41387b32f01d11528"
+    },
+    "controller/baseline/journal.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/baseline/journal.json",
+      "sha256": "b0a03d44386f8024b7898ff214f82cf00416ec01979c03be938dc2a54cba7410"
+    },
+    "controller/baseline/pcep.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/baseline/pcep.json",
+      "sha256": "da8a0fcf1a77a2a66a1ed5c96422ef8fe7eb6b0ef1edc75e7ed807fe873daa41"
+    },
+    "controller/baseline/summary.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/baseline/summary.json",
+      "sha256": "2c4ed66bbc3d3dd2f15bbab9a5cffc38ec5b21608987464a26f8f920d7530fa6"
+    },
+    "controller/baseline/topology.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/baseline/topology.json",
+      "sha256": "13019a45652f2df13e14fc315cb7adc8dede8b999129c5687a122c289930d602"
+    },
+    "controller/failure-result/bgpls-raw.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/failure-result/bgpls-raw.json",
+      "sha256": "47b966bf1311a9c247973684a5d6ed9535dd0f04fe0e6bb264efe2cf125c1bed"
+    },
+    "controller/failure-result/bgpls-status.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/failure-result/bgpls-status.json",
+      "sha256": "949b0b26f7a56207fb221150af9efefc0e54b53848e8f1df0a537cb7a174ed63"
+    },
+    "controller/failure-result/journal.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/failure-result/journal.json",
+      "sha256": "59c42abec321266e171347acce262e26955b9e7de80ffd9ab3dc81104d1f583f"
+    },
+    "controller/failure-result/pcep.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/failure-result/pcep.json",
+      "sha256": "46f6e772b48b8c370a07c3f3b20ddcdc3747e33964516444d5540f36ce4c532d"
+    },
+    "controller/failure-result/summary.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/failure-result/summary.json",
+      "sha256": "776ad7c89e71ed088b863bd90c33ad9c9a2412e56a2e9f1447f2e20c24b3302e"
+    },
+    "controller/failure-result/topology.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/failure-result/topology.json",
+      "sha256": "b1e658b692092efe154cdebb3cb4494e908656cdcfa4d510ecad46f9e64be6ca"
+    },
+    "controller/restored/bgpls-raw.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/restored/bgpls-raw.json",
+      "sha256": "6e8ba0eae29c9f03e1aea5d8c89ef997bb42c7a8b9036a35d96cc1b46dc5f090"
+    },
+    "controller/restored/bgpls-status.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/restored/bgpls-status.json",
+      "sha256": "15022fa481b58eeacd416cacf968537db9ed628dfc8c7da2072c0d704746a989"
+    },
+    "controller/restored/journal.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/restored/journal.json",
+      "sha256": "d90cf1f861df0a6047efb04b8547bed4c273de84c42c4374d0d3abbe0a9eb062"
+    },
+    "controller/restored/pcep.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/restored/pcep.json",
+      "sha256": "215777961f133b4b41d5b1050e310707a4f2112de9d066b99876c6a9d58f64ae"
+    },
+    "controller/restored/summary.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/restored/summary.json",
+      "sha256": "ec24cc2f181f5461b20898a712d59301006a6773f10ed0d9c3576eb6819e9623"
+    },
+    "controller/restored/topology.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/restored/topology.json",
+      "sha256": "a65fbaaa65d9394dba7d19bf43ec8e2fd027ad0aa54100cab7dca6d803a18ff9"
+    },
+    "controller/transition-1791731551494249207/bgpls-raw.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731551494249207/bgpls-raw.json",
+      "sha256": "737c9acfb7f1c17809c11ab5f13a1461f18876526c7ad891e3c22ca287e0bdfc"
+    },
+    "controller/transition-1791731551494249207/bgpls-status.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731551494249207/bgpls-status.json",
+      "sha256": "5de795da7b2400c8ad94275cd864d0516c3ac332c1db48c41387b32f01d11528"
+    },
+    "controller/transition-1791731551494249207/journal.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731551494249207/journal.json",
+      "sha256": "b0a03d44386f8024b7898ff214f82cf00416ec01979c03be938dc2a54cba7410"
+    },
+    "controller/transition-1791731551494249207/pcep.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731551494249207/pcep.json",
+      "sha256": "3d34678b5ddcf24d10082ac9fc76d830be5e3c70c52bc5a3960e5000de865af6"
+    },
+    "controller/transition-1791731551494249207/summary.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731551494249207/summary.json",
+      "sha256": "0af534121b58fb0b4d06ca517e30de0710937a266194edb6f74aeb69e804e6ae"
+    },
+    "controller/transition-1791731551494249207/topology.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731551494249207/topology.json",
+      "sha256": "13019a45652f2df13e14fc315cb7adc8dede8b999129c5687a122c289930d602"
+    },
+    "controller/transition-1791731553499122551/bgpls-raw.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731553499122551/bgpls-raw.json",
+      "sha256": "150f484f9af9f2e66ad81a66ca366ab6f4262e4ce0ae4e443223c39ba4392f00"
+    },
+    "controller/transition-1791731553499122551/bgpls-status.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731553499122551/bgpls-status.json",
+      "sha256": "381bbc4a53d4f80f8db5ed2cb6d7422ff6e5f82aa35ebaa19493e88063211dc5"
+    },
+    "controller/transition-1791731553499122551/journal.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731553499122551/journal.json",
+      "sha256": "b0a03d44386f8024b7898ff214f82cf00416ec01979c03be938dc2a54cba7410"
+    },
+    "controller/transition-1791731553499122551/pcep.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731553499122551/pcep.json",
+      "sha256": "190f28674eec11967be54d9dc6abbc370ff93005a1320b2b27247f4e0d049d60"
+    },
+    "controller/transition-1791731553499122551/summary.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731553499122551/summary.json",
+      "sha256": "75f071f25883b05f8168b1ab1fb5c14b75becc998fa6fb77b9c81694e0a7316e"
+    },
+    "controller/transition-1791731553499122551/topology.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731553499122551/topology.json",
+      "sha256": "d3b5de3ef750e7ed0ebe7f3e44c9e5012f7c9831c0968a965c028a89f3b67d0b"
+    },
+    "controller/transition-1791731554502761745/bgpls-raw.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731554502761745/bgpls-raw.json",
+      "sha256": "150f484f9af9f2e66ad81a66ca366ab6f4262e4ce0ae4e443223c39ba4392f00"
+    },
+    "controller/transition-1791731554502761745/bgpls-status.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731554502761745/bgpls-status.json",
+      "sha256": "381bbc4a53d4f80f8db5ed2cb6d7422ff6e5f82aa35ebaa19493e88063211dc5"
+    },
+    "controller/transition-1791731554502761745/journal.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731554502761745/journal.json",
+      "sha256": "ccb8f3219d61b1e65ff55727f2d1e07efd385dc51e9d22512fd84a770e25f5d7"
+    },
+    "controller/transition-1791731554502761745/pcep.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731554502761745/pcep.json",
+      "sha256": "f29afbf38ec851098292b5e91c41ac5eb5583bffbada7f3350127357bb46de97"
+    },
+    "controller/transition-1791731554502761745/summary.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731554502761745/summary.json",
+      "sha256": "c616a7450e3b7080fbdd09a361182d3fa2bdeb617f978ef36e87f993ca66943a"
+    },
+    "controller/transition-1791731554502761745/topology.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731554502761745/topology.json",
+      "sha256": "d3b5de3ef750e7ed0ebe7f3e44c9e5012f7c9831c0968a965c028a89f3b67d0b"
+    },
+    "controller/transition-1791731559512686532/bgpls-raw.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731559512686532/bgpls-raw.json",
+      "sha256": "47b966bf1311a9c247973684a5d6ed9535dd0f04fe0e6bb264efe2cf125c1bed"
+    },
+    "controller/transition-1791731559512686532/bgpls-status.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731559512686532/bgpls-status.json",
+      "sha256": "949b0b26f7a56207fb221150af9efefc0e54b53848e8f1df0a537cb7a174ed63"
+    },
+    "controller/transition-1791731559512686532/journal.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731559512686532/journal.json",
+      "sha256": "59c42abec321266e171347acce262e26955b9e7de80ffd9ab3dc81104d1f583f"
+    },
+    "controller/transition-1791731559512686532/pcep.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731559512686532/pcep.json",
+      "sha256": "46f6e772b48b8c370a07c3f3b20ddcdc3747e33964516444d5540f36ce4c532d"
+    },
+    "controller/transition-1791731559512686532/summary.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731559512686532/summary.json",
+      "sha256": "6dae5be6cceaed83edeea801b7ac94476eb29c47c670e8bde89358dce7518304"
+    },
+    "controller/transition-1791731559512686532/topology.json": {
+      "path": "build/live-lab-evidence/failover-2026-10-11/controller/transition-1791731559512686532/topology.json",
+      "sha256": "b1e658b692092efe154cdebb3cb4494e908656cdcfa4d510ecad46f9e64be6ca"
+    }
+  },
+  "baseline": {
+    "attempts": 0,
+    "ero": [
+      "10.0.12.2",
+      "10.0.25.5",
+      "10.0.56.6"
+    ],
+    "fresh_synchronized_delegation": true,
+    "path_nodes": [
+      "PE1",
+      "P1",
+      "P2",
+      "PE3"
+    ]
+  },
+  "date": "2026-10-11",
+  "deployed_source_commit": "65e1ac6ad6174ac1652bfac07e251afc08bed3ee",
+  "evidence_checks": {
+    "controller_reported_recovered": true,
+    "correlated_down_then_active": true,
+    "exactly_one_pcupd": true,
+    "mpls_echo": "5/5",
+    "mpls_trace": [
+      "10.0.13.3",
+      "10.0.34.4",
+      "10.0.46.6"
+    ],
+    "no_controller_switchback": true,
+    "post_restore_echo": "5/5",
+    "raw_graphs_reproduce_derived_topology": true,
+    "restored_adjacency_full": true,
+    "same_pcep_run_and_session": true,
+    "send_topology_digest_matches_retained_raw": true,
+    "state_checksums_valid": true,
+    "transit_rsvp_50_mbps": true
+  },
+  "failure": {
+    "directed_links_before": 16,
+    "directed_links_during": 15,
+    "directed_links_restored": 16,
+    "interface": "GigabitEthernet2",
+    "link": "P1-P2",
+    "router": "P1",
+    "withdrawn_edge_ids": [
+      "bgpls-link-f236c6993d24c8e9bd58d6ebfdb7390d"
+    ]
+  },
+  "limitations": [
+    "This trial does not qualify multiple tunnels, concurrent failures, other vendor images, inter-area or inter-AS operation, or general healthy-path optimization.",
+    "The journal is an intent and attempt record, not the shared reservation ledger. The transient pending window was not independently sampled; send-before-wire ordering has deterministic socket coverage.",
+    "IOS CLI printed D:0 in the displayed LSP object while synchronized on-wire PCRpt had D=1 and the tunnel command reported Working delegation yes. Authority was determined from the current wire report.",
+    "MPLS OAM verifies the selected LSP. Autoroute remained disabled; customer service steering was not qualified.",
+    "Dashboard tunnel creation and PCInitiate remain proposed and unimplemented."
+  ],
+  "publication_redaction": "Public interface addresses, console endpoints, MAC addresses, credentials and live run/session UUIDs are omitted. Local private evidence is ignored by Git; listed hashes are unchanged.",
+  "replacement": {
+    "bandwidth_bps": 50000000,
+    "ero": [
+      "10.0.13.3",
+      "10.0.34.4",
+      "10.0.46.6"
+    ],
+    "path_link_ids": [
+      "bgpls-link-a70c5cd531f031e705c2448df1be7c5c",
+      "bgpls-link-6779f84c8aff93f719c1b60a6052df3b",
+      "bgpls-link-2ea7c3d6657298d0e01a447860920dca"
+    ],
+    "path_nodes": [
+      "PE1",
+      "P3",
+      "P4",
+      "PE3"
+    ],
+    "srp_id": 1,
+    "status": "FAILURE_PATH",
+    "topology_digest": "47b966bf1311a9c247973684a5d6ed9535dd0f04fe0e6bb264efe2cf125c1bed",
+    "topology_timestamp": "2026-10-11T15:12:38.233879+00:00",
+    "total_metric": 30
+  },
+  "scope": "One reversible core-link withdrawal, one authorized delegated RSVP-TE tunnel, one Cisco IOS XE 16.9.7 lab",
+  "source_archive_sha256": "bd5ebc7ef685f464019cd55ed4c4d54b5c8c605b6f0f5b47194618ca7964ab38",
+  "status": "PASS",
+  "timeline_utc": {
+    "baseline_capture": "2026-10-11T15:12:28.962+00:00",
+    "correlated_active_report": "2026-10-11T15:12:39.184+00:00",
+    "correlated_down_report": "2026-10-11T15:12:39.115+00:00",
+    "first_retained_withdrawn_topology": "2026-10-11T15:12:33.045168+00:00",
+    "journal_last_attempt": "2026-10-11T15:12:39.026+00:00",
+    "new_down_empty_ero_report": "2026-10-11T15:12:31.037+00:00",
+    "pcupd_sent": "2026-10-11T15:12:39.075+00:00",
+    "restored_capture": "2026-10-11T15:13:19.306+00:00"
+  },
+  "timing_seconds": {
+    "down_report_to_pcupd": 8.038,
+    "pcupd_to_active_report": 0.109,
+    "post_pcupd_observation_window": 40.232
+  },
+  "tunnel": {
+    "bandwidth_bps": 50000000,
+    "headend": "PE1",
+    "hold_priority": 7,
+    "new_lsp_id": 34,
+    "old_lsp_id": 33,
+    "plsp_id": 524388,
+    "setup_priority": 7,
+    "tailend": "PE3",
+    "tunnel_id": 100
+  }
+}

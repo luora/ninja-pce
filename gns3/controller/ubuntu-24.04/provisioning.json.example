@@ -1,0 +1,31 @@
+{
+  "qualified": false,
+  "origin": "https://controller.example.test",
+  "operators": ["operator"],
+  "proxy_uid": 33,
+  "socket_path": "/run/ninja-provisioning/http.sock",
+  "inventory": "/etc/ninja-pce/provisioning-inventory.yml",
+  "known_hosts": "/etc/ninja-pce/known_hosts",
+  "state_dir": "/home/ubuntu/ninja-pce/build/state",
+  "pcep_capture": "/home/ubuntu/ninja-pce/build/live/pcep.json",
+  "pce_address": "172.16.100.10",
+  "headends": ["PE1"],
+  "destinations": ["PE3"],
+  "max_bandwidth_bps": 1000000,
+  "computer": {
+    "raw_path": "/home/ubuntu/ninja-pce/build/live/bgpls-raw.json",
+    "status_path": "/home/ubuntu/ninja-pce/build/live/bgpls-status.json",
+    "topology_path": "/home/ubuntu/ninja-pce/build/live/topology.json",
+    "required_peers": ["172.16.100.102"],
+    "node_names": {
+      "10.255.0.1": "PE1",
+      "10.255.0.2": "P1",
+      "10.255.0.3": "P3",
+      "10.255.0.4": "P4",
+      "10.255.0.5": "P2",
+      "10.255.0.6": "PE3"
+    },
+    "headends": {"10.255.0.1": "10.255.0.1"},
+    "max_age_seconds": 30
+  }
+}

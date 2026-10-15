@@ -1,0 +1,54 @@
+# Render locally with envsubst '${PUBLIC_IP}'. Do not commit the rendered file.
+server {
+    listen ${PUBLIC_IP}:80;
+    server_name ${PUBLIC_IP};
+    server_tokens off;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/lib/ninja-dashboard/acme;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 308 https://${PUBLIC_IP}$request_uri;
+    }
+}
+
+server {
+    listen ${PUBLIC_IP}:443 ssl;
+    server_name ${PUBLIC_IP};
+    server_tokens off;
+
+    ssl_certificate /etc/nginx/ninja-dashboard/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ninja-dashboard/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:NinjaDashboard:1m;
+    ssl_session_timeout 10m;
+    ssl_session_tickets off;
+
+    auth_basic "Ninja-PCE controller";
+    auth_basic_user_file /etc/nginx/ninja-dashboard/htpasswd;
+    client_max_body_size 1k;
+
+    location ~ ^/(?:|index\.html|styles\.css|app\.js|api/controller|api/tunnel-options|healthz)$ {
+        limit_except GET { deny all; }
+        proxy_pass http://127.0.0.1:8088;
+        proxy_http_version 1.1;
+        proxy_set_header Host $server_name;
+        proxy_set_header Connection "";
+        proxy_set_header Authorization "";
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 15s;
+        proxy_send_timeout 15s;
+        proxy_cache off;
+        proxy_hide_header Cache-Control;
+        add_header Cache-Control "no-store" always;
+    }
+
+    location / {
+        return 404;
+    }
+}

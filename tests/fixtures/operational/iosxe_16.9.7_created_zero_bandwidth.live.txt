@@ -1,0 +1,73 @@
+Name: NINJA_CREATE_00000000000000000000000000000001 (Tunnel62336) Destination: 10.255.0.6 Ifhandle: 0x10 (auto-tunnel for pce client)
+  Status:
+    Admin: up         Oper: up     Path: valid       Signalling: connected
+    path option 1, (PCE) type dynamic (Basis for Setup, path weight 30)
+
+  Config Parameters:
+    Bandwidth: 0        kbps (Global)  Priority: 7  7   Affinity: 0x0/0xFFFF
+    Metric Type: TE (default)
+    Path-selection Tiebreaker:
+      Global: not set   Tunnel Specific: not set   Effective: min-fill (default)
+    Hop Limit: disabled
+    Cost Limit: disabled
+    Path-invalidation timeout: 10000 msec (default), Action: Tear
+    AutoRoute: disabled LockDown: disabled Loadshare: 0 [0] bw-based
+    auto-bw: disabled
+    Fault-OAM: disabled, Wrap-Protection: disabled, Wrap-Capable: No
+  Active Path Option Parameters:
+    State: dynamic path option 1 is active
+    BandwidthOverride: disabled  LockDown: disabled  Verbatim: disabled
+  Node Hop Count: 3
+
+  PCEP Info:
+    Delegation state: Working: yes   Protect: no
+    Delegation peer: 172.16.100.10
+    Working Path Info:
+      Request status: delegated
+      SRP-ID: 1
+      Created via PCInitiate message from PCE server: 172.16.100.10
+    Reported paths:
+      Tunnel Name: NINJA_CREATE_00000000000000000000000000000001
+       LSPs:
+        LSP[0]:
+         source 10.255.0.1, destination 10.255.0.6, tunnel ID 62336, LSP ID 1
+         State: Admin up, Operation active
+         Binding SID: 29
+         Setup type: RSVP-TE
+         Bandwidth: requested 0, used 0
+         LSP object:
+           PLSP-ID 0x8F380, flags: D:0 S:0 R:0 A:1 O:2
+         Metric type: TE, Accumulated Metric 30
+         ERO:
+           IPv4[0]: 10.0.13.3/32
+           IPv4[1]: 10.0.34.4/32
+           IPv4[2]: 10.0.46.6/32
+       PLSP Event History (most recent first):
+         Mon Oct 12 20:41:59.463: PCRpt update LSP-ID:1, SRP-ID:1, PST:0, METRIC_TYPE:2, REQ_BW:0, USED_BW:0
+         Mon Oct 12 20:41:59.431: PCRpt create LSP-ID:1, SRP-ID:1, PST:0, METRIC_TYPE:2, REQ_BW:0, USED_BW:0
+
+
+  InLabel  :  -
+  OutLabel : GigabitEthernet2, 16
+  Next Hop : 10.0.13.3
+  RSVP Signalling Info:
+       Src 10.255.0.1, Dst 10.255.0.6, Tun_Id 62336, Tun_Instance 1
+    RSVP Path Info:
+      My Address: 10.0.13.1
+      Explicit Route: 10.0.13.3 10.0.34.4 10.0.46.6 10.255.0.6
+      Record   Route:   NONE
+      Tspec: ave rate=0 kbits, burst=1000 bytes, peak rate=0 kbits
+    RSVP Resv Info:
+      Record   Route:   NONE
+      Fspec: ave rate=0 kbits, burst=1000 bytes, peak rate=0 kbits
+  Shortest Unconstrained Path Info:
+    Path Weight: 30 (TE)
+    Explicit Route: 10.0.12.2 10.0.25.5 10.0.56.6 10.255.0.6
+
+  History:
+    Tunnel:
+      Time since created: 4 seconds
+      Time since path change: 4 seconds
+      Number of LSP IDs (Tun_Instances) used: 1
+    Current LSP: [ID: 1]
+      Uptime: 4 seconds
