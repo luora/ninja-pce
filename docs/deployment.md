@@ -209,8 +209,9 @@ Install these additional policy/label files separately with service-readable
 permissions and preserve them in backups.
 
 The examples use absolute runtime paths, as the packaged installer requires.
-Additional static inputs must be outside home directories because the supplied
-unit uses `ProtectHome`. The lower-level application also accepts relative paths,
+Additional static inputs must be outside `/home`, `/root`, `/tmp` and `/var/tmp`
+because the supplied unit uses `ProtectHome` and `PrivateTmp`. The lower-level
+application also accepts relative paths,
 resolved against the controller JSON file's directory, for interactive/custom
 deployments.
 
