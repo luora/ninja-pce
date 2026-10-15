@@ -4,8 +4,17 @@ These are sanitized deployment examples for the separate dashboard
 [configuration provisioning profile](dashboard_tunnel_creation.md#configuration-based-provisioning-profile).
 The shipped JSON has `qualified: false`, and the environment example disables
 writes. Installing these files does not qualify a device or enable public
-creation. Keep the new Nginx operator routes absent until the exact profile has
+creation. Keep the new Nginx provisioning routes absent until the exact profile has
 passed its private live qualification.
+
+The [0.6.0 domain validation record](domain_tunnel_provisioning_validation.md)
+documents completed concurrent authenticated creation, transport refusal,
+service restart preservation and RSVP/forwarding checks. The two qualification
+tunnels and holds remain in place. The qualified SSH backend changes running
+configuration without saving startup configuration; cold VM/router reboots,
+interactive live browser operation and every possible path remain outside that
+recorded scope. New deployments require their own reviewed enrollment and
+qualification.
 
 ## Private runtime policy and SSH
 
@@ -106,6 +115,14 @@ The unit runs:
 ```text
 /home/ubuntu/ninja-pce/.venv/bin/python -m ninja_pce.cli_provisioning --config /etc/ninja-pce/provisioning.json
 ```
+
+For a packaged deployment, point the reviewed service override at the release's
+installed interpreter, use `python -I -m ninja_pce.cli_provisioning`, and set
+`UnsetEnvironment=PYTHONPATH PYTHONHOME`. Verify `ninja_pce.__version__` and
+`ninja_pce.__file__` with that isolated interpreter before activation. Apply the
+same environment isolation to the controller service so its child processes
+inherit the reviewed installed environment; see the
+[activation check](deployment.md#validate-and-activate).
 
 It loads the secret through `EnvironmentFile`, creates
 `/run/ninja-provisioning` as `ubuntu:www-data` with mode0750, and the API creates

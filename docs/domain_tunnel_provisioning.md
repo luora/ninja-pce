@@ -112,8 +112,16 @@ control, and independent headend verification. A report acknowledgement, ACTIVE
 PCEP state, RSVP verification, and a forwarding test are distinct observations.
 Delivery or cleanup uncertainty retains the reservation hold.
 
-Offline tests qualify domain discovery and transport identity checks. Deployment
-qualification must additionally demonstrate concurrent independent operations
-from multiple authenticated principals and headends, same-key retries, policy
-refusal, missing and changed transport identities, restart preservation, RSVP,
-and forwarding checks. Do not infer those live outcomes from offline coverage.
+The [offline validation checkpoint](domain_tunnel_provisioning_validation.md)
+records 2,038 passing tests, 88% coverage, static checks, and the clean 0.6.0
+release from `31c998d`. Its separate live record qualifies concurrent creation
+from two authenticated principals/headends, retries, policy and transport
+refusal, service restart preservation, RSVP and forwarding. All eight enrolled
+transports were SSH-authenticated and version-qualified. Two qualification
+tunnels and their holds remain in place; current `max_outstanding` is 12, with
+three retained held services consuming three slots.
+Live checks used HTTPS API requests and asset inspection. Interactive browser
+sessions, cold VM/router reboots and every possible path remain outside that
+qualification. The SSH profile changes running configuration without saving
+startup configuration, and managed recovery remains the original-operation
+profile. Independently qualify those conditions for each new deployment.

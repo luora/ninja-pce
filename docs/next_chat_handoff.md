@@ -1,11 +1,13 @@
 # Ninja-PCE next-chat handoff
 
 Updated 2026-10-15 (Africa/Nairobi). Domain-wide, multi-user dashboard tunnel
-provisioning is implemented and verified **offline** on
-`feat/domain-tunnel-provisioning`. The next task is live migration, deployment,
-and qualification while preserving the existing application and durable state.
+provisioning is implemented, deployed and qualified on
+`feat/domain-tunnel-provisioning` within the scope below. Concurrent authenticated
+live creation, transport refusal, forwarding, service restart, final read-only
+audit and temporary-account cleanup passed while preserving the original live
+application and durable authority.
 
-## Current milestone: offline implementation complete
+## Current milestone: live domain provisioning complete
 
 The new implementation discovers every eligible domain headend, including
 transit routers; separates SSH transport enrollment from topology eligibility;
@@ -16,35 +18,78 @@ delivery, and principal-scoped dashboard operation history. An explicit
 review/apply migration preserves original authority, held resources, managed
 recovery bindings, uncertainty, and attempt histories.
 
-Complete regression at the implementation checkpoint: **1,998 passed in
-187.71 seconds, 87% coverage**. The later focused run after migration and
-concurrency changes passed **349 tests in 13.15 seconds**. Ruff and mypy passed.
+Complete regression at the final offline checkpoint: **2,038 passed in
+206.70 seconds, 88% coverage**. Ruff and mypy passed. The clean **0.6.0** release
+was built from source `31c998d`, with `source_dirty=false`; fresh wheel-install
+smoke checks passed.
+Later documentation/comment commits record qualification evidence; the deployed
+release wheel's source revision remains `31c998d`.
 See [domain provisioning validation](domain_tunnel_provisioning_validation.md)
 and [domain provisioning configuration](domain_tunnel_provisioning.md).
 
-Only a read-only live baseline was captured for this milestone: eight nodes,
+The initial read-only live baseline captured before rollout contained eight nodes,
 22 directed links, eight synchronized PCCs, six ACTIVE LSPs, one original hold,
 two failure attempts, nine startup attempts, and three original creation
-operations (one VERIFIED, two ROLLED_BACK). Seven independent router SSH host
-keys were observed; the remaining router console refused access. Live
-deployment, journal migration, new creation, and restart qualification remain
-pending. The live application release and previously qualified tunnels described
-below remain the deployment baseline.
+operations (one VERIFIED, two ROLLED_BACK). These observations are historical
+preservation evidence. The activation, creation, restart and final audit below
+record the subsequent live deployment separately.
 
-Continue from the current branch and worktree; do not recreate the feature or
-reset the existing journals. Review the explicit migration and backups, finish
-independent transport enrollment for all eight managed routers, and qualify at
-least two headends and two authenticated principals with concurrent independent
-operations, same-key retries, policy/transport refusal, restart preservation,
-independent RSVP checks, and bounded forwarding checks. Keep all credentials
-and private access evidence outside tracked files.
+The subsequent activation preservation check verified installed 0.6.0 modules,
+eight synchronized PCCs and six ACTIVE original LSPs. The original three
+creation records, reservation-ledger bytes, managed recovery binding and history
+were retained; counters stayed at two failure attempts and nine startup
+attempts. Unrelated process IDs were unchanged and activation sent no PCUpd.
+An inherited `PYTHONPATH` selecting old source was corrected with isolated
+installed interpreters and `UnsetEnvironment=PYTHONPATH PYTHONHOME`.
+
+Two authenticated HTTPS principals then concurrently created independent
+1 Mbps tunnels from transit headend P1 to PE4 and from PE4 to PE1. Both reached
+VERIFIED with independent RSVP/PCEP checks. Same-key retries recovered the
+original operations; cross-principal reads returned 404. Anonymous HTTPS,
+policy, CSRF and Origin refusal checks passed. Both new headends returned MPLS
+echo 5/5 and traces reached their destinations; the original PE1 managed tunnel
+also retained MPLS echo 5/5. The creation checkpoint contained five operations
+(three VERIFIED, two ROLLED_BACK), three holds and eight ACTIVE LSPs. See the
+validation record for exact logical routes and separate evidence scopes.
+
+Strict SSH refused changed host identity before any CLI, and missing pins
+failed readiness; active configuration, inventory, pins and state remained
+unchanged. The restart preserved all eight paths/delegation flags, all five
+operation records, all three hold bytes, the original recovery binding/counters
+and unrelated process IDs, with no PCUpd or archived update. The legacy recovery
+journal's three attempts also remained unchanged. Reducing the
+capacity policy from 16 to 12 retained a third policy revision without rebinding
+old operations. Both principals' retries and independent RSVP/forwarding checks
+passed again after restart.
+
+The final audit was healthy: eight nodes, 22 directed links, eight fresh PCCs,
+eight ACTIVE LSPs, three reservations, five operations (three VERIFIED and two
+ROLLED_BACK), and three policy revisions. All eight transports were
+SSH-authenticated and version-qualified with pinned identities. Current
+`max_outstanding` is 12; three retained held services consume three slots.
+Controller and provisioning services were active
+and enabled. Temporary HTTPS qualification accounts and transport test units
+were removed; original authentication bytes/hash were restored exactly, and
+anonymous HTTPS again returned 401. Exact operation/hold bytes, paths, history
+and unrelated process IDs remained unchanged after cleanup.
+
+Preserve the completed migration/backups and qualification evidence. The two
+new 1 Mbps qualification tunnels remain in running configuration with their
+holds. The SSH profile does not save startup configuration. Live checks used
+authenticated HTTPS API requests and dashboard-asset inspection; an interactive
+browser session, cold controller VM/router reboot and every possible path were
+not qualified. Managed recovery remains the exact original-operation profile;
+the two new operations were not enrolled automatically. Native
+PCInitiate/NETCONF/other vendors remain separate qualification work. No migration
+or deployment task remains for this milestone. Keep private access evidence
+outside Git.
 
 The remainder retains the original application milestone and starting
-requirements as historical context. Its original implementation plan is now
-covered by the offline work above; its live preservation requirements still
-apply.
+requirements as historical context. Its implementation and deployment plan
+is complete as recorded above; preserve its live-state guarantees in future
+work.
 
-## Git starting point
+## Historical Git starting point
 
 - Main integration: [PR #2](https://github.com/luora/ninja-pce/pull/2) merged
   at `8380f97` after Python 3.10/3.12 and packaging integration checks passed.
@@ -54,8 +99,8 @@ apply.
 - Working branch prepared for this next task: `feat/domain-tunnel-provisioning`,
   created from updated `main` after that merge. The original handoff commit
   changed documentation only; the domain provisioning behavior is now
-  implemented offline as recorded above.
-- Application release: `0.5.0`; live wheel code is source `3886b08`.
+  implemented and qualified as recorded above.
+- Historical application release: `0.5.0`; its wheel code was source `3886b08`.
   Later `b1e29a1` changes the CI/browser harness, and later commits record
   deployment evidence. Do not confuse the current Git revision with the
   deployed artifact's source revision.
@@ -73,13 +118,14 @@ Authentication does not remove policy, capacity, ownership, transport readiness,
 session, same-origin or CSRF checks. It must remain possible to identify and
 audit the actual principal responsible for each operation.
 
-## Current verified application
+## Historical verified application baseline: 0.5.0
 
-The enabled `ninja-controller` service supervises the BGP-LS collector, PCEP
-listener and read-only dashboard. GoBGP remains the external BGP speaker;
+At the application milestone below, the enabled `ninja-controller` service
+supervised the BGP-LS collector, PCEP listener and read-only dashboard. GoBGP
+remained the external BGP speaker;
 the separately qualified SSH provisioning service and authenticated Nginx
-proxy remain separate. The unified application is deployed and service-restart
-qualification is complete.
+proxy remained separate. The unified application was deployed and service-restart
+qualification was complete for that release.
 
 | Observation | Verified result |
 |---|---|
@@ -154,19 +200,19 @@ adapter. Native bandwidth-aware RSVP creation through PCInitiate remains
 unqualified on IOS XE 16.9.7. Retain the working configuration-plus-PCEP path
 until another mechanism is independently qualified.
 
-## Why the next milestone is necessary
+## Historical problem statement: completed by this milestone
 
-Ordinary initial PCEP paths are topology-driven, but dashboard provisioning is
-still tied to a small explicitly configured device/destination inventory, an
+Before 0.6.0, ordinary initial PCEP paths were topology-driven, but dashboard
+provisioning was tied to a small explicitly configured device/destination inventory, an
 exact operator-name list, one held managed operation, bounded small journal
-history and a global policy digest. These restrictions prevent the domain model
+history and a global policy digest. These restrictions prevented the domain model
 from extending naturally to multiple headends, users and simultaneous services.
 
 The user wants one reusable application that can be deployed across devices and
 topologies. Do not solve the next example by adding another router, username,
 tunnel ID or fixed path to an allowlist.
 
-## Implementation direction
+## Original implementation and preservation requirements
 
 Keep topology authorization separate from provisioning transport enrollment.
 The fresh trusted TED determines managed node identity and eligibility; an
@@ -208,7 +254,10 @@ headend verification. A report acknowledgement, ACTIVE state, RSVP verification
 and forwarding test remain distinct outcomes. Retain holds when delivery or
 cleanup is uncertain; do not release them merely because a GUI line disappears.
 
-## Start the next task
+## Historical starting plan: migration and deployment completed
+
+This plan is retained as historical context; its migration and deployment steps
+have been completed for the 0.6.0 milestone above.
 
 1. Confirm the merge outcome, checkout `feat/domain-tunnel-provisioning` from
    updated `main`, and read repository instructions and the guides above.

@@ -20,12 +20,12 @@ its authenticated HTTPS proxy also remain separate.
 For the packaged systemd installation:
 
 ```bash
-sudo -u ninja-pce /opt/ninja-pce/releases/0.5.0/venv/bin/ninja-pce controller validate \
+sudo -u ninja-pce /opt/ninja-pce/releases/0.6.0/venv/bin/ninja-pce controller validate \
   --config /etc/ninja-pce/controller.json
 sudo systemctl start ninja-controller
 systemctl status ninja-controller --no-pager
 journalctl -u ninja-controller --no-pager -n 80
-sudo -u ninja-pce /opt/ninja-pce/releases/0.5.0/venv/bin/ninja-pce controller status \
+sudo -u ninja-pce /opt/ninja-pce/releases/0.6.0/venv/bin/ninja-pce controller status \
   --config /etc/ninja-pce/controller.json
 ```
 
@@ -270,6 +270,16 @@ reason. Explicit concurrency and history bounds permit multiple independent
 operations; tunnel IDs are allocated within each headend's namespace and
 idempotency is scoped to the authenticated principal. Each operation retains
 its original policy revision across later policy changes.
+
+The [0.6.0 live qualification](domain_tunnel_provisioning_validation.md)
+demonstrated concurrent creation by two principals/headends, scoped retries,
+transport/policy refusal, service restart preservation and independent
+RSVP/forwarding. The recorded deployment's `max_outstanding` is 12, with three
+retained held services consuming three slots; current
+path admission and bandwidth policy still apply. Its two qualification tunnels
+and holds remain in place. The SSH profile changes running configuration and
+does not save startup configuration. Cold VM/router reboot and a live
+interactive browser session were outside the recorded qualification.
 
 The legacy explicit inventory profile retains its one-held-tunnel default.
 There is no public deletion endpoint or arbitrary router-command endpoint. Use
