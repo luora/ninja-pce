@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "domain": {
+    "protocol_id": 3,
+    "instance_id": 0,
+    "autonomous_system": 65000,
+    "bgpls_identifier": 0
+  },
+  "pcc_prefixes": ["10.200.0.0/16"],
+  "destination_prefixes": ["10.200.0.0/16"],
+  "max_bandwidth_bps": 100000000,
+  "max_live_lsps": 32
+}

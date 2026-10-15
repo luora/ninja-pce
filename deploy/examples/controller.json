@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "files": {
+    "bgpls_raw": "/var/lib/ninja-pce/live/bgpls-raw.json",
+    "bgpls_status": "/var/lib/ninja-pce/live/bgpls-status.json",
+    "topology": "/var/lib/ninja-pce/live/topology.json",
+    "pcep_capture": "/var/lib/ninja-pce/live/pcep.json"
+  },
+  "state_dir": "/var/lib/ninja-pce/state",
+  "runtime_dir": "/var/lib/ninja-pce/run",
+  "bgpls": {
+    "endpoint": "127.0.0.1:50051",
+    "required_peers": ["10.201.0.1"],
+    "interval_seconds": 5,
+    "timeout_seconds": 10,
+    "max_age_seconds": 30
+  },
+  "pcep": {
+    "listen_host": "10.201.0.10",
+    "port": 4189,
+    "domain_policy": "/etc/ninja-pce/domain-policy.json"
+  },
+  "dashboard": {
+    "enabled": true,
+    "listen_host": "127.0.0.1",
+    "port": 8088,
+    "refresh_seconds": 5
+  }
+}

@@ -1,0 +1,100 @@
+// Wire-compatible, deliberately restricted subset of GoBGP v3.37.0 api/gobgp.proto.
+// Upstream: https://github.com/osrg/gobgp/blob/v3.37.0/api/gobgp.proto
+// Copyright (C) 2015-2017 Nippon Telegraph and Telephone Corporation.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+// of the Software, and to permit persons to whom the Software is furnished to do
+// so, subject to the following conditions:
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+syntax = "proto3";
+package apipb;
+import "google/protobuf/timestamp.proto";
+
+service GobgpApi {
+  rpc ListPeer(ListPeerRequest) returns (stream ListPeerResponse);
+  rpc ListPath(ListPathRequest) returns (stream ListPathResponse);
+}
+message ListPeerRequest { string address = 1; }
+message ListPeerResponse { Peer peer = 1; }
+message ListPathRequest {
+  TableType table_type = 1;
+  string name = 2;
+  Family family = 3;
+  bool enable_nlri_binary = 7;
+  bool enable_attribute_binary = 8;
+  bool enable_only_binary = 9;
+}
+enum TableType { GLOBAL = 0; LOCAL = 1; ADJ_IN = 2; ADJ_OUT = 3; VRF = 4; }
+message Family {
+  enum Afi { AFI_UNKNOWN = 0; AFI_IP = 1; AFI_IP6 = 2; AFI_LS = 16388; }
+  enum Safi { SAFI_UNKNOWN = 0; SAFI_UNICAST = 1; SAFI_LS = 71; }
+  Afi afi = 1;
+  Safi safi = 2;
+}
+message ListPathResponse { Destination destination = 1; }
+message Destination { string prefix = 1; repeated Path paths = 2; }
+message Path {
+  google.protobuf.Timestamp age = 3;
+  bool best = 4;
+  bool is_withdraw = 5;
+  Family family = 9;
+  string source_id = 11;
+  bool filtered = 12;
+  bool stale = 13;
+  string neighbor_ip = 15;
+  bool is_nexthop_invalid = 17;
+  bytes nlri_binary = 20;
+  repeated bytes pattrs_binary = 21;
+}
+message Peer {
+  PeerState state = 5;
+  Timers timers = 6;
+  GracefulRestart graceful_restart = 9;
+  repeated AfiSafi afi_safis = 10;
+}
+message PeerState {
+  Messages messages = 4;
+  string neighbor_address = 5;
+  enum SessionState {
+    UNKNOWN = 0; IDLE = 1; CONNECT = 2; ACTIVE = 3; OPENSENT = 4;
+    OPENCONFIRM = 5; ESTABLISHED = 6;
+  }
+  SessionState session_state = 13;
+  enum AdminState { UP = 0; DOWN = 1; PFX_CT = 2; }
+  AdminState admin_state = 15;
+  uint32 flops = 17;
+}
+message Messages { Message received = 1; }
+message Message {
+  uint64 update = 2;
+  uint64 withdraw_update = 8;
+  uint64 withdraw_prefix = 9;
+}
+message Timers { TimersState state = 2; }
+message TimersState { google.protobuf.Timestamp uptime = 6; }
+message GracefulRestart {
+  bool peer_restarting = 9;
+  bool local_restarting = 10;
+}
+message AfiSafi {
+  MpGracefulRestart mp_graceful_restart = 1;
+  AfiSafiState state = 3;
+}
+message AfiSafiState {
+  Family family = 1;
+  bool enabled = 2;
+  uint64 accepted = 4;
+}
+message MpGracefulRestart { MpGracefulRestartState state = 2; }
+message MpGracefulRestartState { bool end_of_rib_received = 4; }

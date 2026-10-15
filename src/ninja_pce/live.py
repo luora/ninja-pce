@@ -20,6 +20,12 @@ if TYPE_CHECKING:
     from .bgpls import OspfMultiAreaPolicy
 
 
+def _computation_age(value: str) -> int | float:
+    """Keep whole durations identical to historic managed-policy JSON values."""
+    parsed = float(value)
+    return int(parsed) if math.isfinite(parsed) and parsed.is_integer() else parsed
+
+
 def add_live_commands(subparsers: Any) -> None:
     bgpls = subparsers.add_parser("bgpls-collect", help="Collect live BGP-LS from a local GoBGP speaker")
     bgpls.add_argument("--endpoint", default="127.0.0.1:50051", help="Local GoBGP gRPC endpoint")
@@ -49,6 +55,8 @@ def add_live_commands(subparsers: Any) -> None:
     pcep.add_argument("--compute-bgpls-status", help="Live collector checksummed health file")
     pcep.add_argument("--compute-topology", help="Live normalized topology feed; must remain available")
     pcep.add_argument("--compute-bgpls-peer", action="append", default=[], help="Required live BGP-LS exporter")
+    pcep.add_argument("--compute-max-age", type=_computation_age, default=30,
+                      help="Maximum computation topology age in seconds; positive and at most 30")
     pcep.add_argument("--compute-node-map", help="Advertised router-ID to node-name JSON map")
     pcep.add_argument("--compute-ospf-multi-area-policy", help="Explicit JSON policy matching the collector")
     pcep.add_argument("--compute-headend", action="append", default=[],
@@ -228,6 +236,7 @@ async def _serve_pcep(args: argparse.Namespace) -> int:
             raw_path=Path(args.compute_bgpls_raw), status_path=Path(args.compute_bgpls_status),
             topology_path=Path(args.compute_topology), required_peers=tuple(args.compute_bgpls_peer),
             node_names=_node_names(args.compute_node_map), headends=headends,
+            max_age_seconds=args.compute_max_age,
             ospf_multi_area=_ospf_multi_area_policy(args.compute_ospf_multi_area_policy),
             domain_policy=domain_policy,
         )

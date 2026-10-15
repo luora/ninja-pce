@@ -1,41 +1,49 @@
-# ninja-pce
+# Ninja-PCE
 
-> **Current lab preview:** start with the [tester guide](docs/tester_guide.md).
-> Live BGP-LS ingestion and bounded PCEP initial-path provision have been
-> [validated in GNS3](docs/live_pcep_computation_validation.md) on CSR1000v IOS XE
-> 16.9.7. This is an experimental lab preview, not multi-vendor certification.
-> The [read-only dashboard](docs/dashboard.md) displays local controller evidence.
-> [Opt-in withdrawal recovery](docs/pcep_failure_recovery.md) passed
-> [one IOS XE 16.9.7 lab trial](docs/pcep_failure_recovery_validation.md). Dashboard
-> [three-field tunnel provisioning](docs/dashboard_tunnel_creation.md) has an
-> exact-plan router configuration backend that passed
-> [one private 1 Mbps IOS XE 16.9.7 trial](docs/dashboard_configuration_validation.md).
-> Shipped deployment examples remain disabled by default.
-> The [repeatable multi-area lab profile](docs/multi_area_lab.md) passed underlay,
-> eight-router BGP-LS ingestion and local cross-area path computation checks.
-> Inter-area tunnel signaling and forwarding remain unqualified.
+Ninja-PCE is a topology-driven PCEP application for IPv4 RSVP-TE networks. It
+collects a live BGP-LS traffic-engineering database, discovers eligible PCCs
+within a configured routing domain, computes constrained paths, and delivers
+initial paths to delegated router-owned LSPs. A web dashboard shows topology,
+protocol peers, tunnels, reservations and events.
 
-> Reliability remediation: current behavior and migration rules are documented in
-> [input schema](docs/input_schema.md), [reconciliation safety](docs/reconciliation.md),
-> [platform support](docs/platform_support.md), and the [engineering audit](docs/engineering_audit.md).
-> Parallel
-> links now retain directional IDs, CSPF proves its ranking or returns SEARCH_LIMIT,
-> strict EROs use numbered interface addresses, and CLI acceptance never implies
-> a verified LSP. Execution uses an exact reviewed plan and shared local reservations;
-> unsupported output and uncertain recovery fail closed. See the
-> [GNS3 validation runner](docs/gns3_validation.md) for honest offline/device results.
+Version **0.5.0** brings the collector, PCEP listener and dashboard together
+under one configuration and a supervised application command. Start with the
+[user guide](docs/user_guide.md) and [deployment guide](docs/deployment.md).
+The deployment package includes a wheel, source archive, offline dependency
+wheelhouse, checksums, configuration examples and a systemd installer.
 
-`ninja-pce` is a practical external path computation and topology-reconciliation helper for RSVP-TE networks where the deployed routers may not support native PCEP, BGP-LS, or SR-TE controller workflows.
+```bash
+ninja-pce controller validate --config /etc/ninja-pce/controller.json
+ninja-pce controller plan --config /etc/ninja-pce/controller.json
+ninja-pce controller run --config /etc/ninja-pce/controller.json
+ninja-pce controller status --config /etc/ninja-pce/controller.json
+```
 
-It takes a topology/TED snapshot, a service-demand file, and an operator-maintained
-host/OS inventory; computes feasible bandwidth-aware RSVP-TE paths; renders
-platform configuration; and can deliver an explicitly approved new configuration
-with Netmiko. A separate live GoBGP adapter and bounded PCEP listener support
-observation, constrained path requests and opt-in initial delegated paths.
-A separate opt-in profile can replace one authorized tunnel's path after a
-validated link withdrawal. General active optimization, PCReq reoptimization
-remain unimplemented. Experimental native PCInitiate remains unqualified for
-RSVP bandwidth creation on the tested image.
+Use `run` in the foreground or install the supplied systemd service. Configure
+GoBGP and routed controller reachability as described in the deployment guide.
+Ordinary PCCs and tunnel IDs require no individual controller registration;
+each router needs its global PCC configuration once.
+
+| Workflow | Authority and behavior |
+|---|---|
+| Router-owned tunnel | Domain policy, fresh synchronized delegation and supported constraints permit initial PCUpd; the router signals RSVP |
+| Dashboard tunnel provisioning | A separately qualified SSH adapter delivers an exact reviewed configuration and records ownership and reservation holds |
+| Managed recovery | The exact owned operation and its persistent recovery journal authorize bounded failure/startup recovery |
+| Offline planning | YAML/JSON inputs produce CSPF paths, platform configuration previews and verification commands |
+
+Live qualification covers CSR1000v IOS XE 16.9.7. The
+[eight-router domain trial](docs/topology_domain_validation.md) verified initial
+inter-area paths, RSVP reservations, MPLS forwarding and healthy listener
+restart. Rendering and mock parsers cover additional platform dialects;
+[platform support](docs/platform_support.md) records their qualification scope.
+General active optimization, PCReq reoptimization, native bandwidth-aware
+PCInitiate and authenticated PCEPS remain outside the qualified application
+profile. GoBGP is the external BGP speaker; Ninja-PCE reads its protected local
+API.
+
+Historical evidence and engineering details remain available through
+[input schema](docs/input_schema.md), [reconciliation](docs/reconciliation.md),
+[architecture](docs/architecture.md) and [engineering audit](docs/engineering_audit.md).
 
 ## What problem this solves
 

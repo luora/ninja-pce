@@ -11,6 +11,8 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
+from . import __version__
+from .controller import add_controller_commands, controller_command
 from .cspf import CspfNoPath, CspfSearchLimit, compute_cspf
 from .daemon import HealthState, load_daemon_config, run_daemon_cycle, start_health_server
 from .inventory import device_for_node, validate_inventory
@@ -30,6 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="ninja-pce",
         description="CSPF, topology reconciliation, and approved RSVP-TE config delivery.",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     compute = sub.add_parser("compute", help="Compute CSPF path and generate dry-run configs")
@@ -128,6 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--refresh", type=float, default=5.0, help="Browser polling interval in seconds")
     dashboard.add_argument("--demo", action="store_true", help="Use labelled synthetic examples, without live files")
     add_live_commands(sub)
+    add_controller_commands(sub)
     return parser
 
 
@@ -624,6 +628,8 @@ def main(argv: list[str] | None = None) -> int:
             return collect_bgpls(args)
         if args.command == "pcep-listen":
             return listen_pcep(args)
+        if args.command == "controller":
+            return controller_command(args)
         parser.error(f"Unknown command: {args.command}")
         return 2
     except CspfSearchLimit as exc:

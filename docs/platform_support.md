@@ -16,8 +16,11 @@ observed RSVP reservations. This result applies only to that bounded lab profile
 The separate [OSPF multi-area lab profile](multi_area_lab.md) passed underlay,
 isolated BGP-LS ingestion and local PE1-to-PE4 path computation checks on IOS XE
 16.9.7. It requires the documented GoBGP identity correction and explicit ABR
-bindings. That result does not extend tunnel delivery, signaling or forwarding
-qualification across areas.
+bindings. The subsequent [topology-domain trial](topology_domain_validation.md)
+qualified automatic initial paths from PE1, PE4 and transit router P5, with
+inter-area RSVP reservations, MPLS echo/trace and healthy controller reconnect.
+Those results apply to the recorded IOS XE profile; other images and vendors
+need their own live qualification.
 
 | Adapter | Documentation / candidate release scope | Numbered IPv4 strict ERO | Operational evidence dialect |
 |---|---|---|---|
