@@ -20,7 +20,7 @@ Offline tests do not establish device support. See the live result below.
 
 The dashboard also supports a separately qualified **router configuration +
 PCEP path control** backend. This does not enable or qualify native PCInitiate.
-`CliProvisioner` admits a bounded managed tunnel, delivers generated IOS XE
+`CliProvisioner` admits bounded managed operations, delivers generated IOS XE
 configuration through the existing southbound adapter, and authorizes the
 existing PCEP writer for that exact newly configured tunnel. Both the backend
 and operator API default to unqualified. The private qualification of this
@@ -60,9 +60,12 @@ than being treated as evidence that nothing was sent.
 Generated configuration contains RSVP bandwidth and priorities, a dynamic PCE
 path option, and the computed strict explicit path as fallback. It does not
 enable customer traffic steering. Tunnel100 and its explicit fallback remain
-outside the new operation's ownership. The initial profile admits one managed
-tunnel at a time; no generic command, public deletion or arbitrary tunnel-ID
-endpoint is exposed.
+outside the new operation's ownership. The legacy profile defaults to one held
+managed tunnel. The opt-in [domain provisioning profile](domain_tunnel_provisioning.md)
+discovers every eligible domain router, permits authenticated principals within
+deployment policy, and supports explicitly bounded concurrent operations.
+Transport enrollment remains separate from topology membership. No generic
+command, public deletion or arbitrary tunnel-ID endpoint is exposed.
 
 The configuration backend reaches `VERIFIED` only after independent headend
 checks of identity, destination, bandwidth, ordered ERO and RSVP signaling,
@@ -196,8 +199,10 @@ provenance are recorded alongside the existing regression evidence.
 
 The operator selects **headend**, **destination** and **bandwidth in Mbps**,
 reviews the generated configuration preview when using the configuration
-backend, then clicks **Create** once. Headends come from a server-side, qualified PCC
-allowlist; destinations come from known topology nodes. For example, PE1
+backend, then clicks **Create** once. In domain mode, headends and destinations
+come from current trusted domain membership, including transit routers; the
+page displays per-node transport/PCC readiness. The legacy profile uses explicit
+server-side endpoint lists. For example, PE1
 `10.255.0.1` to PE3 `10.255.0.6` with `1` Mbps. Free-form router addresses,
 commands and arbitrary filesystem paths are not accepted.
 
@@ -320,9 +325,11 @@ timeout/reload must not create another LSP.
 
 ## Security and recovery requirements
 
-- Keep the public proxy authenticated over TLS. Add operator/read-only roles
-  with explicit headend, destination and bandwidth limits; the current shared
-  viewer credential is insufficient mutation authorization. The trusted proxy
+- Keep the public proxy authenticated over TLS. In domain provisioning mode,
+  authorize each authenticated principal within the configured domain and
+  bandwidth limits, retain its exact identity, and scope its operation visibility
+  and idempotency keys. The legacy profile retains its explicit operator list.
+  The trusted proxy
   must strip caller-supplied identity headers and pass verified identity over
   a permissioned Unix socket or an independently authenticated backend channel.
   Do not trust identity headers from arbitrary loopback callers or expose a

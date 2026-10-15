@@ -247,4 +247,8 @@ dialog .kv{border-top:1px solid var(--border);border-bottom:1px solid var(--bord
 .creation-preview p { font-size: 12px; overflow-wrap: anywhere; }
 .creation-preview pre { max-height: 250px; overflow: auto; margin: 12px 0; padding: 12px; background: var(--bg); border-radius: 6px; font-size: 11px; line-height: 1.6; white-space: pre; }
 .creation-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.creation-operations { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 14px; }
+.creation-operations h3 { font-size: 13px; }
+#creation-operation-list { display: flex; flex-direction: column; gap: 8px; }
+#creation-operation-list button { text-align: left; font-size: 12px; overflow-wrap: anywhere; }
 @media (max-width: 600px) { .creation-grid { grid-template-columns: 1fr; } #create-tunnel-button { padding: 6px 9px; font-size: 11px; } }

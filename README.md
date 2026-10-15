@@ -6,7 +6,12 @@ within a configured routing domain, computes constrained paths, and delivers
 initial paths to delegated router-owned LSPs. A web dashboard shows topology,
 protocol peers, tunnels, reservations and events.
 
-Version **0.5.0** brings the collector, PCEP listener and dashboard together
+Version **0.6.0** adds domain-wide dashboard provisioning for authenticated
+users, separate SSH transport enrollment, concurrent operation ownership, and
+an explicit migration that preserves existing authority and recovery history.
+See [domain provisioning](docs/domain_tunnel_provisioning.md) and its
+[validation record](docs/domain_tunnel_provisioning_validation.md).
+The collector, PCEP listener and dashboard run together
 under one configuration and a supervised application command. Start with the
 [user guide](docs/user_guide.md) and [deployment guide](docs/deployment.md).
 The deployment package includes a wheel, source archive, offline dependency

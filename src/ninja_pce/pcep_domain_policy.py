@@ -86,6 +86,14 @@ class DomainDelegationPolicy:
     def from_path(cls, path: Path) -> DomainDelegationPolicy:
         return cls.from_document(_load_document(path))
 
+    def document(self) -> dict[str, Any]:
+        """Return a detached canonical policy snapshot for immutable audit history."""
+        return {"version": 1,
+                "domain": {"protocol_id": self.protocol_id, "instance_id": self.instance_id,
+                           "autonomous_system": self.autonomous_system, "bgpls_identifier": self.bgpls_identifier},
+                "pcc_prefixes": list(self._pcc_prefixes), "destination_prefixes": list(self._destination_prefixes),
+                "max_bandwidth_bps": self.max_bandwidth_bps, "max_live_lsps": self._max_live_lsps}
+
     @property
     def pcc_prefixes(self) -> tuple[IPv4Network, ...]:
         # IPv4Network itself is mutable; callers receive fresh views.

@@ -114,6 +114,9 @@ class DelegatedPathComputer:
         if report["identifiers"]["tunnel_id"] in self.allowed_tunnels.get(peer, ()):
             return None
         plan_id = self.provisioning_authorizer(peer, report) if self.provisioning_authorizer is not None else None
+        if (plan_id is None and self.provisioning_authorizer is not None and
+                self.provisioning_authorizer.owns(peer, report)):
+            raise ValueError("Configured-tunnel ownership requires its exact current provisioning authorization")
         if plan_id is None and not self.policy_allows(peer, report):
             raise ValueError("Initial delegation has no exact, current configured-tunnel authorization")
         return plan_id
@@ -124,6 +127,8 @@ class DelegatedPathComputer:
             return True
         if any(key in outcome for key in ("headend_policy_digest", "headend_report_digest",
                                          "domain_policy_digest", "domain_report_digest", "domain_source_digest")):
+            if self.provisioning_authorizer is not None and self.provisioning_authorizer.owns(peer, report):
+                return False
             proof = self.policy_proof(peer, report)
             return bool(proof is not None and outcome.get("provisioning_plan_id") is None and
                         all(outcome.get(key) == value for key, value in proof.items()))

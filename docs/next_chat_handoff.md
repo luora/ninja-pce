@@ -1,8 +1,48 @@
 # Ninja-PCE next-chat handoff
 
-Prepared 2026-10-15 (Africa/Nairobi). Continue the existing project from the
-verified application milestone below. The next task is generic dashboard tunnel
-provisioning across the managed topology domain.
+Updated 2026-10-15 (Africa/Nairobi). Domain-wide, multi-user dashboard tunnel
+provisioning is implemented and verified **offline** on
+`feat/domain-tunnel-provisioning`. The next task is live migration, deployment,
+and qualification while preserving the existing application and durable state.
+
+## Current milestone: offline implementation complete
+
+The new implementation discovers every eligible domain headend, including
+transit routers; separates SSH transport enrollment from topology eligibility;
+authorizes authenticated proxy principals without an ordinary username list;
+and supports bounded concurrent operations, headend-scoped tunnel allocation,
+principal-scoped retries, per-operation policy revisions, endpoint-serialized
+delivery, and principal-scoped dashboard operation history. An explicit
+review/apply migration preserves original authority, held resources, managed
+recovery bindings, uncertainty, and attempt histories.
+
+Complete regression at the implementation checkpoint: **1,998 passed in
+187.71 seconds, 87% coverage**. The later focused run after migration and
+concurrency changes passed **349 tests in 13.15 seconds**. Ruff and mypy passed.
+See [domain provisioning validation](domain_tunnel_provisioning_validation.md)
+and [domain provisioning configuration](domain_tunnel_provisioning.md).
+
+Only a read-only live baseline was captured for this milestone: eight nodes,
+22 directed links, eight synchronized PCCs, six ACTIVE LSPs, one original hold,
+two failure attempts, nine startup attempts, and three original creation
+operations (one VERIFIED, two ROLLED_BACK). Seven independent router SSH host
+keys were observed; the remaining router console refused access. Live
+deployment, journal migration, new creation, and restart qualification remain
+pending. The live application release and previously qualified tunnels described
+below remain the deployment baseline.
+
+Continue from the current branch and worktree; do not recreate the feature or
+reset the existing journals. Review the explicit migration and backups, finish
+independent transport enrollment for all eight managed routers, and qualify at
+least two headends and two authenticated principals with concurrent independent
+operations, same-key retries, policy/transport refusal, restart preservation,
+independent RSVP checks, and bounded forwarding checks. Keep all credentials
+and private access evidence outside tracked files.
+
+The remainder retains the original application milestone and starting
+requirements as historical context. Its original implementation plan is now
+covered by the offline work above; its live preservation requirements still
+apply.
 
 ## Git starting point
 
@@ -12,8 +52,9 @@ provisioning across the managed topology domain.
 - Last verified application branch: `feat/generic-controller-application`,
   through `028f384`.
 - Working branch prepared for this next task: `feat/domain-tunnel-provisioning`,
-  created from updated `main` after that merge. Its handoff commit changes
-  documentation only; the broader provisioning behavior is still to implement.
+  created from updated `main` after that merge. The original handoff commit
+  changed documentation only; the domain provisioning behavior is now
+  implemented offline as recorded above.
 - Application release: `0.5.0`; live wheel code is source `3886b08`.
   Later `b1e29a1` changes the CI/browser harness, and later commits record
   deployment evidence. Do not confuse the current Git revision with the

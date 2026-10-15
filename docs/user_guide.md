@@ -232,8 +232,9 @@ The normal dashboard server is read-only. Domain discovery does not enable
 router SSH writes or add provisioning inventory automatically.
 
 1. Open the authenticated dashboard and choose **Create tunnel**.
-2. Select an approved provisioning headend, a permitted destination and the
-   requested bandwidth in decimal Mbps.
+2. Select a managed headend, a permitted destination and the requested
+   bandwidth in decimal Mbps. In domain provisioning mode, transit routers are
+   selectable too. Each headend reports transport and PCC readiness.
 3. Review the computed route, actual RSVP bandwidth, generated configuration
    and preview expiry. Whole-kilobit rounding is disclosed in the preview.
 4. Click **Create tunnel** once to approve that exact plan.
@@ -260,10 +261,20 @@ retained intent, approved plan and idempotency key. Reload does not resend
 automatically. Changing the key while the result is uncertain can create a
 second request and must not be used as a retry strategy.
 
-The current configuration profile permits one held managed tunnel at a time.
-There is no public deletion endpoint or arbitrary router-command endpoint.
-Use the [provisioning deployment guide](dashboard_provisioning_deployment.md)
-for its inventory, host-key, qualification and Unix proxy setup.
+The opt-in [domain provisioning policy](domain_tunnel_provisioning.md) discovers
+eligible routers from the fresh trusted topology and authorizes every
+authenticated proxy principal within deployment policy. Transport enrollment
+supplies a separate management endpoint, credential reference and pinned SSH
+identity. Missing enrollment leaves the domain router visible with a readiness
+reason. Explicit concurrency and history bounds permit multiple independent
+operations; tunnel IDs are allocated within each headend's namespace and
+idempotency is scoped to the authenticated principal. Each operation retains
+its original policy revision across later policy changes.
+
+The legacy explicit inventory profile retains its one-held-tunnel default.
+There is no public deletion endpoint or arbitrary router-command endpoint. Use
+the [provisioning deployment guide](dashboard_provisioning_deployment.md) for
+transport, host-key, qualification, state migration and Unix proxy setup.
 
 ## Recovery and restarts
 
@@ -298,7 +309,7 @@ application code does not undo changes already sent to a router.
 | Fresh BGP-LS data but no usable path | Complete directed links, bandwidth/metric attributes, area policy, constraints and destination identity |
 | New tunnel stays DOWN with empty ERO | Initial delegation refusal, positive bandwidth, supported attributes, ownership conflict and concurrent LSP cap |
 | PCUpd acknowledged but tunnel stays DOWN | Router RSVP errors, strict ERO reachability and RSVP/MPLS-TE on every selected core interface |
-| Public dashboard works but Create is disabled | Separate qualified operator backend, allowed provisioning inventory, exact HTTPS origin, PCC/TED readiness and existing held operation |
+| Public dashboard works but Create is disabled | Qualified backend, authenticated principal policy, exact HTTPS origin, per-node transport/PCC readiness, fresh trusted TED, and configured concurrency/history bounds |
 | HTTP result is uncertain | Recover the existing operation; retain its key, intent and plan |
 | Restart reports an uncertain operation | Preserve holds and inspect current router state; do not replay or clear history |
 | Multi-area destination is IP-reachable but missing from TE | Export all relevant area nodes and links; inspect ABR identity policy and receiver node retention |

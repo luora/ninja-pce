@@ -1,0 +1,29 @@
+{
+  "qualified": false,
+  "origin": "https://controller.example.test",
+  "principal_policy": "authenticated",
+  "proxy_uid": 33,
+  "socket_path": "/run/ninja-provisioning/http.sock",
+  "domain_policy": "/etc/ninja-pce/domain-policy.json",
+  "inventory": "/etc/ninja-pce/provisioning-inventory.yml",
+  "known_hosts": "/etc/ninja-pce/known_hosts",
+  "state_dir": "/var/lib/ninja-pce/state",
+  "pcep_capture": "/var/lib/ninja-pce/live/pcep.json",
+  "pce_address": "192.0.2.10",
+  "max_bandwidth_bps": 1000000,
+  "max_outstanding": 16,
+  "tunnel_id_min": 1000,
+  "tunnel_id_max": 1999,
+  "max_operations": 1024,
+  "max_previews": 128,
+  "max_journal_bytes": 8388608,
+  "computer": {
+    "raw_path": "/var/lib/ninja-pce/live/bgpls-raw.json",
+    "status_path": "/var/lib/ninja-pce/live/bgpls-status.json",
+    "topology_path": "/var/lib/ninja-pce/live/topology.json",
+    "required_peers": ["192.0.2.20"],
+    "node_names": {},
+    "headends": {},
+    "max_age_seconds": 30
+  }
+}

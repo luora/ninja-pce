@@ -21,7 +21,7 @@ from ninja_pce.state import digest, load_state, write_state
 OPERATION_ID = "a" * 32
 
 
-def managed_lab(tmp_path, monkeypatch, *, peer=PEER):
+def managed_lab(tmp_path, monkeypatch, *, peer=PEER, policy_document=None):
     computer = prepare(tmp_path, monkeypatch)
     computer.headends = {peer: PEER}
     clock = [datetime.fromisoformat(json.loads(computer.raw_path.read_text())["captured_at"]).timestamp()]
@@ -71,7 +71,8 @@ def managed_lab(tmp_path, monkeypatch, *, peer=PEER):
                                            "current_edges": edges,
                                            "resources": {edge: 1_000_000 for edge in edges}},
         }})
-        write_state(path, {"kind": "cli_tunnel_provisioning", "policy_digest": "c" * 64,
+        write_state(path, {"kind": "cli_tunnel_provisioning",
+                           "policy_digest": digest(policy_document) if policy_document is not None else "c" * 64,
                            "operations": {OPERATION_ID: operation}})
     planner = ManagedFailureRecoveryPlanner(computer, operation_journal=path, operation_id=OPERATION_ID,
                                             journal_path=tmp_path / "recovery" / "managed.json",

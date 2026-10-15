@@ -118,7 +118,7 @@ async def running(tmp_path: Path, *, qualified: bool = True, **options):
     creation = options.pop("creation", Creation())
     backend = cast(ProvisioningBackend, creation) if isinstance(creation, Provisioning) else cast(CreationSession, creation)
     api = TunnelAPI(backend, parent / "http.sock", options.pop("allowed_proxy_uid", os.getuid()),
-                    ORIGIN, ("operator", "second"), qualified=qualified, **options)
+                    ORIGIN, options.pop("allowed_operator", ("operator", "second")), qualified=qualified, **options)
     await api.start()
     try:
         yield api, creation
@@ -184,6 +184,132 @@ def test_options_session_and_creation_use_only_permissioned_unix_socket(tmp_path
             assert status == 200 and fetched == result
         assert not api.path.exists()
     asyncio.run(scenario())
+
+
+def test_authenticated_policy_accepts_new_principals_with_scoped_concurrent_requests(tmp_path):
+    async def scenario():
+        async with running(tmp_path, creation=Provisioning(), principal_policy="authenticated",
+                           allowed_operator=()) as (api, backend):
+            async def create(principal):
+                identity = {"X-Ninja-Principal": principal}
+                status, headers, options = await exchange(api, headers=identity)
+                assert status == 200 and options["principal"] == principal
+                assert options["policy"]["principal_policy"] == "authenticated"
+                auth = {**identity, "Cookie": headers["Set-Cookie"].split(";", 1)[0],
+                        "X-CSRF-Token": options["csrf_token"], "Origin": ORIGIN,
+                        "Content-Type": "application/json", "Idempotency-Key": "same-key"}
+                payload = json.dumps({**INTENT, "approved_plan_id": "e" * 64}).encode()
+                first = await exchange(api, "POST", "/api/tunnels", headers=auth, body=payload)
+                assert first[0] == 202
+                assert await exchange(api, "POST", "/api/tunnels", headers=auth, body=payload) == first
+                return principal, first[2]["operation"]
+            results = await asyncio.gather(create("new-user@example.test"), create("another-new-user"))
+            assert len(backend.calls) == len(backend.manager.operations) == 2
+            assert results[0][1]["id"] != results[1][1]["id"]
+            for principal, operation in results:
+                other = next(name for name, _ in results if name != principal)
+                assert (await exchange(api, path="/api/tunnel-operations/" + operation["id"],
+                                       headers={"X-Ninja-Principal": other}))[0] == 404
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("principal", ["", " ", "anonymous user", "user;admin", "a" * 129])
+def test_authenticated_policy_requires_a_nonempty_valid_trusted_principal(tmp_path, principal):
+    async def scenario():
+        async with running(tmp_path, principal_policy="authenticated", allowed_operator=()) as (api, backend):
+            assert (await exchange(api, headers={"X-Ninja-Principal": principal}))[0] == 403
+            assert not backend.calls and not api._sessions
+    asyncio.run(scenario())
+
+
+def test_authenticated_policy_keeps_proxy_origin_and_principal_bound_session_boundaries(tmp_path):
+    async def scenario():
+        async with running(tmp_path, principal_policy="authenticated", allowed_operator=()) as (api, backend):
+            auth = await authorization(api)
+            for change in ({"X-Ninja-Principal": "a-new-user"}, {"Origin": "https://attacker.example.test"},
+                           {"Host": "attacker.example.test"}):
+                assert (await exchange(api, "POST", "/api/tunnels", headers={**auth, **change},
+                                       body=json.dumps(INTENT).encode()))[0] == 403
+            api.allowed_proxy_uid += 1
+            assert (await exchange(api, headers={"X-Ninja-Principal": "a-new-user"}))[0] == 403
+            assert not backend.calls
+    asyncio.run(scenario())
+
+
+def test_dynamic_domain_options_include_unenrolled_transit_nodes_and_allow_ready_transit_headend(tmp_path):
+    class DomainProvisioning(Provisioning):
+        headends = {"PE1": "10.255.0.1", "P1": "10.255.0.2", "P2": "10.255.0.3"}
+        allowed_destinations = ("PE1", "P1", "P2", "PE3")
+
+        def readiness(self, headend=None):
+            ready = headend != "P2"
+            return ready, "Provisioning ready." if ready else "No pinned transport identity is enrolled."
+
+        def node_readiness(self):
+            return {name: {"transport_enrolled": name != "P2", "pcc_ready": True,
+                           "credential_env": "PRIVATE_CREDENTIAL", "management_endpoint": "private.example.test"}
+                    for name in self.headends}
+
+    async def scenario():
+        async with running(tmp_path, creation=DomainProvisioning()) as (api, backend):
+            _, _, options = await exchange(api)
+            assert options["headends"] == ["PE1", "P1", "P2"]
+            assert options["destinations"] == ["PE1", "P1", "P2", "PE3"]
+            assert options["headend_readiness"]["P2"] == {
+                "enabled": False, "reason": "No pinned transport identity is enrolled.",
+                "transport_enrolled": False, "pcc_ready": True}
+            intent = {**INTENT, "headend": "P1"}
+            auth = await authorization(api)
+            assert (await exchange(api, "POST", "/api/tunnel-plans", headers=auth,
+                                   body=json.dumps(intent).encode()))[0] == 200
+            assert backend.previews == [("operator", intent)]
+            assert (await exchange(api, "POST", "/api/tunnel-plans", headers=auth,
+                                   body=json.dumps({**intent, "headend": "P2"}).encode()))[0] == 503
+            backend.headends = {"P3": "10.255.0.4"}
+            backend.allowed_destinations = ("PE1", "P3")
+            _, _, updated = await exchange(api)
+            assert updated["headends"] == ["P3"] and updated["destinations"] == ["PE1", "P3"]
+    asyncio.run(scenario())
+
+
+def test_unavailable_dynamic_domain_fails_closed_without_consuming_a_browser_session(tmp_path):
+    class StaleDomain(Provisioning):
+        @property
+        def headends(self):
+            raise ValueError("Trusted topology is stale")
+
+    async def scenario():
+        async with running(tmp_path, creation=StaleDomain()) as (api, backend):
+            status, _, response = await exchange(api)
+            assert status == 503 and "unavailable" in response["error"]
+            assert not api._sessions and not backend.calls
+    asyncio.run(scenario())
+
+
+def test_configuration_retry_recovers_original_operation_after_domain_and_bandwidth_policy_change(tmp_path):
+    async def scenario():
+        async with running(tmp_path, creation=Provisioning()) as (api, backend):
+            auth = await authorization(api)
+            payload = json.dumps({**INTENT, "approved_plan_id": "e" * 64}).encode()
+            original = await exchange(api, "POST", "/api/tunnels", headers=auth, body=payload)
+            backend.manager.headends = {"P2": "10.255.0.3"}
+            backend.manager.allowed_destinations = ("PE4",)
+            backend.manager.max_bandwidth_bps = 500_000
+            assert await exchange(api, "POST", "/api/tunnels", headers=auth, body=payload) == original
+            auth["Idempotency-Key"] = "new-key"
+            assert (await exchange(api, "POST", "/api/tunnels", headers=auth, body=payload))[0] == 400
+            assert len(backend.admissions) == len(backend.calls) == 1
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(("mode", "operators"), [("unknown", ()), ([], ()), ("allowlist", ()),
+                                                ("authenticated", ("operator",)),
+                                                ("allowlist", ("operator", "operator")),
+                                                ("authenticated", ([],))])
+def test_principal_policy_configuration_is_explicit_and_unambiguous(tmp_path, mode, operators):
+    with pytest.raises(ValueError):
+        TunnelAPI(cast(CreationSession, Creation()), tmp_path / "api.sock", os.getuid(), ORIGIN,
+                  operators, principal_policy=mode)
 
 
 def test_untrusted_unix_uid_cannot_supply_an_authenticated_identity(tmp_path: Path) -> None:

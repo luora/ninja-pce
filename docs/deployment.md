@@ -330,11 +330,19 @@ reverse proxy with authentication; the dashboard HTTP server does not supply
 either. The [dashboard guide](dashboard.md) describes the proxy boundary.
 
 To enable dashboard tunnel creation, independently configure and qualify the
-SSH provisioning inventory, pinned router host keys, credential environment,
-exact operator policy, permissioned Unix socket and authenticated HTTPS origin.
-Use [configuration provisioning deployment](dashboard_provisioning_deployment.md).
-The generic application's installation does not broaden that service's approved
-headends/destinations, change its qualification gate or enable PCInitiate.
+SSH transport enrollment, pinned router host keys, credential references,
+principal policy, permissioned Unix socket and authenticated HTTPS origin.
+The opt-in [domain provisioning profile](domain_tunnel_provisioning.md) selects
+every eligible router from the fresh trusted domain, including transit routers,
+and allows every authenticated proxy principal to create within deployment
+policy. Its explicit limits support concurrent independent operations without
+router, username or tunnel-number allowlists. Transport readiness remains
+separate from topology eligibility.
+
+Use [configuration provisioning deployment](dashboard_provisioning_deployment.md)
+for setup and migration of existing state. The application's installation alone
+does not change the separate backend's policy or qualification gate, and native
+RSVP PCInitiate creation remains unqualified.
 
 ## Migrate an existing controller
 

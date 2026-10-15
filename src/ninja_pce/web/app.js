@@ -98,11 +98,44 @@
   $("info-toggle").addEventListener("click", () => $("info-dialog").showModal());
   $("info-close").addEventListener("click", () => $("info-dialog").close());
 
-  const creation = { options: null, pending: null, busy: false, timer: null, plan: null, planIntent: null, previewBusy: false, previewTimer: null, expiryTimer: null, previewGeneration: 0, releasedMessage: null };
-  try { creation.pending = JSON.parse(sessionStorage.getItem("ninja-pce-creation") || "null"); } catch { /* No automatic resubmission. */ }
-  if (creation.pending && (typeof creation.pending.key !== "string" || !creation.pending.intent || (creation.pending.id && !/^[0-9a-f]{32}$/.test(creation.pending.id)))) creation.pending = null;
+  const creation = { options: null, principal: null, pending: null, operations: [], busy: false, timer: null, plan: null, planIntent: null, previewBusy: false, previewTimer: null, expiryTimer: null, previewGeneration: 0, releasedMessage: null };
+  function storedRequest(value) {
+    return value && typeof value.key === "string" && value.intent && (!value.id || /^[0-9a-f]{32}$/.test(value.id));
+  }
+  function loadCreation(principal) {
+    if (creation.principal !== principal) { creation.releasedMessage = null; $("creation-status").replaceChildren(); }
+    creation.principal = principal; creation.pending = null; creation.operations = [];
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(`ninja-pce-creations:${principal}`) || "null");
+      if (storedRequest(saved?.pending) && saved.pending.principal === principal) creation.pending = saved.pending;
+      if (Array.isArray(saved?.operations)) creation.operations = saved.operations.filter((item) => storedRequest(item) && item.id && item.principal === principal).slice(-32);
+      if (!saved) {
+        const legacy = JSON.parse(sessionStorage.getItem("ninja-pce-creation") || "null");
+        if (storedRequest(legacy) && (!legacy.principal || legacy.principal === principal)) creation.pending = { ...legacy, unbound: !legacy.principal };
+      }
+    } catch { /* Never resubmit a stored request automatically. */ }
+    renderCreationOperations();
+  }
   function saveCreation() {
-    try { sessionStorage.setItem("ninja-pce-creation", JSON.stringify(creation.pending)); } catch { /* In-memory idempotency remains intact. */ }
+    if (!creation.principal) return;
+    try { sessionStorage.setItem(`ninja-pce-creations:${creation.principal}`, JSON.stringify({ pending: creation.pending, operations: creation.operations })); } catch { /* In-memory idempotency remains intact. */ }
+  }
+  function renderCreationOperations() {
+    $("creation-operations").hidden = !creation.operations.length;
+    $("creation-operation-list").replaceChildren(...creation.operations.slice().reverse().map((request) => {
+      const button = el("button", "button", `${request.intent.headend} → ${request.intent.destination} · ${request.status} · ${request.id}`);
+      button.type = "button";
+      button.disabled = creation.busy || Boolean(creation.pending && !creation.pending.id);
+      button.addEventListener("click", () => {
+        if (creation.busy || creation.pending && !creation.pending.id) return;
+        creation.pending = { ...request }; saveCreation(); invalidatePreview();
+        $("creation-headend").value = request.intent.headend; $("creation-destination").value = request.intent.destination;
+        $("creation-bandwidth").value = String(request.intent.bandwidth_bps / 1e6);
+        if (request.plan) showPlan(request.plan, true);
+        creationControls(); checkCreation();
+      });
+      return button;
+    }));
   }
   function creationMessage(message, operation = null) {
     const target = $("creation-status"); target.replaceChildren(el("p", "", message));
@@ -119,14 +152,29 @@
     const held = Boolean(creation.pending);
     const planRequired = creation.options?.requires_plan === true;
     const usablePlan = creation.plan && date(creation.plan.expires_at)?.getTime() > Date.now();
-    const backendMismatch = held && planRequired !== Boolean(creation.pending.approved_plan_id);
+    const backendMismatch = held && (planRequired !== Boolean(creation.pending.approved_plan_id) || creation.pending.unbound);
     const recovery = held && !creation.pending.id && planRequired && /^[0-9a-f]{64}$/.test(creation.pending.approved_plan_id);
-    $("creation-fields").disabled = creation.busy || held || creation.options?.enabled !== true;
-    $("creation-submit").disabled = creation.busy || Boolean(creation.pending?.id) || creation.options?.enabled !== true && !recovery || backendMismatch || !held && planRequired && !usablePlan;
+    $("creation-fields").disabled = creation.busy || held || !creation.options?.headends.length;
+    $("creation-submit").disabled = creation.busy || Boolean(creation.pending?.id) || !selectedHeadendReady() && !recovery || backendMismatch || !held && planRequired && !usablePlan;
     $("creation-submit").hidden = Boolean(creation.pending?.id);
     $("creation-submit").textContent = creation.busy ? "Submitting…" : held ? "Retry same request" : "Create tunnel";
     $("creation-check").hidden = !creation.pending?.id;
     $("creation-check").disabled = creation.busy;
+    $("creation-new").hidden = !creation.pending?.id;
+    $("creation-new").disabled = creation.busy;
+    renderCreationOperations();
+    const readiness = creation.options?.headend_readiness?.[$("creation-headend").value];
+    $("creation-readiness").textContent = readiness ? [
+      readiness.transport_enrolled === true ? "Transport enrolled." : readiness.transport_enrolled === false ? "Transport enrollment required." : "",
+      readiness.transport_ready === false && readiness.transport_enrolled === true ? "Transport identity unavailable." : "",
+      readiness.pcc_ready === true ? "PCC synchronized." : readiness.pcc_ready === false ? "PCC unavailable." : "",
+      String(readiness.reason || "")
+    ].filter(Boolean).join(" ") : "";
+  }
+  function selectedHeadendReady() {
+    if (creation.options?.enabled !== true) return false;
+    const states = creation.options.headend_readiness;
+    return !states || states[$("creation-headend").value]?.enabled === true;
   }
   function creationIntent() {
     const amount = $("creation-bandwidth").value;
@@ -155,12 +203,12 @@
   function queuePreview() {
     if (creation.pending) return;
     invalidatePreview(); creationControls();
-    if (creation.options?.enabled !== true || creation.options.requires_plan !== true || !$("create-tunnel-dialog").open) return;
+    if (!selectedHeadendReady() || creation.options.requires_plan !== true || !$("create-tunnel-dialog").open) return;
     creationMessage("Preparing the configuration preview…");
     creation.previewTimer = setTimeout(previewCreation, 350);
   }
   async function previewCreation() {
-    if (creation.pending || creation.busy || creation.options?.requires_plan !== true || creation.options.enabled !== true) return;
+    if (creation.pending || creation.busy || creation.options?.requires_plan !== true || !selectedHeadendReady()) return;
     const generation = creation.previewGeneration;
     let intent;
     try { intent = creationIntent(); } catch (error) { creationMessage(error.message); return; }
@@ -181,17 +229,21 @@
     try {
       const response = await fetch(path, { cache: "no-store", credentials: "same-origin", signal: controller.signal, ...options, headers: { Accept: "application/json", ...options.headers } });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || (response.status === 401 || response.status === 403 ? "Operator access is required." : `Creation service unavailable (${response.status}).`));
+      if (!response.ok) throw new Error(data.error || (response.status === 401 || response.status === 403 ? "Authenticated access is required." : `Creation service unavailable (${response.status}).`));
       return data;
     } finally { clearTimeout(timeout); }
   }
   function showOperation(operation) {
     if (!operation || !/^[0-9a-f]{32}$/.test(operation.id) || typeof operation.status !== "string") throw new Error("Unsupported operation response.");
+    if (operation.principal && operation.principal !== creation.principal) throw new Error("Operation belongs to a different authenticated principal.");
     if (operation.status === "VERIFIED" || operation.verified === true) {
       const proof = operation.verification, checks = ["identity", "destination", "bandwidth", "ero", "signaling"];
       if (creation.options?.requires_plan !== true || proof?.independent !== true || proof.scope !== "headend-rsvp" || proof.pcep_control !== true || !Array.isArray(proof.checks) || proof.checks.length !== checks.length || !checks.every((check) => proof.checks.includes(check))) throw new Error("Independent RSVP verification is unavailable.");
     }
-    creation.pending.id = operation.id; saveCreation();
+    creation.pending.id = operation.id; creation.pending.status = operation.status;
+    creation.pending.principal = creation.principal; delete creation.pending.unbound;
+    creation.operations = creation.operations.filter((request) => request.id !== operation.id);
+    creation.operations.push({ ...creation.pending }); creation.operations = creation.operations.slice(-32); saveCreation();
     const messages = {
       PLANNED: "Path admitted. Waiting for delivery.", PUSHING: "Request sent. Waiting for the router’s response.",
       APPLIED_UNVERIFIED: "Router acknowledged the new LSP. Independent verification is pending.",
@@ -213,8 +265,8 @@
   async function checkCreation() {
     const pending = creation.pending;
     if (!pending?.id || creation.busy) return;
-    const key = pending.key, id = pending.id;
-    const current = () => creation.pending?.key === key && creation.pending?.id === id;
+    const key = pending.key, id = pending.id, principal = creation.principal;
+    const current = () => creation.principal === principal && creation.pending?.key === key && creation.pending?.id === id;
     try {
       const result = await creationFetch(`/api/tunnel-operations/${id}`);
       if (!current()) return;
@@ -226,16 +278,23 @@
     $("create-tunnel-dialog").showModal();
     invalidatePreview();
     if (!creation.pending) $("creation-status").replaceChildren();
-    creation.options = null; creationControls();
+    creation.options = null; creationControls(); $("creation-operations").hidden = true;
     if (state.data?.mode === "demo") { $("creation-policy").textContent = "Tunnel creation is disabled in the demo workspace."; return; }
-    $("creation-policy").textContent = "Checking operator access and headend support…";
+    $("creation-policy").textContent = "Checking authenticated access and domain policy…";
     try {
       const options = await creationFetch("/api/tunnel-options");
       if (!options || !Array.isArray(options.headends) || !Array.isArray(options.destinations) || typeof options.enabled !== "boolean") throw new Error("Unsupported creation policy.");
-      creation.options = options;
+      if (options.enabled === false && !options.headends.length && !options.principal) {
+        creation.principal = null; creation.pending = null; creation.operations = []; creation.options = options;
+        $("creation-policy").textContent = String(options.reason || "Tunnel creation is unavailable.");
+        creationControls(); return;
+      }
+      if (typeof options.principal !== "string" || !/^[A-Za-z0-9_.@-]{1,128}$/.test(options.principal)) throw new Error("Authenticated principal is unavailable.");
+      loadCreation(options.principal); creation.options = options;
       for (const [id, names] of [["creation-headend", options.headends], ["creation-destination", options.destinations]]) {
         $(id).replaceChildren(...names.filter((name) => typeof name === "string").map((name) => { const option = el("option", "", name); option.value = name; return option; }));
       }
+      if (!creation.pending && options.headend_readiness) $("creation-headend").value = options.headends.find((name) => options.headend_readiness[name]?.enabled === true) || options.headends[0] || "";
       if (number(options.max_bandwidth_bps) !== null) $("creation-bandwidth").max = String(options.max_bandwidth_bps / 1e6);
       if (!creation.pending && $("creation-headend").value === $("creation-destination").value) $("creation-destination").value = options.destinations.find((name) => name !== $("creation-headend").value) || "";
       $("creation-policy").textContent = options.enabled ? `${options.requires_plan === true ? "Router configuration + PCEP path control" : "PCEP initiation"} · RSVP-TE · priorities 7/7 · maximum ${bandwidth(options.max_bandwidth_bps)}` : String(options.reason || "Tunnel creation is unavailable for this headend.");
@@ -245,6 +304,7 @@
         $("creation-bandwidth").value = String(creation.pending.intent.bandwidth_bps / 1e6);
         if (creation.pending.plan) showPlan(creation.pending.plan, true);
         if (creation.pending.id) await checkCreation();
+        else if (creation.pending.unbound) creationMessage("The previous browser request has no authenticated principal binding. Keep its idempotency key for controlled reconciliation before creating another tunnel.");
         else if ((options.requires_plan === true) !== Boolean(creation.pending.approved_plan_id)) creationMessage("The previous request belongs to a different provisioning backend. Keep its idempotency key for reconciliation; it cannot be resubmitted here.");
         else creationMessage("A previous submission has an unknown outcome. Retry the same request to recover its operation; do not submit a different intent.");
       }
@@ -254,31 +314,40 @@
   }
   $("create-tunnel-button").addEventListener("click", openCreation);
   $("create-tunnel-close").addEventListener("click", () => $("create-tunnel-dialog").close());
-  $("create-tunnel-dialog").addEventListener("close", () => { clearTimeout(creation.timer); invalidatePreview(); });
+  $("create-tunnel-dialog").addEventListener("close", () => { if (!$("create-tunnel-dialog").open) { clearTimeout(creation.timer); invalidatePreview(); } });
   $("creation-fields").addEventListener("input", queuePreview);
   $("creation-fields").addEventListener("change", queuePreview);
   $("creation-check").addEventListener("click", checkCreation);
+  $("creation-new").addEventListener("click", () => {
+    if (creation.busy || !creation.pending?.id) return;
+    clearTimeout(creation.timer); creation.pending = null; creation.releasedMessage = null;
+    if (!creation.options.headends.includes($("creation-headend").value)) $("creation-headend").value = creation.options.headends.find((name) => !creation.options.headend_readiness || creation.options.headend_readiness[name]?.enabled === true) || creation.options.headends[0] || "";
+    if (!creation.options.destinations.includes($("creation-destination").value) || $("creation-headend").value === $("creation-destination").value) $("creation-destination").value = creation.options.destinations.find((name) => name !== $("creation-headend").value) || "";
+    saveCreation(); queuePreview();
+  });
   $("create-tunnel-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const recovery = creation.pending && !creation.pending.id && creation.options?.requires_plan === true && /^[0-9a-f]{64}$/.test(creation.pending.approved_plan_id);
-    if (creation.busy || creation.options?.enabled !== true && !recovery || creation.pending?.id) return;
+    if (creation.busy || !selectedHeadendReady() && !recovery || creation.pending?.id || creation.pending?.unbound) return;
     if (!creation.pending) {
       let intent;
       try { intent = creationIntent(); } catch (error) { creationMessage(error.message); return; }
       if (creation.options.requires_plan === true && (!creation.plan || date(creation.plan.expires_at)?.getTime() <= Date.now() || JSON.stringify(intent) !== JSON.stringify(creation.planIntent))) { queuePreview(); return; }
-      creation.pending = { key: crypto.randomUUID(), intent };
+      creation.pending = { key: crypto.randomUUID(), principal: creation.principal, intent };
       if (creation.options.requires_plan === true) { creation.pending.approved_plan_id = creation.plan.plan_id; creation.pending.plan = creation.plan; }
       saveCreation();
     }
     if ((creation.options.requires_plan === true) !== Boolean(creation.pending.approved_plan_id)) return;
     creation.releasedMessage = null;
+    const principal = creation.principal, key = creation.pending.key;
     creation.busy = true; creationControls(); creationMessage("Computing and admitting the requested path…");
     try {
       const payload = { ...creation.pending.intent };
       if (creation.pending.approved_plan_id) payload.approved_plan_id = creation.pending.approved_plan_id;
       const result = await creationFetch("/api/tunnels", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": creation.options.csrf_token, "Idempotency-Key": creation.pending.key }, body: JSON.stringify(payload) });
+      if (creation.principal !== principal || creation.pending?.key !== key) return;
       showOperation(result.operation);
-    } catch (error) { creationMessage(`${error.message} The outcome is unknown. Retry the same request to recover its operation.`); }
+    } catch (error) { if (creation.principal === principal && creation.pending?.key === key) creationMessage(`${error.message} The outcome is unknown. Retry the same request to recover its operation.`); }
     finally { creation.busy = false; creationControls(); }
   });
 
