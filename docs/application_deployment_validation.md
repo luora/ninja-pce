@@ -90,8 +90,8 @@ before activation for the comparisons below.
 
 **Activated.** Ninja-PCE 0.5.0 from source `3886b08` now runs under the enabled
 `ninja-controller` service. A healthy service restart and HTTPS authentication
-boundary checks passed. Post-migration PE1 forwarding checks passed; the reverse
-PE4 check is pending console access. The existing domain-discovery lab evidence
+boundary checks passed. Post-migration PE1 and reverse PE4 forwarding checks
+passed. The existing domain-discovery lab evidence
 remains the separate earlier qualification linked above.
 
 Before migration, the Ubuntu console recovered from a reboot and all six
@@ -114,7 +114,7 @@ the unified application's activation or restart.
 | Boot enablement | Passed: `ninja-controller` enabled; no cold VM boot qualification claimed |
 | Managed PE1 tunnel | Passed: Tunnel1002 Admin/Oper UP, RSVP signalling connected and MPLS echo 5/5 |
 | Generic PE1 tunnel | Passed: Tunnel10030 MPLS echo 5/5 after migration/restart |
-| Reverse PE4 tunnel | Pending: post-migration forwarding check awaits its current console endpoint |
+| Reverse PE4 tunnel | Passed: PE4 Tunnel1003 → PE1 Admin/Oper UP, RSVP signalling connected, MPLS echo 5/5 and successful MPLS trace through P4 and P3 |
 
 The retained baseline managed history contained two failure attempts and nine
 startup attempts, including operator reboots before migration. Activation and
@@ -125,7 +125,8 @@ These checks qualify the application service transition and restart, not a cold
 controller VM reboot. The HTTPS observation establishes the anonymous challenge
 only; no password was read and no authenticated browser session was exercised.
 Forwarding results come from the named MPLS echo checks, separately from PCEP
-reports. The reverse PE4 result remains pending.
+reports. The reverse PE4 trace followed PE4 → P4 → P3 → PE1 and reached the
+destination successfully.
 
 ## Scope
 
