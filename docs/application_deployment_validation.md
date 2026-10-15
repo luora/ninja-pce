@@ -76,22 +76,23 @@ Staging on the existing Ubuntu controller completed these checks:
 | Managed startup policy | Passed: the existing managed startup binding/digest passed preflight with the staged application |
 | Durable ownership preflight | Passed: existing journal and reservation-hold hashes matched their retained baseline |
 
-These are staging and preflight results. **The service cutover has not been
-executed.** The old component processes remain the live deployment; the staged
-application has not yet qualified their replacement.
+These staging and preflight checks preceded the completed activation recorded
+below. They are separate from protocol, restart and forwarding observations.
 
 The latest observed baseline contained six ACTIVE LSPs: a healthy legacy LSP
 with delegation clear (`D=0`) and five with delegation set (`D=1`). The refined
 baseline comparison preserves each existing delegation flag rather than
 requiring every healthy LSP to be delegated. It grants no new authority and
-does not force delegation of the legacy LSP. The final fresh baseline snapshot
-is pending recovery of the authenticated controller console.
+does not force delegation of the legacy LSP. A fresh baseline was captured
+before activation for the comparisons below.
 
 ## Live migration status
 
-**Pending.** No live result in this section is marked complete until observed
-on the running controller. The existing domain-discovery lab evidence remains
-the separate earlier qualification linked above.
+**Activated.** Ninja-PCE 0.5.0 from source `3886b08` now runs under the enabled
+`ninja-controller` service. A healthy service restart and HTTPS authentication
+boundary checks passed. Post-migration PE1 forwarding checks passed; the reverse
+PE4 check is pending console access. The existing domain-discovery lab evidence
+remains the separate earlier qualification linked above.
 
 Before migration, the Ubuntu console recovered from a reboot and all six
 headend LSPs were UP. PE1 Tunnel10030 and PE4 Tunnel1003 each passed MPLS echo
@@ -100,18 +101,31 @@ the unified application's activation or restart.
 
 | Check | Status / required observation |
 |---|---|
-| Unified activation | Pending: one supervisor owns the collector, PCEP listener and dashboard; only their three replaced standalone owners stopped |
-| Fresh topology | Pending: healthy exporter and consistent current raw/status/normalized inputs retain eight nodes and 22 directed links |
-| PCC synchronization | Pending: all eight existing lab PCCs reconnect and synchronize |
-| Existing LSPs | Pending: six previously active LSPs retain their current identities, EROs and delegation flags |
-| Ownership preservation | Pending: original provisioning operation, reservation holds and managed recovery history unchanged |
-| External services | Pending: GoBGP, qualified SSH provisioning, Nginx and authentication boundary retained |
-| Dashboard | Pending: authenticated HTTPS view and read-only controller status agree with current observations |
-| Restart behavior | Pending: healthy application restart preserves active paths without unnecessary PCUpd |
-| Independent tunnel checks | Pending: router RSVP state and MPLS forwarding checked separately from PCEP reports |
+| Unified activation | Passed: one supervisor owns the collector, PCEP listener and dashboard; only their three replaced standalone owners stopped; new unit enabled |
+| Fresh topology | Passed: healthy current input set contains eight nodes and 22 directed links |
+| PCC synchronization | Passed: all eight PCCs are fresh and synchronized |
+| Existing LSPs | Passed: six ACTIVE LSPs; all routes and delegation flags match the fresh baseline; no PCUpd sent |
+| Ownership preservation | Passed: provisioning journal and reservation-hold hashes unchanged; managed authority, startup/failure attempts and history unchanged |
+| External services | Passed: unrelated external service process IDs unchanged |
+| Controller status | Passed: application observes eight PCCs, six ACTIVE LSPs and the original single reservation |
+| HTTPS boundary | Passed: unauthenticated HTTPS `HEAD /healthz` returned HTTP 401 with `WWW-Authenticate`; no authenticated session tested |
+| Restart behavior | Passed: healthy application service restart retained eight fresh synchronized PCCs, six ACTIVE LSPs, eight nodes, 22 directed links and one reservation |
+| Restart route/authority preservation | Passed: all six routes and delegation flags identical; no updates or archived updates; journal/hold/managed history and unrelated service process IDs unchanged |
+| Boot enablement | Passed: `ninja-controller` enabled; no cold VM boot qualification claimed |
+| Managed PE1 tunnel | Passed: Tunnel1002 Admin/Oper UP, RSVP signalling connected and MPLS echo 5/5 |
+| Generic PE1 tunnel | Passed: Tunnel10030 MPLS echo 5/5 after migration/restart |
+| Reverse PE4 tunnel | Pending: post-migration forwarding check awaits its current console endpoint |
 
-Record actual counts, checked paths and any deviations after activation. Do not
-infer forwarding from a healthy process, synchronized PCC or ACTIVE report.
+The retained baseline managed history contained two failure attempts and nine
+startup attempts, including operator reboots before migration. Activation and
+the service restart did not reset or advance that history. Healthy legacy `D=0`
+and the other five `D=1` reports retained their existing authority boundaries.
+
+These checks qualify the application service transition and restart, not a cold
+controller VM reboot. The HTTPS observation establishes the anonymous challenge
+only; no password was read and no authenticated browser session was exercised.
+Forwarding results come from the named MPLS echo checks, separately from PCEP
+reports. The reverse PE4 result remains pending.
 
 ## Scope
 
