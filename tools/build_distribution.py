@@ -46,11 +46,20 @@ def inspect_artifacts(wheel: Path, source: Path) -> None:
                 raise ValueError(f"Unexpected source archive member: {member.name}")
 
 
-def revision(repo: Path) -> tuple[str | None, bool | None]:
+def revision(repo: Path, *, exclude: tuple[Path, ...] = ()) -> tuple[str | None, bool | None]:
     try:
         commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True,
                                 text=True, capture_output=True).stdout.strip()
-        dirty = subprocess.run(["git", "status", "--porcelain"], cwd=repo, check=True,
+        command = ["git", "status", "--porcelain", "--", "."]
+        for path in exclude:
+            try:
+                relative = path.resolve().relative_to(repo.resolve())
+            except ValueError:
+                continue
+            # Exclude only this invocation's scratch, with literal path matching;
+            # other untracked files and genuine source modifications still count.
+            command.append(f":(top,exclude,literal){relative.as_posix()}")
+        dirty = subprocess.run(command, cwd=repo, check=True,
                                text=True, capture_output=True).stdout != ""
         return commit, dirty
     except (OSError, subprocess.CalledProcessError):
@@ -62,6 +71,7 @@ def build(output: Path, *, download_dependencies: bool = False, constraints: Pat
     output = output.absolute()
     if output.is_symlink() or output.exists() and (not output.is_dir() or any(output.iterdir())):
         raise ValueError("Output must be absent or an empty directory; artifacts are never overwritten")
+    source_commit, source_dirty = revision(repo)
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="ninja-pce-build-", dir=output.parent) as temporary:
         stage = Path(temporary) / "distribution"
@@ -101,7 +111,12 @@ def build(output: Path, *, download_dependencies: bool = False, constraints: Pat
             if constraints is not None:
                 command.extend(["--constraint", str(constraints.absolute())])
             subprocess.run([*command, str(wheels[0])], check=True)
-        commit, dirty = revision(repo)
+        final_commit, final_dirty = revision(repo, exclude=(Path(temporary),))
+        if source_commit is None or final_commit is None:
+            commit, dirty = source_commit, None
+        else:
+            commit = source_commit
+            dirty = bool(source_dirty or final_dirty or final_commit != source_commit)
         artifacts = {str(path.relative_to(stage)): checksum(path)
                      for path in sorted(stage.rglob("*")) if path.is_file()}
         manifest = {

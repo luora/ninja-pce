@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 import sys
 import tarfile
 import zipfile
@@ -288,3 +289,51 @@ def test_deployment_json_rejects_fifo_without_waiting_for_writer(tmp_path):
     os.mkfifo(path)
     with pytest.raises(ValueError, match="regular file"):
         installer.read_json(path)
+
+
+@pytest.mark.parametrize("source_change", [None, "untracked", "tracked"])
+def test_distribution_provenance_excludes_only_own_build_scratch(tmp_path, monkeypatch, source_change):
+    repo = tmp_path / "repository"
+    repo.mkdir()
+    (repo / "README.md").write_text("Reviewed application source\n")
+    (repo / ".gitignore").write_text("dist/\n")
+    (repo / "docs").mkdir()
+    (repo / "deploy").mkdir()
+    (repo / "deploy/install.py").write_text("# reviewed installer\n")
+    for arguments in (["init", "--quiet"], ["add", "."],
+                      ["-c", "core.hooksPath=/dev/null", "-c", "user.name=Release Test",
+                       "-c", "user.email=release-test@example.invalid", "commit", "--quiet", "-m", "Source"]):
+        subprocess.run(["git", *arguments], cwd=repo, check=True, capture_output=True)
+    if source_change == "untracked":
+        (repo / "unreviewed-source.py").write_text("# real source change\n")
+    elif source_change == "tracked":
+        (repo / "README.md").write_text("Modified source\n")
+
+    run_command = subprocess.run
+    scratches = []
+
+    def fake_build(arguments, **kwargs):
+        if arguments[:3] != [sys.executable, "-m", "build"]:
+            return run_command(arguments, **kwargs)
+        stage = Path(arguments[arguments.index("--outdir") + 1])
+        scratches.append(stage.parent)
+        assert stage.parent.parent == repo
+        # The scratch is a real untracked directory during the build. The final
+        # provenance must exclude it while preserving unrelated source changes.
+        (stage.parent / "scratch-marker").write_text("temporary build content")
+        with zipfile.ZipFile(stage / "ninja_pce-0.5.0-py3-none-any.whl", "w") as archive:
+            archive.writestr("ninja_pce/__init__.py", "")
+        with tarfile.open(stage / "ninja_pce-0.5.0.tar.gz", "w:gz") as archive:
+            content = b"reviewed source"
+            member = tarfile.TarInfo("ninja_pce-0.5.0/README.md")
+            member.size = len(content)
+            archive.addfile(member, io.BytesIO(content))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(distribution, "__file__", str(repo / "tools/build_distribution.py"))
+    monkeypatch.setattr(distribution.subprocess, "run", fake_build)
+    distribution.build(repo / "dist")
+    manifest = json.loads((repo / "dist/distribution-manifest.json").read_text())
+    assert manifest["source_revision"] is not None
+    assert manifest["source_dirty"] is (source_change is not None)
+    assert scratches and all(not scratch.exists() for scratch in scratches)
