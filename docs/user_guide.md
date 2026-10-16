@@ -6,9 +6,10 @@ policy lets any eligible router in the managed domain act as a PCC. Ordinary
 router-owned tunnels need no individual router or tunnel-ID registration in the
 controller.
 
-Use the [deployment guide](deployment.md) to install the application. This guide
-explains what to configure on the network, what the dashboard means, and how to
-operate the available tunnel workflows.
+Start with the [getting-started guide](getting_started.md) to launch directly
+from a clone, or use the [deployment guide](deployment.md) for a managed
+installation. This guide explains what to configure on the network, what the
+dashboard means, and how to operate the available tunnel workflows.
 
 ## Start and inspect the application
 
@@ -20,12 +21,12 @@ its authenticated HTTPS proxy also remain separate.
 For the packaged systemd installation:
 
 ```bash
-sudo -u ninja-pce /opt/ninja-pce/releases/0.6.0/venv/bin/ninja-pce controller validate \
+sudo -u ninja-pce /opt/ninja-pce/releases/0.7.0/venv/bin/ninja-pce controller validate \
   --config /etc/ninja-pce/controller.json
 sudo systemctl start ninja-controller
 systemctl status ninja-controller --no-pager
 journalctl -u ninja-controller --no-pager -n 80
-sudo -u ninja-pce /opt/ninja-pce/releases/0.6.0/venv/bin/ninja-pce controller status \
+sudo -u ninja-pce /opt/ninja-pce/releases/0.7.0/venv/bin/ninja-pce controller status \
   --config /etc/ninja-pce/controller.json
 ```
 

@@ -44,8 +44,9 @@ const $test = (id) => document.getElementById(id);
 const proof = {independent:true,scope:"headend-rsvp",pcep_control:true,checks:["identity","destination","bandwidth","ero","signaling"]};
 let statusCalls = 0;
 window.fetch = async(path, options={}) => {
-  if(path==="/api/controller") return reply({schema_version:1,read_only:true,mode:"live",sources:[],lsps:[],topology:{nodes:[],links:[]},summary:{},peers:[],events:[],computations:[],refresh_seconds:60});
+  if(path==="/api/controller") return reply({schema_version:1,read_only:true,mode:window.testScenario==="sample"?"demo":"live",sources:[],lsps:[],topology:{nodes:[],links:[]},summary:{},peers:[],events:[],computations:[],refresh_seconds:60});
   if(path==="/api/tunnel-options") {
+    if(window.testScenario==="sample") throw new Error("Sample requested live provisioning policy");
     if(window.testScenario==="readonly") return reply({enabled:false,headends:[],destinations:[],max_bandwidth_bps:0,reason:"RSVP bandwidth creation has not been qualified for this controller."});
     const domain = window.testScenario.startsWith("domain"), disabled = window.testScenario==="domain-unavailable";
     return reply({principal:window.testPrincipal||"operator",headends:domain?["P2","PE1","P1"]:["PE1"],destinations:["PE3"],enabled:!(disabled||window.testScenario==="retry"&&sessionStorage.getItem("test-reloaded")),reason:"New delivery temporarily unavailable",requires_plan:true,backend:"router-config",max_bandwidth_bps:5000000,csrf_token:"c".repeat(43),policy:{read_only:false},...(domain?{headend_readiness:{P2:{enabled:false,transport_enrolled:false,pcc_ready:true,reason:"No pinned transport identity is enrolled."},PE1:{enabled:!disabled,transport_enrolled:true,pcc_ready:!disabled,reason:disabled?"PCC session unavailable.":"Provisioning ready."},P1:{enabled:!disabled,transport_enrolled:true,pcc_ready:!disabled,reason:disabled?"PCC session unavailable.":"Provisioning ready."}}}:{})});
@@ -73,6 +74,18 @@ window.fetch = async(path, options={}) => {
 """
 
 CASES = {
+    "sample": r"""
+      assert(!$test("demo-banner").hidden&&$test("demo-banner").textContent.includes("Sample workspace"),"Sample identity missing");
+      assert($test("demo-banner").textContent.includes("No routers are connected"),"Sample connection state unclear");
+      assert($test("view-description").textContent.includes("Explore a sample topology"),"Sample overview claims live data");
+      assert($test("activity-feed-note").textContent==="Synthetic sample events","Sample events claim captured data");
+      document.querySelector('[data-view="topology"]').click();
+      document.querySelector('[data-view="overview"]').click();
+      assert($test("view-description").textContent.includes("Explore a sample topology"),"Navigation lost sample description");
+      $test("create-tunnel-button").click(); await pause(450);
+      assert($test("creation-policy").textContent.includes("Connect and configure your network"),"Sample lacks live setup guidance");
+      assert($test("creation-fields").disabled&&$test("creation-submit").disabled&&calls.length===0,"Sample requested creation");
+    """,
     "preview": r"""
       $test("create-tunnel-button").click(); await pause(20);
       assert($test("creation-submit").disabled,"Create enabled before preview");
@@ -247,7 +260,8 @@ def test_dashboard_configuration_creation_controls(tmp_path: Path, scenario: str
         '<script src="app.js" defer></script>',
         '<script src="harness.js" defer></script><script src="app.js" defer></script>'
         '<script src="case.js" defer></script>')
-    test_case = ("window.testScenario=" + json.dumps(scenario) + ";\n(async()=>{try{await pause(10);" +
+    harness = "window.testScenario=" + json.dumps(scenario) + ";\n" + HARNESS
+    test_case = ("(async()=>{try{await pause(10);" +
                  CASES[scenario] +
                  "document.body.dataset.testResult='passed';}catch(error){"
                  "document.body.dataset.testResult='failed';"
@@ -258,7 +272,7 @@ def test_dashboard_configuration_creation_controls(tmp_path: Path, scenario: str
             pass
 
         def do_GET(self):
-            resources = {"/": (index, "text/html"), "/harness.js": (HARNESS, "text/javascript"),
+            resources = {"/": (index, "text/html"), "/harness.js": (harness, "text/javascript"),
                          "/case.js": (test_case, "text/javascript")}
             if self.path in resources:
                 value, mime = resources[self.path]

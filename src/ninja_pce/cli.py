@@ -12,6 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from . import __version__
+from .application import add_application_commands, application_command
 from .controller import add_controller_commands, controller_command
 from .cspf import CspfNoPath, CspfSearchLimit, compute_cspf
 from .daemon import HealthState, load_daemon_config, run_daemon_cycle, start_health_server
@@ -132,6 +133,7 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--demo", action="store_true", help="Use labelled synthetic examples, without live files")
     add_live_commands(sub)
     add_controller_commands(sub)
+    add_application_commands(sub)
     return parser
 
 
@@ -630,6 +632,8 @@ def main(argv: list[str] | None = None) -> int:
             return listen_pcep(args)
         if args.command == "controller":
             return controller_command(args)
+        if args.command == "app":
+            return application_command(args)
         parser.error(f"Unknown command: {args.command}")
         return 2
     except CspfSearchLimit as exc:

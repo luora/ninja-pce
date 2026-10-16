@@ -37,7 +37,7 @@ def inspect_artifacts(wheel: Path, source: Path) -> None:
                     not (parts[0] == "ninja_pce" or parts[0].endswith(".dist-info"))):
                 raise ValueError(f"Unexpected wheel member: {name}")
     forbidden = {".git", ".env", ".venv", "venv", "build", "dist", "__pycache__", ".codex",
-                 ".aws", ".ssh", "node_modules"}
+                 ".aws", ".ssh", ".ninja-pce", "node_modules"}
     with tarfile.open(source, "r:gz") as archive:
         for member in archive.getmembers():
             parts = PurePosixPath(member.name).parts

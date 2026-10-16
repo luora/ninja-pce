@@ -1,6 +1,32 @@
 # Ninja-PCE next-chat handoff
 
-Updated 2026-10-15 (Africa/Nairobi). Domain-wide, multi-user dashboard tunnel
+Updated 2026-10-16 (Africa/Nairobi). The current source also includes the **0.7.0**
+clone-and-run application launcher. Start with `./ninja-pce` for a labelled
+loopback-only sample, then `init`, edit the generated network configuration,
+`doctor`, and `start` for the existing live controller runtime. See
+[getting started](getting_started.md). The launcher owns an ignored isolated
+`.ninja-pce/venv` and a separate workspace, preserves existing files, reuses an
+unchanged installation offline, and refuses package replacement while a locally
+launched application is running. Optional SSH dependencies use
+`./ninja-pce setup --southbound`; authenticated provisioning still requires the
+separate enrollment/proxy service setup.
+
+The application-packaging regression checkpoint passed **2,074 tests in
+199.53 seconds, 89% coverage**; Ruff and mypy passed. Fresh-checkout installation
+and offline sample reopens, assets, mutation refusal, signals, duplicate-init
+preservation and degraded status were exercised from a checkout containing
+spaces and an unrelated working directory. Three later installer parser/path
+checks passed in the focused suite (138 focused checks after the 0.7.0 version
+update). A real running sample also refused package replacement without changing
+its installation record. CI now exercises the launcher on Python
+3.10 and 3.12; those remote runs have not been claimed locally.
+
+This packaging work did **not** redeploy or alter the running application. The
+live domain provisioning deployment remains the qualified **0.6.0** wheel from
+`31c998d`, with the preserved authority and qualification state recorded below.
+Do not confuse the new source/package version with that deployed artifact.
+
+Domain deployment checkpoint, 2026-10-15 (Africa/Nairobi). Domain-wide, multi-user dashboard tunnel
 provisioning is implemented, deployed and qualified on
 `feat/domain-tunnel-provisioning` within the scope below. Concurrent authenticated
 live creation, transport refusal, forwarding, service restart, final read-only

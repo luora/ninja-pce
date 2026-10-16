@@ -53,12 +53,15 @@
     try { localStorage.setItem("theme", theme); } catch { /* Theme remains usable without storage. */ }
   });
 
+  function viewDescription(view) {
+    return state.data?.mode === "demo" && view === "overview" ? "Explore a sample topology, tunnels and path computations." : views[view][2];
+  }
   function navigate(view, updateHash = true) {
     state.view = Object.hasOwn(views, view) ? view : "overview";
-    const [label, heading, description] = views[state.view];
+    const [label, heading] = views[state.view];
     $("page-title").textContent = label;
     $("view-heading").textContent = heading;
-    $("view-description").textContent = description;
+    $("view-description").textContent = viewDescription(state.view);
     document.querySelectorAll("[data-view]").forEach((button) => {
       const active = button.dataset.view === state.view;
       button.classList.toggle("on", active);
@@ -279,7 +282,7 @@
     invalidatePreview();
     if (!creation.pending) $("creation-status").replaceChildren();
     creation.options = null; creationControls(); $("creation-operations").hidden = true;
-    if (state.data?.mode === "demo") { $("creation-policy").textContent = "Tunnel creation is disabled in the demo workspace."; return; }
+    if (state.data?.mode === "demo") { $("creation-policy").textContent = "This sample is for exploring the dashboard. Connect and configure your network to create tunnels."; return; }
     $("creation-policy").textContent = "Checking authenticated access and domain policy…";
     try {
       const options = await creationFetch("/api/tunnel-options");
@@ -354,6 +357,8 @@
   function renderChrome() {
     const data = state.data;
     $("demo-banner").hidden = data?.mode !== "demo";
+    $("view-description").textContent = viewDescription(state.view);
+    $("activity-feed-note").textContent = data?.mode === "demo" ? "Synthetic sample events" : "Captured controller events";
     $("error-banner").hidden = !state.error;
     $("error-banner").textContent = state.error ? `${state.error}${data ? " Showing the last received snapshot; its freshness is no longer confirmed." : " No controller data is displayed."}` : "";
     const connection = $("connection-status");

@@ -32,6 +32,10 @@ jobs:
       - run: ruff check src tests tools gns3/validation
       - run: mypy
       - run: pytest --cov=ninja_pce --cov-report=term-missing --cov-report=xml
+      - name: Verify clone-and-run application
+        run: |
+          ./ninja-pce setup
+          python tools/smoke_application.py
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ matrix.python }}
@@ -54,6 +58,7 @@ jobs:
           cd /tmp
           /tmp/ninja-pce-package-test/bin/ninja-pce --version
           /tmp/ninja-pce-package-test/bin/ninja-pce controller --help
+          /tmp/ninja-pce-package-test/bin/ninja-pce app --help
           /tmp/ninja-pce-package-test/bin/python -c 'from importlib.resources import files; p = files("ninja_pce"); assert p.joinpath("data/gobgp-readonly.proto").is_file(); assert p.joinpath("web/index.html").is_file(); assert p.joinpath("templates/iosxe_rsvp_te.j2").is_file()'
       - uses: actions/upload-artifact@v4
         with:

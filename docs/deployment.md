@@ -20,7 +20,7 @@ the controller process.
 
 | Location | Purpose |
 |---|---|
-| `/opt/ninja-pce/releases/0.6.0/venv` | Versioned application virtual environment |
+| `/opt/ninja-pce/releases/0.7.0/venv` | Versioned application virtual environment |
 | `/etc/ninja-pce/controller.json` | Controller configuration |
 | `/etc/ninja-pce/domain-policy.json` | Reviewed topology-domain policy |
 | `/var/lib/ninja-pce/live` | Current collector and PCEP observations |
@@ -83,7 +83,7 @@ the reviewed wheel and need only the runtime wheelhouse:
 ```bash
 python3 -m pip download --only-binary=:all: -c deploy/constraints.txt \
   --dest dist/wheelhouse \
-  dist/ninja_pce-0.6.0-py3-none-any.whl
+  dist/ninja_pce-0.7.0-py3-none-any.whl
 ```
 
 Inspect the release version and supplied artifacts before installation. Do not
@@ -236,7 +236,7 @@ bundle:
 
 ```bash
 python3 "$ninja_release_dir/deploy/install.py" \
-  --wheel "$ninja_release_dir/ninja_pce-0.6.0-py3-none-any.whl" \
+  --wheel "$ninja_release_dir/ninja_pce-0.7.0-py3-none-any.whl" \
   --config /path/to/controller.json \
   --domain-policy /path/to/domain-policy.json \
   --output-dir build/deployment
@@ -253,7 +253,7 @@ deployment files. Prepare the dependency wheelhouse before applying the bundle.
 
 ```bash
 sudo python3 "$ninja_release_dir/deploy/install.py" \
-  --wheel "$ninja_release_dir/ninja_pce-0.6.0-py3-none-any.whl" \
+  --wheel "$ninja_release_dir/ninja_pce-0.7.0-py3-none-any.whl" \
   --wheelhouse "$ninja_release_dir/wheelhouse" \
   --config /path/to/controller.json \
   --domain-policy /path/to/domain-policy.json \
@@ -283,20 +283,20 @@ For both controller and provisioning service overrides, set
 arguments. Confirm the version and module location as the service account:
 
 ```bash
-sudo -u ninja-pce /opt/ninja-pce/releases/0.6.0/venv/bin/python -I -c \
+sudo -u ninja-pce /opt/ninja-pce/releases/0.7.0/venv/bin/python -I -c \
   'import ninja_pce; print(ninja_pce.__version__); print(ninja_pce.__file__)'
 ```
 
-The output must identify version 0.6.0 and the intended installed package.
+The output must identify version 0.7.0 and the intended installed package.
 Recheck the effective unit with `systemctl cat` after installing any override.
 
 Check the installed policy and service permissions, then validate and review
 the planned commands as the service account:
 
 ```bash
-sudo -u ninja-pce /opt/ninja-pce/releases/0.6.0/venv/bin/ninja-pce controller validate \
+sudo -u ninja-pce /opt/ninja-pce/releases/0.7.0/venv/bin/ninja-pce controller validate \
   --config /etc/ninja-pce/controller.json
-sudo -u ninja-pce /opt/ninja-pce/releases/0.6.0/venv/bin/ninja-pce controller plan \
+sudo -u ninja-pce /opt/ninja-pce/releases/0.7.0/venv/bin/ninja-pce controller plan \
   --config /etc/ninja-pce/controller.json
 systemctl cat ninja-controller
 ```
@@ -313,7 +313,7 @@ When the network and external GoBGP service are ready:
 sudo systemctl enable --now ninja-controller
 systemctl status ninja-controller --no-pager
 journalctl -u ninja-controller --no-pager -n 80
-sudo -u ninja-pce /opt/ninja-pce/releases/0.6.0/venv/bin/ninja-pce controller status \
+sudo -u ninja-pce /opt/ninja-pce/releases/0.7.0/venv/bin/ninja-pce controller status \
   --config /etc/ninja-pce/controller.json
 curl --fail http://127.0.0.1:8088/api/controller
 ```

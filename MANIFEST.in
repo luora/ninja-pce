@@ -1,4 +1,4 @@
-include README.md pyproject.toml requirements.txt
+include README.md pyproject.toml requirements.txt ninja-pce
 recursive-include docs *.md
 recursive-include deploy *.py *.json *.toml *.txt
 recursive-include tools *.py *.sh
@@ -10,3 +10,5 @@ recursive-include src/ninja_pce/web *.html *.css *.js
 recursive-include gns3/controller *.md *.proto *.sh *.patch *.service *.template *.example *.json *.yaml *.toml *.txt *.conf
 recursive-include gns3/router-configs *.md *.cfg *.set
 recursive-include gns3/lab-data *.json *.yml *.yaml
+
+prune .ninja-pce

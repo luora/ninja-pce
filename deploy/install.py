@@ -46,7 +46,8 @@ def checksum(path: Path) -> str:
 def absolute_path(value: str | Path) -> Path:
     text = str(value)
     path = Path(text)
-    if not PATH.fullmatch(text) or path != Path(os.path.normpath(text)) or ".." in path.parts:
+    if (not PATH.fullmatch(text) or text != text.rstrip() or
+            path != Path(os.path.normpath(text)) or ".." in path.parts):
         raise ValueError(f"Deployment path must be a canonical absolute path: {text!r}")
     if path == Path("/"):
         raise ValueError("Deployment path cannot be the filesystem root")
@@ -127,6 +128,10 @@ class Deployment:
         return self.release / "venv/bin/ninja-pce"
 
     @property
+    def python(self) -> Path:
+        return self.release / "venv/bin/python"
+
+    @property
     def config_path(self) -> Path:
         return self.config_dir / "controller.json"
 
@@ -135,16 +140,18 @@ class Deployment:
         return self.unit_dir / f"{self.unit_name}.service"
 
     def unit(self) -> bytes:
-        # json.dumps quotes paths using escapes understood by systemd. The path
-        # allowlist excludes systemd specifiers, variable substitutions and controls.
+        # ExecStart and ReadWritePaths accept quoted tokens. WorkingDirectory is
+        # a scalar path, so quoting it would become part of the path. The path
+        # allowlist excludes specifiers, substitutions, controls and trailing spaces.
         quote = json.dumps
         return ("[Unit]\nDescription=Ninja-PCE controller\n"
                 "Wants=network-online.target\nAfter=network-online.target\n\n"
                 "[Service]\nType=simple\n"
                 f"User={self.service_user}\nGroup={self.service_group}\n"
-                f"WorkingDirectory={quote(str(self.data_dir))}\n"
-                f"ExecStart={quote(str(self.executable))} controller run --config "
+                f"WorkingDirectory={self.data_dir}\n"
+                f"ExecStart={quote(str(self.python))} -I -m ninja_pce.cli controller run --config "
                 f"{quote(str(self.config_path))}\n"
+                "UnsetEnvironment=PYTHONPATH PYTHONHOME\n"
                 "Restart=on-failure\nRestartSec=5\nTimeoutStopSec=30\nUMask=0077\n"
                 "NoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nProtectHome=true\n"
                 f"ReadWritePaths={quote(str(self.data_dir))}\n"
@@ -369,14 +376,14 @@ def install(plan: Deployment, wheelhouse: Path | None) -> None:
         constraints.write_bytes(plan.constraints)
         environment = stage / "venv"
         venv.EnvBuilder(with_pip=True).create(environment)
-        subprocess.run([str(environment / "bin/python"), "-m", "pip", "install", "--no-index",
+        subprocess.run([str(environment / "bin/python"), "-I", "-m", "pip", "install", "--no-index",
                         "--find-links", str(wheelhouse.absolute()), "--constraint", str(constraints),
                         str(staged_wheel)], check=True)
         controller = json.loads(plan.controller)
         controller["pcep"]["domain_policy"] = str(stage / "domain-policy.json")
         (stage / "domain-policy.json").write_bytes(plan.domain_policy)
         (stage / "controller.json").write_bytes(encoded(controller))
-        subprocess.run([str(environment / "bin/ninja-pce"), "controller", "validate", "--config",
+        subprocess.run([str(environment / "bin/python"), "-I", "-m", "ninja_pce.cli", "controller", "validate", "--config",
                         str(stage / "controller.json")], check=True)
         preflight(plan)
         uid, gid = account(plan)
@@ -413,7 +420,7 @@ def install(plan: Deployment, wheelhouse: Path | None) -> None:
             previous_umask = os.umask(0o022)
             try:
                 venv.EnvBuilder(with_pip=True).create(final_environment)
-                subprocess.run([str(final_environment / "bin/python"), "-m", "pip", "install",
+                subprocess.run([str(final_environment / "bin/python"), "-I", "-m", "pip", "install",
                                 "--no-index", "--find-links", str(wheelhouse.absolute()),
                                 "--constraint", str(constraints), str(staged_wheel)], check=True)
             finally:
@@ -434,8 +441,8 @@ def install(plan: Deployment, wheelhouse: Path | None) -> None:
         create_file(plan.unit_path, plan.unit(), 0o644)
         # Verify the actual installed paths and reference permissions as the
         # service account. The earlier isolated validation ran as the installer.
-        subprocess.run(["runuser", "--user", plan.service_user, "--", str(plan.executable),
-                        "controller", "validate", "--config", str(plan.config_path)], check=True)
+        subprocess.run(["runuser", "--user", plan.service_user, "--", str(plan.python),
+                        "-I", "-m", "ninja_pce.cli", "controller", "validate", "--config", str(plan.config_path)], check=True)
         subprocess.run(["systemctl", "daemon-reload"], check=True)
 
 

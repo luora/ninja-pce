@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+"""Launch the application from this checkout without activating an environment."""
+import runpy
+from pathlib import Path
+
+runpy.run_path(str(Path(__file__).resolve().parent / "tools/run_application.py"), run_name="__main__")
