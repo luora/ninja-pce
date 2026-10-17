@@ -50,6 +50,9 @@ under one configuration and a supervised application command. Start with the
 [user guide](docs/user_guide.md) and [deployment guide](docs/deployment.md).
 The deployment package includes a wheel, source archive, offline dependency
 wheelhouse, checksums, configuration examples and a systemd installer.
+The optional [verified offline bundle](docs/offline_bundles.md) also packages
+patched GoBGP and grpcurl with provenance and a signed manifest for fresh
+observation deployments.
 See the [application validation record](docs/application_deployment_validation.md)
 for packaging, CI and deployment evidence.
 

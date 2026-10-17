@@ -29,6 +29,58 @@ ACCOUNT = re.compile(r"[a-z_][a-z0-9_-]{0,30}\Z")
 UNIT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.@-]{0,63}\Z")
 VERSION = re.compile(r"[0-9][A-Za-z0-9_.+-]{0,63}\Z")
 PATH = re.compile(r"/[A-Za-z0-9_./+ -]+\Z")
+GOBGP_UNIT = "ninja-gobgpd"
+
+
+def observation_configuration(config_dir: Path, data_dir: Path) -> dict[str, Any]:
+    """An inert first-launch configuration; the service selects no PCEP child."""
+    return {
+        "version": 1,
+        "files": {"bgpls_raw": str(data_dir / "live/bgpls-raw.json"),
+                  "bgpls_status": str(data_dir / "live/bgpls-status.json"),
+                  "topology": str(data_dir / "live/topology.json"),
+                  "pcep_capture": str(data_dir / "live/pcep.json")},
+        "state_dir": str(data_dir / "state"), "runtime_dir": str(data_dir / "run"),
+        "bgpls": {"endpoint": "127.0.0.1:50051", "required_peers": ["192.0.2.20"]},
+        "pcep": {"listen_host": "127.0.0.1", "domain_policy": str(config_dir / "domain-policy.json")},
+        "dashboard": {"enabled": True, "listen_host": "127.0.0.1", "port": 8088},
+    }
+
+
+def observation_policy() -> dict[str, Any]:
+    return {"version": 1, "domain": {"protocol_id": 3, "instance_id": 0,
+                                    "autonomous_system": 65000, "bgpls_identifier": 0},
+            "pcc_prefixes": ["192.0.2.0/24"], "destination_prefixes": ["192.0.2.0/24"],
+            "max_bandwidth_bps": 100_000_000, "max_live_lsps": 32}
+
+
+def default_gobgp_configuration() -> bytes:
+    return ("# Bootstrap only: no peers and no BGP listener.\n"
+            "[global.config]\n  as = 65000\n  router-id = \"127.0.0.1\"\n  port = -1\n"
+            "  local-address-list = [\"127.0.0.1\"]\n"
+            "[global.apply-policy.config]\n  default-import-policy = \"accept-route\"\n"
+            "  default-export-policy = \"reject-route\"\n").encode()
+
+
+def read_gobgp_configuration(path: Path) -> bytes:
+    try:
+        import tomllib
+    except ModuleNotFoundError as error:
+        raise ValueError("Rendering custom GoBGP TOML requires Python 3.11 or newer") from error
+
+    without_symlinks(path.absolute())
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError("GoBGP configuration must be a regular file")
+        contents = stream.read(1024 * 1024 + 1)
+    if len(contents) > 1024 * 1024:
+        raise ValueError("GoBGP configuration exceeds 1 MiB")
+    document = tomllib.loads(contents.decode())
+    global_config = document.get("global")
+    if not isinstance(global_config, dict) or not isinstance(global_config.get("config"), dict):
+        raise ValueError("GoBGP configuration requires [global.config]")
+    return contents
 
 
 def encoded(document: Any) -> bytes:
@@ -118,6 +170,8 @@ class Deployment:
     constraints: bytes
     controller: bytes
     domain_policy: bytes
+    bundle: Any = None
+    gobgp_config: bytes | None = None
 
     @property
     def release(self) -> Path:
@@ -150,7 +204,8 @@ class Deployment:
                 f"User={self.service_user}\nGroup={self.service_group}\n"
                 f"WorkingDirectory={self.data_dir}\n"
                 f"ExecStart={quote(str(self.python))} -I -m ninja_pce.cli controller run --config "
-                f"{quote(str(self.config_path))}\n"
+                f"{quote(str(self.config_path))}"
+                + (" --component bgpls --component dashboard" if self.bundle is not None else "") + "\n"
                 "UnsetEnvironment=PYTHONPATH PYTHONHOME\n"
                 "Restart=on-failure\nRestartSec=5\nTimeoutStopSec=30\nUMask=0077\n"
                 "NoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nProtectHome=true\n"
@@ -159,8 +214,39 @@ class Deployment:
                 "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n"
                 "[Install]\nWantedBy=multi-user.target\n").encode()
 
+    def gobgp_unit(self) -> bytes:
+        if self.bundle is None:
+            raise ValueError("Managed GoBGP requires an authenticated release bundle")
+        quote = json.dumps
+        return ("[Unit]\nDescription=Ninja-PCE verified GoBGP topology source\n"
+                "Wants=network-online.target\nAfter=network-online.target\n"
+                "StartLimitIntervalSec=60\nStartLimitBurst=3\n\n"
+                "[Service]\nType=simple\n"
+                f"User={self.service_user}\nGroup={self.service_group}\n"
+                f"ExecStart={quote(str(self.release / 'bin/gobgpd'))} -f "
+                f"{quote(str(self.config_dir / 'gobgpd.toml'))} --api-hosts=127.0.0.1:50051 "
+                "--pprof-disable --metrics-path= --config-strict\n"
+                "Restart=on-failure\nRestartSec=5\nTimeoutStopSec=30\nUMask=0077\n"
+                "AmbientCapabilities=CAP_NET_BIND_SERVICE\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE\n"
+                "NoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nProtectHome=true\n"
+                "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n"
+                "[Install]\nWantedBy=multi-user.target\n").encode()
+
+    def configuration_files(self) -> dict[str, bytes]:
+        result = {"controller.json": self.controller, "domain-policy.json": self.domain_policy}
+        if self.bundle is not None:
+            assert self.gobgp_config is not None
+            result["gobgpd.toml"] = self.gobgp_config
+        return result
+
+    def service_files(self) -> dict[str, bytes]:
+        result = {f"{self.unit_name}.service": self.unit()}
+        if self.bundle is not None:
+            result[f"{GOBGP_UNIT}.service"] = self.gobgp_unit()
+        return result
+
     def manifest(self) -> dict[str, Any]:
-        return {
+        result = {
             "version": 1, "application_version": self.version,
             "wheel": self.wheel.name, "wheel_sha256": self.wheel_sha256,
             "constraints_sha256": hashlib.sha256(self.constraints).hexdigest(),
@@ -168,24 +254,28 @@ class Deployment:
             "data_dir": str(self.data_dir), "unit": str(self.unit_path),
             "service_user": self.service_user, "service_group": self.service_group,
             "activation": "manual", "files": {
-                "controller.json": hashlib.sha256(self.controller).hexdigest(),
-                "domain-policy.json": hashlib.sha256(self.domain_policy).hexdigest(),
-                f"{self.unit_name}.service": hashlib.sha256(self.unit()).hexdigest(),
-            },
+                name: hashlib.sha256(contents).hexdigest()
+                for name, contents in {**self.configuration_files(), **self.service_files()}.items()},
         }
+        if self.bundle is not None:
+            result["bundle_manifest_sha256"] = self.bundle.manifest_sha256
+            result["operating_intent"] = "observe"
+            result["components"] = self.bundle.manifest["components"]
+        return result
 
     def files(self) -> dict[str, bytes]:
-        return {"controller.json": self.controller, "domain-policy.json": self.domain_policy,
-                f"{self.unit_name}.service": self.unit(),
+        return {**self.configuration_files(), **self.service_files(),
                 "deployment-manifest.json": encoded(self.manifest())}
 
 
-def deployment(args: argparse.Namespace) -> Deployment:
+def deployment(args: argparse.Namespace, bundle: Any = None) -> Deployment:
     for value in (args.service_user, args.service_group or args.service_user):
         if not ACCOUNT.fullmatch(value) or value == "root":
             raise ValueError("Service user/group must be a safe non-root system account name")
     if not UNIT.fullmatch(args.unit_name) or args.unit_name.endswith(".service"):
         raise ValueError("Unit name must be a safe systemd name without the .service suffix")
+    if bundle is not None and args.unit_name == GOBGP_UNIT:
+        raise ValueError("Controller unit name must differ from the managed GoBGP unit")
     prefix, config_dir, data_dir, unit_dir = (
         absolute_path(value) for value in (args.prefix, args.config_dir, args.data_dir, args.unit_dir))
     # Persistent configuration, journals and source must be separate trees.
@@ -193,10 +283,30 @@ def deployment(args: argparse.Namespace) -> Deployment:
     if any(left == right or left in right.parents or right in left.parents
            for index, left in enumerate(roots) for right in roots[index + 1:]):
         raise ValueError("Release, config, data and systemd directories must be separate trees")
-    wheel = Path(args.wheel).absolute()
+    if bundle is None and not all(getattr(args, field, None) for field in ("wheel", "config", "domain_policy")):
+        raise ValueError("Legacy installation requires --wheel, --config and --domain-policy")
+    if bundle is not None and (getattr(args, "wheel", None) or getattr(args, "wheelhouse", None)):
+        raise ValueError("--bundle supplies its own verified wheel and wheelhouse")
+    custom = getattr(args, "config", None)
+    if bundle is not None and bool(custom) != bool(getattr(args, "domain_policy", None)):
+        raise ValueError("Custom bundle configuration requires both --config and --domain-policy")
+    if bundle is not None and custom and not getattr(args, "gobgp_config", None):
+        raise ValueError("Custom bundle configuration also requires --gobgp-config")
+    wheel = bundle.wheel if bundle is not None else Path(args.wheel).absolute()
     version = wheel_version(wheel)
-    controller = read_json(Path(args.config))
-    policy = read_json(Path(args.domain_policy))
+    controller = read_json(Path(args.config)) if custom else observation_configuration(config_dir, data_dir)
+    policy = read_json(Path(args.domain_policy)) if custom else observation_policy()
+    gobgp_config = None
+    if bundle is not None:
+        bgpls = controller.get("bgpls")
+        if not isinstance(bgpls, dict) or bgpls.get("endpoint") != "127.0.0.1:50051":
+            raise ValueError("Managed GoBGP requires bgpls.endpoint 127.0.0.1:50051")
+        bgpls["grpcurl"] = str(prefix / "releases" / version / "bin/grpcurl")
+        dashboard = controller.get("dashboard")
+        if not isinstance(dashboard, dict) or dashboard.get("enabled", True) is not True:
+            raise ValueError("Bundle observation deployment requires an enabled dashboard")
+        gobgp_source = getattr(args, "gobgp_config", None)
+        gobgp_config = read_gobgp_configuration(Path(gobgp_source)) if gobgp_source else default_gobgp_configuration()
     if (type(controller.get("version")) is not int or controller["version"] != 1 or
             type(policy.get("version")) is not int or policy["version"] != 1):
         raise ValueError("Deployment requires version 1 application and domain-policy documents")
@@ -235,10 +345,12 @@ def deployment(args: argparse.Namespace) -> Deployment:
         path = absolute_path(value)
         if any(parent == Path("/home") or parent == Path("/root") for parent in (path, *path.parents)):
             raise ValueError("Static deployment inputs must be outside home directories protected by systemd")
-    constraints = Path(__file__).with_name("constraints.txt").read_bytes()
-    return Deployment(wheel, checksum(wheel), version, prefix, config_dir, data_dir, unit_dir,
+    constraints_path = bundle.root / "deploy/constraints.txt" if bundle is not None else Path(__file__).with_name("constraints.txt")
+    constraints = constraints_path.read_bytes()
+    wheel_sha256 = bundle.manifest["artifacts"][wheel.name] if bundle is not None else checksum(wheel)
+    return Deployment(wheel, wheel_sha256, version, prefix, config_dir, data_dir, unit_dir,
                       args.service_user, args.service_group or args.service_user,
-                      args.unit_name, constraints, encoded(controller), encoded(policy))
+                      args.unit_name, constraints, encoded(controller), encoded(policy), bundle, gobgp_config)
 
 
 def ensure_compatible(path: Path, contents: bytes) -> None:
@@ -275,9 +387,10 @@ def preflight(plan: Deployment) -> None:
         without_symlinks(root)
         if root.exists() and not root.is_dir():
             raise ValueError(f"Deployment directory is not a directory: {root}")
-    ensure_compatible(plan.config_path, plan.controller)
-    ensure_compatible(plan.config_dir / "domain-policy.json", plan.domain_policy)
-    ensure_compatible(plan.unit_path, plan.unit())
+    for name, contents in plan.configuration_files().items():
+        ensure_compatible(plan.config_dir / name, contents)
+    for name, contents in plan.service_files().items():
+        ensure_compatible(plan.unit_dir / name, contents)
     if plan.release.exists():
         raise ValueError(f"Release already exists; it will not be overwritten: {plan.release}")
 
@@ -357,9 +470,52 @@ def system_directory(path: Path) -> None:
         directory.chmod(0o755)
 
 
+def copy_bundle_payload(plan: Deployment, destination: Path) -> None:
+    """Copy only authenticated native artifacts, verifying each resulting byte."""
+    assert plan.bundle is not None
+    bundle = plan.bundle
+    sources = {f"bin/{name}": component["path"] for name, component in bundle.manifest["components"].items()}
+    sources.update({f"provenance/{name}.json": component["provenance"]
+                    for name, component in bundle.manifest["components"].items()})
+    sources.update({"provenance/distribution-manifest.json": "distribution-manifest.json",
+                    "provenance/distribution-manifest.sig": "distribution-manifest.sig"})
+    for relative, source in sources.items():
+        path = bundle.root / source
+        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > 512 * 1024 * 1024:
+                raise ValueError(f"Verified bundle artifact is not a bounded regular file: {source}")
+            contents = stream.read(512 * 1024 * 1024 + 1)
+        if len(contents) > 512 * 1024 * 1024:
+            raise ValueError(f"Verified bundle artifact exceeds its size limit: {source}")
+        expected = (bundle.manifest_sha256 if source == "distribution-manifest.json" else
+                    bundle.manifest["artifacts"].get(source))
+        if expected is not None and hashlib.sha256(contents).hexdigest() != expected:
+            raise ValueError(f"Verified bundle artifact changed before installation: {source}")
+        target = destination / relative
+        system_directory(target.parent)
+        create_file(target, contents, 0o755 if relative.startswith("bin/") else 0o644)
+
+
+def install_wheel(environment: Path, wheelhouse: Path, constraints: Path, wheel: Path,
+                  *, verified: bool) -> None:
+    command = [str(environment / "bin/python"), "-I", "-m", "pip", "install", "--no-index",
+               "--find-links", str(wheelhouse.absolute()), "--constraint", str(constraints)]
+    options: dict[str, Any] = {"check": True}
+    if verified:
+        command.extend(("--only-binary=:all:", "--isolated", "--disable-pip-version-check"))
+        options["env"] = {key: value for key, value in os.environ.items() if not key.upper().startswith("PIP_")}
+        options["env"]["PIP_CONFIG_FILE"] = os.devnull
+    subprocess.run([*command, str(wheel)], **options)
+
+
 def install(plan: Deployment, wheelhouse: Path | None) -> None:
     if os.geteuid() != 0:
         raise ValueError("--install requires root; rendering requires no privileges")
+    if plan.bundle is not None:
+        plan.bundle.validate_host()
+        wheelhouse = plan.bundle.wheelhouse
     if wheelhouse is None or not wheelhouse.is_dir():
         raise ValueError("--install requires a local --wheelhouse with all runtime dependencies")
     systemd_access_preflight(plan)
@@ -376,11 +532,19 @@ def install(plan: Deployment, wheelhouse: Path | None) -> None:
         constraints.write_bytes(plan.constraints)
         environment = stage / "venv"
         venv.EnvBuilder(with_pip=True).create(environment)
-        subprocess.run([str(environment / "bin/python"), "-I", "-m", "pip", "install", "--no-index",
-                        "--find-links", str(wheelhouse.absolute()), "--constraint", str(constraints),
-                        str(staged_wheel)], check=True)
+        install_wheel(environment, wheelhouse, constraints, staged_wheel, verified=plan.bundle is not None)
         controller = json.loads(plan.controller)
         controller["pcep"]["domain_policy"] = str(stage / "domain-policy.json")
+        if plan.bundle is not None:
+            copy_bundle_payload(plan, stage)
+            controller["bgpls"]["grpcurl"] = str(stage / "bin/grpcurl")
+            assert plan.gobgp_config is not None
+            (stage / "gobgpd.toml").write_bytes(plan.gobgp_config)
+            try:
+                subprocess.run([str(stage / "bin/gobgpd"), "--dry-run", "--pprof-disable", "--metrics-path=",
+                                "--config-strict", "-f", str(stage / "gobgpd.toml")], check=True, timeout=30)
+            except subprocess.TimeoutExpired as error:
+                raise ValueError("GoBGP configuration validation exceeded 30 seconds") from error
         (stage / "domain-policy.json").write_bytes(plan.domain_policy)
         (stage / "controller.json").write_bytes(encoded(controller))
         subprocess.run([str(environment / "bin/python"), "-I", "-m", "ninja_pce.cli", "controller", "validate", "--config",
@@ -420,17 +584,18 @@ def install(plan: Deployment, wheelhouse: Path | None) -> None:
             previous_umask = os.umask(0o022)
             try:
                 venv.EnvBuilder(with_pip=True).create(final_environment)
-                subprocess.run([str(final_environment / "bin/python"), "-I", "-m", "pip", "install",
-                                "--no-index", "--find-links", str(wheelhouse.absolute()),
-                                "--constraint", str(constraints), str(staged_wheel)], check=True)
+                install_wheel(final_environment, wheelhouse, constraints, staged_wheel,
+                              verified=plan.bundle is not None)
             finally:
                 os.umask(previous_umask)
+            if plan.bundle is not None:
+                copy_bundle_payload(plan, plan.release)
             create_file(plan.release / "deployment-manifest.json", encoded(plan.manifest()), 0o644)
         except BaseException:
             shutil.rmtree(plan.release)
             raise
-        for target, contents in ((plan.config_path, plan.controller),
-                                 (plan.config_dir / "domain-policy.json", plan.domain_policy)):
+        for name, contents in plan.configuration_files().items():
+            target = plan.config_dir / name
             if create_file(target, contents):
                 os.chown(target, 0, gid)
             else:
@@ -438,7 +603,8 @@ def install(plan: Deployment, wheelhouse: Path | None) -> None:
                 if not (info.st_mode & 0o004 or info.st_uid == uid and info.st_mode & 0o400 or
                         info.st_gid == gid and info.st_mode & 0o040):
                     raise ValueError(f"Existing config file is not readable by the service account: {target}")
-        create_file(plan.unit_path, plan.unit(), 0o644)
+        for name, contents in plan.service_files().items():
+            create_file(plan.unit_dir / name, contents, 0o644)
         # Verify the actual installed paths and reference permissions as the
         # service account. The earlier isolated validation ran as the installer.
         subprocess.run(["runuser", "--user", plan.service_user, "--", str(plan.python),
@@ -448,9 +614,12 @@ def install(plan: Deployment, wheelhouse: Path | None) -> None:
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
-    result.add_argument("--wheel", required=True)
-    result.add_argument("--config", required=True)
-    result.add_argument("--domain-policy", required=True)
+    result.add_argument("--bundle", type=Path, help="Extracted, signed offline release directory")
+    result.add_argument("--trusted-key", type=Path, help="Independently distributed release verification key")
+    result.add_argument("--wheel")
+    result.add_argument("--config")
+    result.add_argument("--domain-policy")
+    result.add_argument("--gobgp-config", help="Reviewed GoBGP TOML for a custom bundle deployment")
     result.add_argument("--prefix", default="/opt/ninja-pce")
     result.add_argument("--config-dir", default="/etc/ninja-pce")
     result.add_argument("--data-dir", default="/var/lib/ninja-pce")
@@ -467,17 +636,48 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
-        plan = deployment(args)
-        render(plan, Path(args.output_dir))
-        if args.install:
-            install(plan, args.wheelhouse)
-            print(f"Installed {plan.unit_name}.service; activation remains manual.")
+        if args.bundle is not None:
+            if args.trusted_key is None:
+                raise ValueError("--bundle requires an independently supplied --trusted-key")
+            # A copied helper is part of the signed inventory. Importing it must
+            # not create unsigned __pycache__ files inside the release first.
+            previous_bytecode = sys.dont_write_bytecode
+            sys.dont_write_bytecode = True
+            try:
+                # Support `python -m deploy.install` and a copied deploy/install.py.
+                try:
+                    from deploy.bundle import verified_bundle
+                except ModuleNotFoundError as error:
+                    if error.name != "deploy":
+                        raise
+                    from bundle import verified_bundle
+
+                with verified_bundle(args.bundle, args.trusted_key) as bundle:
+                    execute(deployment(args, bundle), args)
+            finally:
+                sys.dont_write_bytecode = previous_bytecode
         else:
-            print(f"Rendered deployment in {Path(args.output_dir).absolute()}; no system changes made.")
+            if args.trusted_key is not None or args.gobgp_config is not None:
+                raise ValueError("--trusted-key and --gobgp-config require --bundle")
+            execute(deployment(args), args)
         return 0
     except (OSError, ValueError, RecursionError, zipfile.BadZipFile, subprocess.CalledProcessError) as error:
         print(f"Deployment failed: {error}", file=sys.stderr)
         return 1
+
+
+def execute(plan: Deployment, args: argparse.Namespace) -> None:
+    if plan.bundle is not None and Path(args.output_dir).resolve().is_relative_to(args.bundle.resolve()):
+        raise ValueError("Render output must be outside the authenticated bundle directory")
+    if args.install and plan.bundle is not None:
+        plan.bundle.validate_host()
+    render(plan, Path(args.output_dir))
+    if args.install:
+        install(plan, args.wheelhouse)
+        units = ", ".join(plan.service_files())
+        print(f"Installed {units}; activation remains manual.")
+    else:
+        print(f"Rendered deployment in {Path(args.output_dir).absolute()}; no system changes made.")
 
 
 if __name__ == "__main__":

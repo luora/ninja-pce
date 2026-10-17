@@ -1,5 +1,10 @@
 # Deploy Ninja-PCE
 
+For new observation deployments, the optional
+[verified offline bundle](offline_bundles.md) packages the qualified multi-area
+GoBGP daemon, grpcurl and pinned Python wheels with a signed release manifest.
+The procedure below retains the existing external-tool deployment path.
+
 This procedure installs the reusable controller application on an Ubuntu host.
 One versioned configuration starts the BGP-LS collector, generic domain-policy
 PCEP listener and read-only dashboard under one supervisor. GoBGP supplies the

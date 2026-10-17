@@ -29,7 +29,7 @@ jobs:
             --no-default-browser-check --disable-sync --user-data-dir="$ninja_browser_profile" \
             --dump-dom 'data:text/html,<p>ninja-pce-browser-ready</p>' | \
             grep -q ninja-pce-browser-ready
-      - run: ruff check src tests tools gns3/validation
+      - run: ruff check src tests tools deploy gns3/validation
       - run: mypy
       - run: pytest --cov=ninja_pce --cov-report=term-missing --cov-report=xml
       - name: Verify clone-and-run application
