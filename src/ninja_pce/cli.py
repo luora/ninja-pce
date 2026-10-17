@@ -131,6 +131,12 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--max-age", type=float, default=30.0, help="Observation freshness limit in seconds")
     dashboard.add_argument("--refresh", type=float, default=5.0, help="Browser polling interval in seconds")
     dashboard.add_argument("--demo", action="store_true", help="Use labelled synthetic examples, without live files")
+    dashboard.add_argument("--operating-mode", choices=("observe", "pcep-control"), default="pcep-control",
+                           help="Readiness mode; observe intentionally disables PCEP requirements")
+    dashboard.add_argument("--bgpls-peer", action="append", default=[],
+                           help="Required trusted BGP-LS peer; repeat for each peer")
+    dashboard.add_argument("--controller-config", help="Managed controller configuration for process readiness")
+    dashboard.add_argument("--controller-digest", help="Expected digest of the managed controller configuration")
     add_live_commands(sub)
     add_controller_commands(sub)
     add_application_commands(sub)
@@ -585,6 +591,11 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
         bgpls_raw_path=Path(args.bgpls_raw), pcep_path=Path(args.pcep), state_dir=Path(args.state_dir),
         host=args.host, port=args.port, max_age_seconds=args.max_age, refresh_seconds=args.refresh, demo=args.demo,
         ospf_multi_area=_ospf_multi_area_policy(args.ospf_multi_area_policy),
+        operating_mode=getattr(args, "operating_mode", "pcep-control"),
+        required_bgpls_peers=tuple(getattr(args, "bgpls_peer", ())),
+        controller_config_path=(Path(args.controller_config)
+                                if getattr(args, "controller_config", None) else None),
+        controller_config_digest=getattr(args, "controller_digest", None),
     )
     try:
         server = create_dashboard_server(config)

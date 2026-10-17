@@ -51,21 +51,24 @@ Use `./ninja-pce init --directory /path/to/new/workspace` to choose a different
 location. Initialization refuses an existing directory, including a partially
 created workspace, so it cannot overwrite configuration or controller state.
 
-Edit `.ninja-pce/workspace/config/controller.json` and its domain policy for your
-network. The generated addresses and domain identifiers are examples that need
-to be replaced. Configure:
+New workspaces explicitly use observation mode. Run `./ninja-pce start` and open
+the dashboard before the network source is ready. No PCC session or PCEP listener
+is required. See [observation mode and readiness](observation_mode.md).
+
+Before connecting topology, edit `.ninja-pce/workspace/config/controller.json`
+for your network. The generated addresses are examples that need replacing.
+Configure:
 
 - The protected local GoBGP API endpoint and expected BGP-LS peers.
-- The actual routing protocol, instance, AS and BGP-LS identifiers, with the PCC
-  and destination address prefixes permitted in the routing domain.
-- The controller's routed PCEP listening address and the dashboard binding.
+- The independently reviewed multi-area identity policy when applicable.
+- The loopback dashboard binding.
 - The observation, reservation and runtime paths you intend this instance to own.
 
 GoBGP supplies the BGP speaker, and `grpcurl` reads its API. Install and configure
 those external tools separately using the [deployment guide](deployment.md).
-The network needs a complete BGP-LS TE topology, RSVP/MPLS TE on the intended
-paths, routed controller-to-PCC reachability, and global PCC configuration on
-each router. See [network preparation and PCC bootstrap](user_guide.md#prepare-the-network).
+Observation needs a complete BGP-LS TE topology. Enabling PCEP control later
+requires its reviewed domain policy, routed PCC reachability and router PCC
+configuration. See [network preparation and PCC bootstrap](user_guide.md#prepare-the-network).
 
 Check the configuration and prerequisites before starting:
 
@@ -77,8 +80,9 @@ Check the configuration and prerequisites before starting:
 
 `doctor` validates local configuration and checks for `grpcurl` without opening
 protocol listeners or contacting routers. `plan` shows the configured component commands.
-`start` runs the live BGP-LS collector, PCEP listener and dashboard in the
-foreground. It uses your configuration and does not fall back to sample data.
+`start` runs the components selected by the configuration in the foreground.
+New workspaces start the collector and dashboard; existing configurations without
+a mode field retain PCEP. It uses your configuration and does not fall back to sample data.
 Stop it with Ctrl-C.
 
 In a second terminal, inspect the running application:
@@ -87,8 +91,8 @@ In a second terminal, inspect the running application:
 ./ninja-pce status
 ```
 
-Status includes process and observation health. A fresh installation is degraded
-until the topology is available and a PCC has connected and synchronized. A
+Status includes process health and mode-aware readiness. A new observer reaches
+`READY_OBSERVING` when its topology is validated and fresh, even with zero PCCs. A
 reported ACTIVE tunnel describes the control plane; verify forwarding separately.
 
 The `doctor`, `start` and `status` shortcuts use the workspace inside this

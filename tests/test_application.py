@@ -49,6 +49,8 @@ def test_init_creates_private_portable_workspace_without_importing_existing_stat
     monkeypatch.chdir(tmp_path.parent)
     config = controller.load_controller_config(moved / config_path.relative_to(root))
     data = config.document
+    assert data["operating_mode"] == "observe"
+    assert list(controller.component_commands(config)) == ["bgpls", "dashboard"]
     assert data["state_dir"] == str(moved / "data/state")
     assert data["runtime_dir"] == str(moved / "data/run")
     assert all(Path(value).is_relative_to(moved / "data/live") for value in data["files"].values())
@@ -119,9 +121,28 @@ def test_doctor_is_read_only_and_checks_local_executable_without_execution(tmp_p
     assert main(["app", "doctor", "--config", str(config_path)]) == 0
     output = capsys.readouterr().out
     assert "Configuration valid" in output and "grpcurl available" in output
-    assert "GoBGP must be configured separately" in output and "PCC connectivity" in output
+    assert "GoBGP must be configured separately" in output
+    assert "Operating mode: observe" in output
+    assert "PCEP is disabled" in output and "no PCC session is required" in output
+    assert "PCC connectivity" not in output
     assert _files(tmp_path) == before
     assert not list((config_path.parent.parent / "data").rglob("*.*"))
+
+
+def test_doctor_preserves_legacy_active_configuration_and_pcc_guidance(tmp_path, monkeypatch, capsys):
+    config_path = _workspace(tmp_path)
+    document = json.loads(config_path.read_text())
+    del document["operating_mode"]
+    config_path.write_text(json.dumps(document))
+    _grpcurl(config_path, str(Path(sys.executable).resolve()))
+    before = _files(tmp_path)
+    monkeypatch.setattr(socket, "socket", lambda *a, **kw: pytest.fail("Doctor opened a socket"))
+    assert main(["app", "doctor", "--config", str(config_path)]) == 0
+    output = capsys.readouterr().out
+    assert "Operating mode: pcep-control" in output and "PCC connectivity" in output
+    assert "PCEP is disabled" not in output
+    assert "pcep" in controller.component_commands(controller.load_controller_config(config_path))
+    assert _files(tmp_path) == before
 
 
 def test_doctor_reports_missing_or_nonexecutable_grpcurl(tmp_path, monkeypatch, capsys):
@@ -140,7 +161,7 @@ def test_doctor_reports_missing_or_nonexecutable_grpcurl(tmp_path, monkeypatch, 
 def test_doctor_rejects_invalid_configuration_before_tool_lookup(tmp_path, monkeypatch):
     config_path = _workspace(tmp_path)
     document = json.loads(config_path.read_text())
-    document["pcep"]["domain_policy"] = "../data/state/ownership.json"
+    document["bgpls"]["required_peers"] = []
     config_path.write_text(json.dumps(document))
     monkeypatch.setattr(application.shutil, "which", lambda *a: pytest.fail("Looked up tools for invalid config"))
     with pytest.raises(ValueError):
@@ -173,6 +194,25 @@ def test_start_reuses_existing_controller_validation_and_runtime(tmp_path, monke
     config_path.write_text(json.dumps(document))
     assert main(["app", "start", "--config", str(config_path)]) == 1
     assert len(captured) == 1
+
+
+def test_start_preserves_existing_legacy_pcep_intent_without_rewriting_configuration(tmp_path, monkeypatch):
+    config_path = _workspace(tmp_path)
+    document = json.loads(config_path.read_text())
+    del document["operating_mode"]
+    config_path.write_text(json.dumps(document))
+    before = _files(tmp_path)
+    components = []
+
+    def run(config, requested):
+        assert requested is None
+        components.extend(controller.component_commands(config))
+        return 0
+
+    monkeypatch.setattr(controller, "run_controller", run)
+    assert main(["app", "start", "--config", str(config_path)]) == 0
+    assert components == ["bgpls", "pcep", "dashboard"]
+    assert _files(tmp_path) == before
 
 
 def test_status_uses_existing_health_reporting_without_initializing_state(tmp_path, capsys):

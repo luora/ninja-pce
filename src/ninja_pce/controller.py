@@ -28,6 +28,7 @@ from typing import Any, BinaryIO
 from .state import digest, write_state
 
 COMPONENTS = ("bgpls", "pcep", "dashboard")
+OPERATING_MODES = ("observe", "pcep-control")
 _SHUTDOWN_SECONDS = 10.0
 _MAX_STATIC_BYTES = 1_048_576
 
@@ -116,6 +117,11 @@ class ControllerConfig:
         return json.loads(self._json)
 
 
+def effective_operating_mode(config: ControllerConfig) -> str:
+    """Omitted mode preserves the existing version-1 PCEP configuration."""
+    return str(config.document.get("operating_mode", "pcep-control"))
+
+
 def load_controller_config(path: str | Path) -> ControllerConfig:
     """Validate static inputs without creating directories, journals or sockets."""
     try:
@@ -135,10 +141,15 @@ def _load_controller_config(path: str | Path) -> ControllerConfig:
         raise ValueError("Controller configuration must not name a symbolic link")
     source = candidate.resolve()
     document = _strict_document(source)
-    data = _object(document, "Controller", {"version", "files", "state_dir", "bgpls", "pcep", "dashboard"},
-                   {"runtime_dir"})
+    data = _object(document, "Controller", {"version", "files", "state_dir", "bgpls", "dashboard"},
+                   {"runtime_dir", "operating_mode", "pcep"})
     if type(data["version"]) is not int or data["version"] != 1:
         raise ValueError("Controller configuration requires version 1")
+    mode = data.get("operating_mode", "pcep-control")
+    if not isinstance(mode, str) or mode not in OPERATING_MODES:
+        raise ValueError("operating_mode must be observe or pcep-control; other modes are not implemented")
+    if mode != "observe" and "pcep" not in data:
+        raise ValueError("PCEP control requires its existing pcep configuration and domain policy")
     base = source.parent
     outputs = _object(data["files"], "files", {"bgpls_raw", "bgpls_status", "topology", "pcep_capture"})
     data["files"] = {key: _path(value, base, f"files.{key}") for key, value in outputs.items()}
@@ -183,12 +194,17 @@ def _load_controller_config(path: str | Path) -> ControllerConfig:
                          timeout_seconds=bgpls["timeout_seconds"], max_age_seconds=bgpls["max_age_seconds"],
                          node_names=names, ospf_multi_area=area_policy)
     data["bgpls"] = bgpls
-    pcep = _object(data["pcep"], "pcep", {"listen_host", "domain_policy"},
+    pcep = _object(data.get("pcep", {}), "pcep", {"listen_host", "domain_policy"} if mode != "observe" else set(),
                    {"port", "keepalive_seconds", "deadtimer_seconds", "allowed_peers", "headends",
-                    "delegated_tunnels", "failover", "provisioning_state", "managed_recovery"})
-    pcep["listen_host"] = str(ipaddress.ip_address(_text(pcep["listen_host"], "pcep.listen_host")))
-    pcep["domain_policy"] = _path(pcep["domain_policy"], base, "pcep.domain_policy", exists=True)
-    domain = DomainDelegationPolicy.from_path(Path(pcep["domain_policy"]))
+                    "delegated_tunnels", "failover", "provisioning_state", "managed_recovery", "listen_host", "domain_policy"})
+    if mode == "observe" and {"failover", "provisioning_state", "managed_recovery"} & pcep.keys():
+        raise ValueError("Observation configuration must omit active provisioning and recovery journal settings")
+    pcep["listen_host"] = str(ipaddress.ip_address(_text(pcep.get("listen_host", "127.0.0.1"), "pcep.listen_host")))
+    domain = None
+    if "domain_policy" in pcep:
+        pcep["domain_policy"] = _path(pcep["domain_policy"], base, "pcep.domain_policy", exists=mode != "observe")
+    if mode != "observe":
+        domain = DomainDelegationPolicy.from_path(Path(pcep["domain_policy"]))
     pcep["port"] = _integer(pcep.get("port", 4189), "pcep.port", 1, 65535)
     pcep["keepalive_seconds"] = _integer(pcep.get("keepalive_seconds", 30), "pcep.keepalive_seconds", 0, 255)
     pcep["deadtimer_seconds"] = _integer(pcep.get("deadtimer_seconds", 120), "pcep.deadtimer_seconds", 0, 255)
@@ -211,16 +227,17 @@ def _load_controller_config(path: str | Path) -> ControllerConfig:
         if len(identifiers) != len(set(identifiers)):
             raise ValueError("Duplicate legacy delegated tunnel ID")
     pcep["delegated_tunnels"] = tunnels
-    PcepServerConfig(listen_host=pcep["listen_host"], port=pcep["port"],
-                     allowed_peers=tuple(pcep["allowed_peers"]),
-                     allowed_peer_networks=tuple(str(network) for network in domain.pcc_prefixes),
-                     keepalive=pcep["keepalive_seconds"], deadtimer=pcep["deadtimer_seconds"])
-    from .pcep_compute import PcepPathComputer
+    if domain is not None:
+        PcepServerConfig(listen_host=pcep["listen_host"], port=pcep["port"],
+                         allowed_peers=tuple(pcep["allowed_peers"]),
+                         allowed_peer_networks=tuple(str(network) for network in domain.pcc_prefixes),
+                         keepalive=pcep["keepalive_seconds"], deadtimer=pcep["deadtimer_seconds"])
+        from .pcep_compute import PcepPathComputer
 
-    PcepPathComputer(raw_path=Path(data["files"]["bgpls_raw"]), status_path=Path(data["files"]["bgpls_status"]),
-                     topology_path=Path(data["files"]["topology"]), required_peers=tuple(bgpls["required_peers"]),
-                     node_names=names, headends=pcep["headends"], domain_policy=domain, ospf_multi_area=area_policy,
-                     max_age_seconds=bgpls["max_age_seconds"])
+        PcepPathComputer(raw_path=Path(data["files"]["bgpls_raw"]), status_path=Path(data["files"]["bgpls_status"]),
+                         topology_path=Path(data["files"]["topology"]), required_peers=tuple(bgpls["required_peers"]),
+                         node_names=names, headends=pcep["headends"], domain_policy=domain, ospf_multi_area=area_policy,
+                         max_age_seconds=bgpls["max_age_seconds"])
     if "provisioning_state" in pcep:
         pcep["provisioning_state"] = _path(pcep["provisioning_state"], base, "pcep.provisioning_state", exists=True)
         if not heads:
@@ -272,13 +289,13 @@ def _load_controller_config(path: str | Path) -> ControllerConfig:
         raise ValueError("The unauthenticated dashboard must bind IPv4 loopback; use an authenticated reverse proxy")
     dashboard["port"] = _integer(dashboard.get("port", 8088), "dashboard.port", 1, 65535)
     dashboard["refresh_seconds"] = _seconds(dashboard.get("refresh_seconds", 5), "dashboard.refresh_seconds")
-    if (dashboard["enabled"] and dashboard["port"] == pcep["port"] and
+    if (mode != "observe" and dashboard["enabled"] and dashboard["port"] == pcep["port"] and
             (pcep["listen_host"] in {"0.0.0.0", "::", dashboard["listen_host"]})):
         raise ValueError("PCEP and dashboard listener addresses overlap")
     data["dashboard"] = dashboard
     _validate_paths(data, source)
     canonical = json.dumps(data, sort_keys=True, separators=(",", ":"), allow_nan=False)
-    static_digests = {"domain_policy": domain.policy_digest, "node_map": digest(names),
+    static_digests = {"domain_policy": domain.policy_digest if domain is not None else None, "node_map": digest(names),
                       "ospf_multi_area_policy": area_policy.digest if area_policy is not None else None,
                       "proto_sha256": _static_digest(Path(bgpls["proto_path"]))}
     return ControllerConfig(source, canonical, digest({"configuration": data, "static_inputs": static_digests}))
@@ -307,7 +324,9 @@ def _validate_existing_state(path: str) -> None:
 
 
 def _validate_paths(data: dict[str, Any], source: Path) -> None:
-    inputs = [str(source), data["pcep"]["domain_policy"], data["bgpls"]["proto_path"]]
+    inputs = [str(source), data["bgpls"]["proto_path"]]
+    if "domain_policy" in data["pcep"]:
+        inputs.append(data["pcep"]["domain_policy"])
     inputs.extend(data["bgpls"][key] for key in ("node_map", "ospf_multi_area_policy") if key in data["bgpls"])
     if "/" in data["bgpls"]["grpcurl"]:
         inputs.append(data["bgpls"]["grpcurl"])
@@ -345,11 +364,12 @@ def _validate_paths(data: dict[str, Any], source: Path) -> None:
 
 def _components(config: ControllerConfig, requested: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
     enabled = tuple(component for component in COMPONENTS
-                    if component != "dashboard" or config.document["dashboard"]["enabled"])
+                    if (component != "dashboard" or config.document["dashboard"]["enabled"]) and
+                    (component != "pcep" or effective_operating_mode(config) != "observe"))
     if requested is None:
         return enabled
     if not requested or len(requested) != len(set(requested)) or not set(requested) <= set(enabled):
-        raise ValueError("Select distinct enabled controller components")
+        raise ValueError("Select distinct enabled controller components; PCEP is prohibited in observe mode")
     return tuple(component for component in COMPONENTS if component in requested)
 
 
@@ -367,15 +387,18 @@ def component_commands(config: ControllerConfig, components: list[str] | tuple[s
                 "--capture", outputs["pcep_capture"], "--keepalive", str(pcep["keepalive_seconds"]),
                 "--deadtimer", str(pcep["deadtimer_seconds"]), "--compute-bgpls-raw", outputs["bgpls_raw"],
                 "--compute-bgpls-status", outputs["bgpls_status"], "--compute-topology", outputs["topology"],
-                "--compute-domain-policy", pcep["domain_policy"],
+                "--compute-domain-policy", pcep.get("domain_policy", ""),
                 "--compute-max-age", str(bgpls["max_age_seconds"])]
     web = [*prefix, "dashboard", "--host", dashboard["listen_host"], "--port", str(dashboard["port"]),
            "--topology", outputs["topology"], "--bgpls-status", outputs["bgpls_status"],
            "--bgpls-raw", outputs["bgpls_raw"], "--pcep", outputs["pcep_capture"], "--state-dir", data["state_dir"],
            "--max-age", str(bgpls["max_age_seconds"]), "--refresh", str(dashboard["refresh_seconds"])]
+    web.extend(("--operating-mode", effective_operating_mode(config), "--controller-config", str(config.path),
+                "--controller-digest", config.config_digest))
     for peer in bgpls["required_peers"]:
         collector.extend(("--peer", peer))
         listener.extend(("--compute-bgpls-peer", peer))
+        web.extend(("--bgpls-peer", peer))
     for key, collector_flag, listener_flag in (
             ("node_map", "--node-map", "--compute-node-map"),
             ("ospf_multi_area_policy", "--ospf-multi-area-policy", "--compute-ospf-multi-area-policy")):
@@ -413,9 +436,12 @@ def controller_plan(config: ControllerConfig, components: list[str] | tuple[str,
                     ) -> dict[str, Any]:
     data = config.document
     return {"kind": "controller_plan", "config": str(config.path), "config_digest": config.config_digest,
+            "operating_mode": effective_operating_mode(config),
             "state_dir": data["state_dir"], "runtime_dir": data["runtime_dir"], "files": data["files"],
             "components": component_commands(config, components), "writes_network_state": False,
-            "run_behavior": "The PCEP component may send policy-authorized paths to delegated LSPs."}
+            "run_behavior": ("Observation mode disables PCEP and permits no controller network writes."
+                             if effective_operating_mode(config) == "observe" else
+                             "The PCEP component may send policy-authorized paths to delegated LSPs.")}
 
 
 def _process_identity(pid: int) -> str | None:
@@ -438,7 +464,7 @@ def _runtime_status(config: ControllerConfig, component: str) -> dict[str, Any]:
 
     try:
         record = _read(_runtime_path(config, component), checksummed=True)
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, RecursionError):
         return {"component": component, "state": "unobserved"}
     if (record.get("kind") != "controller_component" or record.get("component") != component or
             record.get("config_digest") != config.config_digest):
@@ -450,13 +476,16 @@ def _runtime_status(config: ControllerConfig, component: str) -> dict[str, Any]:
                 not isinstance(identity.get("start_ticks"), str) or
                 _process_identity(identity["pid"]) != identity["start_ticks"]):
             running = False
-    return {"component": component, "state": "running" if running else "stopped",
-            "updated_at": record.get("updated_at")}
+    return {"component": component,
+            "state": "running" if running else "failed" if record.get("state") == "failed" else "stopped",
+            "updated_at": record.get("updated_at"), "returncode": record.get("returncode"),
+            "error": record["error"][:512] if isinstance(record.get("error"), str) else None}
 
 
 def controller_status(config: ControllerConfig) -> tuple[dict[str, Any], int]:
     from .dashboard import DashboardConfig, DashboardStore
     from .live import _ospf_multi_area_policy
+    from .readiness import evaluate_readiness
 
     data = config.document
     outputs, bgpls = data["files"], data["bgpls"]
@@ -465,23 +494,21 @@ def controller_status(config: ControllerConfig) -> tuple[dict[str, Any], int]:
         bgpls_raw_path=Path(outputs["bgpls_raw"]), pcep_path=Path(outputs["pcep_capture"]),
         state_dir=Path(data["state_dir"]), max_age_seconds=bgpls["max_age_seconds"],
         ospf_multi_area=_ospf_multi_area_policy(bgpls.get("ospf_multi_area_policy")),
+        operating_mode=effective_operating_mode(config), required_bgpls_peers=tuple(bgpls["required_peers"]),
     )).snapshot()
     sources = {source["id"]: source for source in snapshot["sources"]}
     peers = [peer for peer in snapshot["peers"] if peer["protocol"] == "PCEP"]
     synchronized = sum(peer["fresh"] and peer["synchronized"] for peer in peers)
     processes = [_runtime_status(config, component) for component in _components(config, None)]
-    observations_ok = all(sources[key]["state"] == "fresh" for key in ("bgpls", "topology", "pcep"))
-    processes_ok = all(process["state"] == "running" for process in processes)
-    status = "healthy" if observations_ok and processes_ok and synchronized else "degraded"
+    readiness = evaluate_readiness(snapshot, effective_operating_mode(config), processes)
+    status = "healthy" if readiness["ready"] else "degraded"
     result = {"kind": "controller_status", "config_digest": config.config_digest,
               "generated_at": snapshot["generated_at"], "status": status,
+              "operating_mode": effective_operating_mode(config), "readiness": readiness,
               "processes": processes, "sources": list(sources.values()), "counts": snapshot["summary"],
               "protocol": {"observed_pccs": len(peers), "fresh_synchronized_pccs": synchronized},
               "forwarding_verified": False}
-    if not synchronized:
-        result["message"] = "No fresh synchronized PCC session; controller bootstrap or PCC connectivity is incomplete."
-    elif not processes_ok:
-        result["message"] = "Controller supervision is stopped, unobserved or uses a different configuration."
+    result["message"] = readiness["message"]
     return result, 0 if status == "healthy" else 1
 
 
@@ -507,6 +534,7 @@ async def _stop_children(processes: dict[str, asyncio.subprocess.Process]) -> No
 
 
 async def _supervise(config: ControllerConfig, commands: dict[str, list[str]]) -> int:
+    _components(config, tuple(commands))
     processes: dict[str, asyncio.subprocess.Process] = {}
     locks: list[BinaryIO] = []
     records: dict[str, dict[str, Any]] = {}
@@ -516,11 +544,27 @@ async def _supervise(config: ControllerConfig, commands: dict[str, list[str]]) -
     handlers: list[signal.Signals] = []
     previous_handlers: dict[signal.Signals, Any] = {}
     token = uuid.uuid4().hex
+    keep_management = "dashboard" in commands
+    ordered = (["dashboard"] if keep_management else []) + [key for key in commands if key != "dashboard"]
+    protocol_failed = False
     runtime_dir = Path(config.document["runtime_dir"])
     _recheck_configuration(config)
     runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    async def stop_protocols() -> None:
+        await _stop_children({key: child for key, child in processes.items() if key != "dashboard"})
+        for key, child in processes.items():
+            if key == "dashboard" or records[key].get("state") == "failed":
+                continue
+            records[key].update(state="stopped", updated_at=time.time(), returncode=child.returncode,
+                                error="Protocol group stopped after a sibling failure; inspect the original fault.")
+            try:
+                write_state(_runtime_path(config, key), records[key])
+            except OSError as exc:
+                print(f"Cannot persist protocol stop for {key}: {exc}", file=sys.stderr, flush=True)
+
     try:
-        for component in commands:
+        for component in ordered:
             descriptor = os.open(runtime_dir / f".ninja-pce-controller-{component}.lock",
                                  os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
             handle = os.fdopen(descriptor, "r+b")
@@ -533,31 +577,67 @@ async def _supervise(config: ControllerConfig, commands: dict[str, list[str]]) -
             previous_handlers[signum] = signal.getsignal(signum)
             loop.add_signal_handler(signum, stop.set)
             handlers.append(signum)
-        for component, command in commands.items():
+        for component in ordered:
             if stop.is_set():
                 break
+            if protocol_failed and component != "dashboard":
+                continue
             _recheck_configuration(config)
-            process = await asyncio.create_subprocess_exec(*command)
-            processes[component] = process
             record = {"kind": "controller_component", "component": component, "config_digest": config.config_digest,
-                      "run_token": token, "state": "running", "updated_at": time.time(),
-                      "supervisor": {"pid": os.getpid(), "start_ticks": _process_identity(os.getpid())},
-                      "child": {"pid": process.pid, "start_ticks": _process_identity(process.pid)}}
-            records[component] = record
-            write_state(_runtime_path(config, component), record)
-            print(json.dumps({"component": component, "state": "started", "pid": process.pid}), flush=True)
+                      "run_token": token, "state": "starting", "updated_at": time.time(),
+                      "supervisor": {"pid": os.getpid(), "start_ticks": _process_identity(os.getpid())}, "child": {}}
+            try:
+                process = await asyncio.create_subprocess_exec(*commands[component])
+                processes[component] = process
+                record.update(state="running", child={"pid": process.pid, "start_ticks": _process_identity(process.pid)})
+                records[component] = record
+                write_state(_runtime_path(config, component), record)
+                print(json.dumps({"component": component, "state": "started", "pid": process.pid}), flush=True)
+            except OSError as exc:
+                if not keep_management or component == "dashboard":
+                    raise
+                protocol_failed = True
+                record.update(state="failed", error=f"Component startup failed: {exc}", updated_at=time.time())
+                records[component] = record
+                try:
+                    write_state(_runtime_path(config, component), record)
+                except OSError:
+                    pass
+                print(json.dumps({"component": component, "state": "startup_failed", "error": str(exc)}),
+                      file=sys.stderr, flush=True)
+                await stop_protocols()
         stop_task = asyncio.create_task(stop.wait())
         waiting.append(stop_task)
-        child_tasks = {asyncio.create_task(process.wait()): component for component, process in processes.items()}
+        child_tasks = {asyncio.create_task(process.wait()): component for component, process in processes.items()
+                       if component == "dashboard" or not protocol_failed}
         waiting.extend(child_tasks)
-        done, _ = await asyncio.wait(waiting, return_when=asyncio.FIRST_COMPLETED)
-        if stop_task in done:
-            return 0
-        component = next(child_tasks[task] for task in done if task in child_tasks)
-        process = processes[component]
-        print(json.dumps({"component": component, "state": "unexpected_exit", "returncode": process.returncode}),
-              file=sys.stderr, flush=True)
-        return 1
+        while True:
+            done, _ = await asyncio.wait([stop_task, *child_tasks], return_when=asyncio.FIRST_COMPLETED)
+            if stop_task in done:
+                return 0
+            exited = [child_tasks[task] for task in done if task in child_tasks]
+            if "dashboard" in exited or not keep_management:
+                component = "dashboard" if "dashboard" in exited else exited[0]
+                print(json.dumps({"component": component, "state": "unexpected_exit",
+                                  "returncode": processes[component].returncode}), file=sys.stderr, flush=True)
+                return 1
+            for component in exited:
+                record = records[component]
+                record.update(state="failed", updated_at=time.time(), returncode=processes[component].returncode,
+                              error="Protocol component exited unexpectedly; management remains available.")
+                try:
+                    write_state(_runtime_path(config, component), record)
+                except OSError as exc:
+                    print(f"Cannot persist component fault for {component}: {exc}", file=sys.stderr, flush=True)
+                print(json.dumps({"component": component, "state": "unexpected_exit",
+                                  "returncode": processes[component].returncode}), file=sys.stderr, flush=True)
+            await stop_protocols()
+            # A failed protocol group is never automatically restarted or allowed
+            # to leave another writer running against uncertain sibling state.
+            for task, component in tuple(child_tasks.items()):
+                if component != "dashboard":
+                    await task
+                    del child_tasks[task]
     finally:
         await _stop_children(processes)
         for task in waiting:
@@ -566,7 +646,9 @@ async def _supervise(config: ControllerConfig, commands: dict[str, list[str]]) -
         if waiting:
             await asyncio.gather(*waiting, return_exceptions=True)
         for component, record in records.items():
-            record.update(state="stopped", updated_at=time.time(), returncode=processes[component].returncode)
+            record.update(state="failed" if record.get("state") == "failed" else "stopped", updated_at=time.time())
+            if component in processes:
+                record["returncode"] = processes[component].returncode
             try:
                 write_state(_runtime_path(config, component), record)
             except OSError as exc:
@@ -614,6 +696,7 @@ def controller_command(args: argparse.Namespace) -> int:
     else:
         document, code = {"kind": "controller_configuration", "valid": True,
                           "config": str(config.path), "config_digest": config.config_digest,
+                          "operating_mode": effective_operating_mode(config),
                           "components": list(component_commands(config)),
                           "live_health_checked": False}, 0
     print(json.dumps(document, sort_keys=True, indent=2, allow_nan=False))

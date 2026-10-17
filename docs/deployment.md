@@ -6,7 +6,9 @@ GoBGP daemon, grpcurl and pinned Python wheels with a signed release manifest.
 The procedure below retains the existing external-tool deployment path.
 
 This procedure installs the reusable controller application on an Ubuntu host.
-One versioned configuration starts the BGP-LS collector, generic domain-policy
+Fresh installation templates select [observation mode](observation_mode.md).
+Existing configurations without an operating mode retain their PCEP behavior.
+One versioned configuration selects the BGP-LS collector, optional domain-policy
 PCEP listener and read-only dashboard under one supervisor. GoBGP supplies the
 BGP-LS RIB as a separate service. Qualified SSH tunnel provisioning and HTTPS
 authentication remain separate, explicitly configured services.
@@ -153,12 +155,14 @@ policy. Installing the Python application does not patch or replace GoBGP.
 
 Use the supplied [controller](../deploy/examples/controller.json) and
 [domain-policy](../deploy/examples/domain-policy.json) examples as templates, replacing
-all example addresses and domain identities. The following is a minimal
-controller configuration for an invented private network:
+all example addresses and domain identities. The supplied template defaults to
+observation. The following explicitly enables PCEP control for an invented
+private network with its reviewed domain policy:
 
 ```json
 {
   "version": 1,
+  "operating_mode": "pcep-control",
   "files": {
     "bgpls_raw": "/var/lib/ninja-pce/live/bgpls-raw.json",
     "bgpls_status": "/var/lib/ninja-pce/live/bgpls-status.json",
@@ -330,9 +334,10 @@ trying a tunnel. Follow the [user guide](user_guide.md#configure-a-router-as-a-p
 
 The supervisor owns its component processes. Do not run the old standalone
 collector/PCEP/dashboard units or another foreground instance against the same
-ports and files. If any selected child exits unexpectedly, the supervisor stops
-and reaps the others, then exits with a failure status; the installed systemd
-unit restarts it after five seconds. An operator stop shuts down the children
+ports and files. With a dashboard selected, a protocol failure stops and reaps
+the protocol group while retaining the dashboard and original fault record.
+A dashboard failure or headless child failure exits with a failure status;
+the installed systemd unit restarts it after five seconds. An operator stop shuts down the children
 gracefully, with a bounded wait before forced termination. Inspect the service
 logs and recorded source health if the supervisor repeatedly restarts.
 

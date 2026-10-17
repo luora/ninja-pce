@@ -188,8 +188,8 @@ qualified native artifacts and perform the disconnected fresh-Ubuntu-24.04 VM
 installation test. No production signing key or native release binary is
 created by this change.
 
-Mode-aware readiness, an authenticated setup GUI, independent management
-availability, live process ownership diagnostics and provisioning integration
-belong to subsequent PRs. Until mode-aware readiness lands, the legacy
-controller status can still report degraded with zero PCCs. This packaging
-change makes no claim that the full v0.8.0 acceptance checklist is complete.
+Fresh configs now explicitly use [observation mode](observation_mode.md), with
+mode-aware readiness and management availability after protocol failures.
+An authenticated setup GUI, live process ownership diagnostics and provisioning
+integration remain subsequent work. This packaging change makes no claim that
+the full v0.8.0 acceptance checklist is complete.

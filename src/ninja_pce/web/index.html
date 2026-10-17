@@ -53,6 +53,7 @@
       <div class="content" id="main-content" tabindex="-1">
         <div class="banner demo-banner" id="demo-banner" role="status" hidden><span class="dot warn"></span><div><strong>Sample workspace</strong><span>Explore a synthetic six-router network. No routers are connected.</span></div><span class="banner-tag">Sample</span></div>
         <div class="banner error-banner" id="error-banner" role="status" hidden></div>
+        <div class="banner" id="readiness-banner" role="status" hidden><span class="dot unknown" id="readiness-dot"></span><div><strong id="readiness-state"></strong><span id="readiness-message"></span></div><span class="tag" id="operating-mode"></span></div>
         <div class="page-intro"><div><h2 id="view-heading">Controller overview</h2><p id="view-description">Live topology and reported RSVP-TE state in one workspace.</p></div><div class="snapshot-meta"><span id="snapshot-label">Awaiting first snapshot</span><span id="poll-label">Read-only · automatic refresh</span></div></div>
 
         <section class="stats" data-views="overview" aria-label="Controller summary">
@@ -91,7 +92,7 @@
       </div>
     </main>
   </div>
-  <dialog id="info-dialog" aria-labelledby="info-heading"><div class="dialog-heading"><h2 id="info-heading">Controller information</h2><button class="button compact" id="info-close">Close</button></div><p>This dashboard reads local controller snapshots. Tunnel creation requires authentication, deployment policy and a qualified headend transport. There is no public teardown control.</p><dl class="kv"><dt>Endpoint</dt><dd class="mono">GET /api/controller</dd><dt>Refresh</dt><dd id="info-refresh">Waiting for snapshot</dd><dt>Mode</dt><dd id="info-mode">Unknown</dd></dl><p class="muted">A reported ACTIVE LSP, a PCUpd acknowledgment and advertised reserved bandwidth are separate observations. None alone proves forwarding.</p><div id="info-sources"></div></dialog>
+  <dialog id="info-dialog" aria-labelledby="info-heading"><div class="dialog-heading"><h2 id="info-heading">Controller information</h2><button class="button compact" id="info-close">Close</button></div><p>This dashboard reads local controller snapshots. Tunnel creation requires authentication, deployment policy and a qualified headend transport. There is no public teardown control.</p><dl class="kv"><dt>Endpoint</dt><dd class="mono">GET /api/controller</dd><dt>Refresh</dt><dd id="info-refresh">Waiting for snapshot</dd><dt>Mode</dt><dd id="info-mode">Unknown</dd><dt>Readiness</dt><dd id="info-readiness">Unknown</dd></dl><p class="muted">A reported ACTIVE LSP, a PCUpd acknowledgment and advertised reserved bandwidth are separate observations. None alone proves forwarding.</p><div id="info-sources"></div></dialog>
   <dialog id="create-tunnel-dialog" aria-labelledby="create-tunnel-heading">
     <div class="dialog-heading"><h2 id="create-tunnel-heading">Create tunnel</h2><button class="button compact" id="create-tunnel-close" type="button">Close</button></div>
     <p class="muted">Create an RSVP-TE LSP between two routers. Customer traffic steering is configured separately.</p>

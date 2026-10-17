@@ -11,11 +11,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 from .bgpls import OspfMultiAreaPolicy, parse_ospf_multi_area_policy
+from .readiness import evaluate_readiness
 from .reservations import RESERVATION_STATES
 from .state import SCHEMA_VERSION, digest
 
@@ -40,10 +42,23 @@ class DashboardConfig:
     refresh_seconds: float = 5.0
     demo: bool = False
     ospf_multi_area: OspfMultiAreaPolicy | None = None
+    operating_mode: str = "pcep-control"
+    required_bgpls_peers: tuple[str, ...] = ()
+    controller_config_path: Path | None = None
+    controller_config_digest: str | None = None
 
     def __post_init__(self) -> None:
         if not self.host or not 0 <= self.port <= 65535:
             raise ValueError("Dashboard requires a bind host and port between 0 and 65535")
+        if self.operating_mode not in {"observe", "pcep-control"}:
+            raise ValueError("Dashboard operating mode must be observe or pcep-control")
+        if (len(self.required_bgpls_peers) > MAX_PEERS or
+                len(set(self.required_bgpls_peers)) != len(self.required_bgpls_peers)):
+            raise ValueError("Dashboard BGP-LS peers must be unique and within observation limits")
+        for address in self.required_bgpls_peers:
+            ip_address(address)
+        if (self.controller_config_path is None) != (self.controller_config_digest is None):
+            raise ValueError("Dashboard controller configuration requires its expected digest")
         for value in (self.max_age_seconds, self.refresh_seconds):
             if isinstance(value, bool) or not math.isfinite(value) or value <= 0:
                 raise ValueError("Dashboard freshness and refresh intervals must be finite and positive")
@@ -131,6 +146,7 @@ def _source(identifier: str, label: str, data: dict[str, Any] | None, now: datet
         "unavailable": "Observation file is unavailable.",
         "invalid": "Observation is malformed, inconsistent or has an invalid timestamp.",
         "unconfigured": "No local reservation ledger is available.",
+        "disabled": "PCEP is intentionally disabled in observe mode; no PCC session is required.",
     }
     return {"id": identifier, "label": label, "state": state,
             "age_seconds": round(age, 3) if age is not None else None,
@@ -156,17 +172,27 @@ class DashboardStore:
         if now.tzinfo is None:
             raise ValueError("Dashboard clock requires a timezone")
         if self.config.demo:
-            return _demo_snapshot(now, self.config.refresh_seconds)
+            demo = _demo_snapshot(now, self.config.refresh_seconds)
+            demo["operating_mode"] = self.config.operating_mode
+            demo["topology_complete"] = True
+            demo["readiness"] = {"state": "DEMO", "ready": False,
+                                   "message": "Synthetic examples do not establish controller readiness."}
+            return demo
         result: dict[str, Any] = {
             "schema_version": 1, "generated_at": now.isoformat(), "mode": "live", "read_only": True,
             "refresh_seconds": self.config.refresh_seconds, "sources": [], "summary": {},
+            "operating_mode": self.config.operating_mode, "topology_complete": False,
             "topology": {"name": "Controller topology", "nodes": [], "links": []},
             "peers": [], "lsps": [], "computations": [], "events": [],
             "reservations": {"configured": False, "state": "unconfigured", "holds": 0, "entries": []},
         }
         now = self._topology(result, now, refresh_clock=refresh_clock)
         result["generated_at"] = now.isoformat()
-        self._pcep(result, now)
+        if self.config.operating_mode == "observe":
+            result["sources"].append(_source("pcep", "PCEP listener", None, now,
+                                             self.config.max_age_seconds, error="disabled"))
+        else:
+            self._pcep(result, now)
         self._ledger(result, now)
         result["events"] = sorted(result["events"], key=lambda item: item["timestamp"])[-MAX_EVENTS:]
         result["computations"] = sorted(result["computations"], key=lambda item: item["timestamp"],
@@ -177,7 +203,31 @@ class DashboardStore:
             "active_lsps": sum(lsp["fresh"] and lsp["operational_state"] == "ACTIVE" for lsp in result["lsps"]),
             "computations": len(result["computations"]), "reservations": result["reservations"]["holds"],
         }
+        processes = self._processes()
+        if processes is not None:
+            result["processes"] = processes
+        result["readiness"] = evaluate_readiness(result, self.config.operating_mode, processes)
         return result
+
+    def _processes(self) -> list[dict[str, Any]] | None:
+        """Read managed supervision without recursively requesting controller status."""
+        if self.config.controller_config_path is None:
+            return None
+        from .controller import (
+            _components,
+            _runtime_status,
+            effective_operating_mode,
+            load_controller_config,
+        )
+
+        try:
+            config = load_controller_config(self.config.controller_config_path)
+            if (config.config_digest != self.config.controller_config_digest or
+                    effective_operating_mode(config) != self.config.operating_mode):
+                return [{"component": "dashboard", "state": "config_mismatch"}]
+            return [_runtime_status(config, component) for component in _components(config, None)]
+        except (OSError, ValueError, TypeError):
+            return [{"component": "dashboard", "state": "config_mismatch"}]
 
     def _topology(self, result: dict[str, Any], now: datetime, *, refresh_clock: bool = False) -> datetime:
         config = self.config
@@ -224,6 +274,9 @@ class DashboardStore:
                 # it must never enable a router projection by itself. Apply this
                 # check to retained observations as well as current ones.
                 for item in (metadata, status_metadata):
+                    if (config.required_bgpls_peers and
+                            item.get("required_peers") != sorted(config.required_bgpls_peers)):
+                        raise ValueError("Collector provenance differs from configured BGP-LS peers")
                     if config.ospf_multi_area is None:
                         if "ospf_multi_area" in item or "ospf_multi_area_digest" in item:
                             raise ValueError("Collector OSPF area policy requires dashboard opt-in")
@@ -248,7 +301,8 @@ class DashboardStore:
                     from .bgpls import parse_gobgp_snapshot, topology_document
 
                     names = {node["loopback"]: node["id"] for node in result["topology"]["nodes"]}
-                    required = tuple(_list(metadata.get("required_peers"), MAX_PEERS))
+                    required = (config.required_bgpls_peers or
+                                tuple(_list(metadata.get("required_peers"), MAX_PEERS)))
                     parsed = parse_gobgp_snapshot(raw or {}, node_names=names, required_peers=required,
                                                   now=now, max_age_seconds=config.max_age_seconds,
                                                   ospf_multi_area=config.ospf_multi_area)
@@ -260,6 +314,9 @@ class DashboardStore:
                             type(status.get("directed_links")) is not int or
                             status["directed_links"] != len(parsed.links)):
                         raise ValueError("Collector counts differ from the normalized topology")
+                    result["topology_complete"] = bool(parsed.nodes and parsed.links and not any(
+                        item.get("nlri_type") not in {3, 4}
+                        for item in parsed.raw_metadata["excluded_objects"]))
                     for address in required:
                         result["peers"].append({
                             "id": f"bgpls:{address}", "protocol": "BGP-LS", "address": address,
@@ -268,14 +325,15 @@ class DashboardStore:
                             "reports": len(result["topology"]["links"]),
                         })
             except (ValueError, TypeError, KeyError, OverflowError):
+                result["topology_complete"] = False
                 topology_source.update(state="invalid", message="Topology observation is malformed or inconsistent.")
                 bgpls_source.update(state="invalid", message="BGP-LS input does not validate against the topology.")
                 result["topology"] = {"name": "Controller topology", "nodes": [], "links": []}
         if bgpls_source["state"] != "fresh" and topology_source["state"] == "fresh":
             topology_source.update(state="stale", message="Collector consistency cannot establish current topology.")
         if not any(peer["protocol"] == "BGP-LS" for peer in result["peers"]):
-            required = status_metadata.get("required_peers", [])
-            if isinstance(required, list):
+            required = config.required_bgpls_peers or status_metadata.get("required_peers", [])
+            if isinstance(required, (list, tuple)):
                 for address in required[:MAX_PEERS]:
                     result["peers"].append({"id": f"bgpls:{_text(address)}", "protocol": "BGP-LS",
                                             "address": _text(address), "state": "UNKNOWN", "fresh": False,
@@ -539,6 +597,10 @@ def create_dashboard_server(config: DashboardConfig) -> ThreadingHTTPServer:
             elif path == "/healthz":
                 self._respond(200, json.dumps({"status": "ok", "read_only": True,
                                               "mode": "demo" if config.demo else "live"}).encode())
+            elif path == "/readyz":
+                readiness = store.snapshot()["readiness"]
+                self._respond(200 if readiness["ready"] else 503,
+                              json.dumps(readiness, allow_nan=False).encode())
             else:
                 self._respond(404, b'{"error":"Not found"}')
 

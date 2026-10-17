@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "operating_mode": "observe",
   "files": {
     "bgpls_raw": "/var/lib/ninja-pce/live/bgpls-raw.json",
     "bgpls_status": "/var/lib/ninja-pce/live/bgpls-status.json",

@@ -356,6 +356,14 @@
 
   function renderChrome() {
     const data = state.data;
+    const mode = data?.mode === "demo" ? "Sample" : data?.operating_mode === "observe" ? "Observe" : data?.operating_mode === "pcep-control" ? "PCEP control" : null;
+    const readiness = data?.readiness;
+    const readinessLabel = state.error ? "Readiness unavailable" : state.paused ? "Readiness paused" : titleCase(readiness?.state);
+    $("readiness-banner").hidden = !readiness || data?.mode === "demo";
+    $("readiness-state").textContent = readinessLabel;
+    $("readiness-message").textContent = state.error || state.paused ? "The retained snapshot does not confirm current readiness." : string(readiness?.message, "No readiness details reported.");
+    $("readiness-dot").className = `dot ${state.error ? "off" : state.paused || !readiness?.ready ? "warn" : ""}`;
+    $("operating-mode").textContent = mode || "Mode unknown";
     $("demo-banner").hidden = data?.mode !== "demo";
     $("view-description").textContent = viewDescription(state.view);
     $("activity-feed-note").textContent = data?.mode === "demo" ? "Synthetic sample events" : "Captured controller events";
@@ -371,7 +379,8 @@
     $("poll-toggle").title = `${state.paused ? "Resume" : "Pause"} automatic refresh`;
     $("refresh-button").disabled = state.loading;
     $("info-refresh").textContent = `${refreshSeconds()} seconds${state.paused ? " (paused)" : ""}`;
-    $("info-mode").textContent = data ? `${titleCase(data.mode)} · read-only` : "Unavailable";
+    $("info-mode").textContent = data ? `${mode || titleCase(data.mode)} · read-only` : "Unavailable";
+    $("info-readiness").textContent = readiness ? `${readinessLabel} · ${state.error || state.paused ? "Current readiness unconfirmed" : string(readiness.message)}` : "Unavailable";
     $("nav-nodes").textContent = data ? count(data.summary?.nodes) : "—";
     $("nav-peers").textContent = data ? String(list(data.peers).length) : "—";
     $("nav-lsps").textContent = data ? String(list(data.lsps).length) : "—";
@@ -382,9 +391,10 @@
     const summary = state.data?.summary || {};
     $("stat-nodes").textContent = count(summary.nodes);
     $("stat-links").textContent = number(summary.directed_links) === null ? "No topology snapshot" : `${count(summary.directed_links)} directed TE links`;
-    $("stat-peers").textContent = count(summary.pcep_peers);
+    const observe = state.data?.operating_mode === "observe" && state.data?.mode !== "demo";
+    $("stat-peers").textContent = observe ? "Disabled" : count(summary.pcep_peers);
     const peers = list(state.data?.peers).filter((peer) => peer.protocol === "PCEP");
-    $("stat-peer-detail").textContent = state.error ? "Current session freshness unavailable" : peers.length ? `${peers.filter(fresh).length} fresh · ${peers.filter((peer) => peer.synchronized === true).length} synchronized` : "Session state unavailable";
+    $("stat-peer-detail").textContent = observe ? "Intentionally disabled in observe mode" : state.error ? "Current session freshness unavailable" : peers.length ? `${peers.filter(fresh).length} fresh · ${peers.filter((peer) => peer.synchronized === true).length} synchronized` : "Session state unavailable";
     $("stat-lsps").textContent = state.error ? "—" : count(summary.active_lsps);
     $("stat-lsp-detail").textContent = state.error ? `Last snapshot: ${count(summary.active_lsps)} reported active` : state.data ? `${list(state.data.lsps).length} reported · forwarding unverified` : "Not forwarding verification";
     $("stat-computations").textContent = count(summary.computations);
@@ -403,10 +413,11 @@
       row.append(el("span", `dot ${dotClass(status)}`), el("span", "", string(item.label, item.id)), el("small", "", titleCase(status)));
       row.title = string(item.message, titleCase(status)); sidebar.append(row);
       const card = el("article", "card source-card"); card.append(el("h3", "", string(item.label, item.id)));
-      const line = el("div"); line.append(pill(status), el("span", "source-age", age(sourceAge(item)))); card.append(line);
+      const line = el("div"); line.append(pill(status), el("span", "source-age", status === "disabled" ? "Intentionally disabled" : age(sourceAge(item)))); card.append(line);
       card.append(el("p", "", string(item.message, "No source details reported.")));
-      const timestamp = el("p", "mono", fullTime(item.timestamp)); card.append(timestamp); cards.append(card);
-      info.append(el("div", "", `${string(item.label, item.id)}: ${titleCase(status)} · ${age(sourceAge(item))}`));
+      if (status !== "disabled") card.append(el("p", "mono", fullTime(item.timestamp)));
+      cards.append(card);
+      info.append(el("div", "", `${string(item.label, item.id)}: ${titleCase(status)}${status === "disabled" ? " · intentionally disabled in observe mode" : ` · ${age(sourceAge(item))}`}`));
     }
   }
 

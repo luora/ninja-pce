@@ -12,7 +12,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from .controller import controller_command, load_controller_config
+from .controller import controller_command, effective_operating_mode, load_controller_config
 
 DEFAULT_WORKSPACE = Path(".ninja-pce/workspace")
 DEFAULT_CONFIG = DEFAULT_WORKSPACE / "config/controller.json"
@@ -23,6 +23,7 @@ def _controller_example() -> dict[str, Any]:
     # use documentation addresses and grant no authority over an existing lab.
     return {
         "version": 1,
+        "operating_mode": "observe",
         "files": {
             "bgpls_raw": "../data/live/bgpls-raw.json",
             "bgpls_status": "../data/live/bgpls-status.json",
@@ -128,8 +129,14 @@ def doctor(config_path: str | Path) -> int:
         print(f"Missing required executable: {executable}. Install grpcurl or set bgpls.grpcurl.")
     else:
         print(f"grpcurl available: {tool}")
+    mode = effective_operating_mode(config)
+    print(f"Operating mode: {mode}")
     print(f"GoBGP must be configured separately at {data['bgpls']['endpoint']}.")
-    print("Before starting, replace the example addresses and domain scope, and verify BGP-LS and PCC connectivity.")
+    if mode == "observe":
+        print("PCEP is disabled in observation mode; no PCC session is required.")
+        print("Before connecting topology, replace the example BGP-LS addresses and validate your domain identities.")
+    else:
+        print("Before starting, replace the example addresses and domain scope, and verify BGP-LS and PCC connectivity.")
     print("These checks validate local configuration and tools; live network health requires the running controller.")
     return 0 if tool is not None else 1
 
@@ -165,9 +172,12 @@ def application_command(args: argparse.Namespace) -> int:
     if args.app_action == "init":
         config_path = initialize_workspace(args.directory)
         print(f"Application workspace created: {config_path.parent.parent}")
-        print(f"Edit {config_path} and {config_path.parent / 'domain-policy.json'} for your network.")
-        print(f"Then run: ninja-pce app doctor --config {config_path}")
-        print("Starting uses the existing controller; HTTPS tunnel provisioning requires separate enrollment and setup.")
+        print("Observation mode is enabled: PCEP is disabled and no PCC session is required.")
+        print(f"Open the local dashboard with: ninja-pce app start --config {config_path}")
+        print(f"Before connecting topology, replace the example addresses in {config_path} for your network.")
+        print(f"Validate domain identities and review {config_path.parent / 'domain-policy.json'} before enabling PCEP.")
+        print(f"Check local configuration and tools with: ninja-pce app doctor --config {config_path}")
+        print("HTTPS tunnel provisioning requires separate enrollment and setup.")
         return 0
     if args.app_action == "doctor":
         return doctor(args.config)

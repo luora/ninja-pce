@@ -32,8 +32,9 @@ To connect your network, generate a workspace and edit its configuration:
 ./ninja-pce start
 ```
 
-The sample uses synthetic data. A live controller requires GoBGP, `grpcurl`,
-routed reachability and router PCC configuration. The [getting-started guide](docs/getting_started.md)
+The sample uses synthetic data. New live workspaces use
+[observation mode](docs/observation_mode.md), with no PCC required. Live topology
+requires GoBGP, `grpcurl` and routed exporter reachability. The [getting-started guide](docs/getting_started.md)
 walks through the sample, live configuration and updates. The [deployment guide](docs/deployment.md)
 covers a managed installation and authenticated dashboard provisioning.
 
@@ -45,8 +46,9 @@ users, separate SSH transport enrollment, concurrent operation ownership, and
 an explicit migration that preserves existing authority and recovery history.
 See [domain provisioning](docs/domain_tunnel_provisioning.md) and its
 [validation record](docs/domain_tunnel_provisioning_validation.md).
-The collector, PCEP listener and dashboard run together
-under one configuration and a supervised application command. Start with the
+One configuration selects observation or existing PCEP control. The dashboard
+stays available after a protocol failure, and readiness reflects the selected
+mode. Start with the
 [user guide](docs/user_guide.md) and [deployment guide](docs/deployment.md).
 The deployment package includes a wheel, source archive, offline dependency
 wheelhouse, checksums, configuration examples and a systemd installer.

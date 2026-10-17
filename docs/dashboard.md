@@ -43,6 +43,10 @@ The default paths are:
 Use `--topology`, `--bgpls-status`, `--bgpls-raw`, `--pcep` and `--state-dir` to
 match the running controller. The dashboard does not start the protocol services.
 It works with missing inputs and displays their availability individually.
+Use `--operating-mode observe` to disable PCEP projections and report topology
+readiness without PCC sessions. `/healthz` checks liveness; `/readyz` returns
+200 only when ready and 503 otherwise. See [observation mode](observation_mode.md)
+for configuration, supervision and readiness scope.
 
 For an explicitly qualified multi-area collector, select all three files from
 that collector and supply the same independently reviewed identity policy:

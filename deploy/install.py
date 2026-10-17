@@ -33,9 +33,10 @@ GOBGP_UNIT = "ninja-gobgpd"
 
 
 def observation_configuration(config_dir: Path, data_dir: Path) -> dict[str, Any]:
-    """An inert first-launch configuration; the service selects no PCEP child."""
+    """An explicit observation configuration that cannot start a PCEP child."""
     return {
         "version": 1,
+        "operating_mode": "observe",
         "files": {"bgpls_raw": str(data_dir / "live/bgpls-raw.json"),
                   "bgpls_status": str(data_dir / "live/bgpls-status.json"),
                   "topology": str(data_dir / "live/topology.json"),
@@ -298,6 +299,12 @@ def deployment(args: argparse.Namespace, bundle: Any = None) -> Deployment:
     policy = read_json(Path(args.domain_policy)) if custom else observation_policy()
     gobgp_config = None
     if bundle is not None:
+        if controller.get("operating_mode", "observe") != "observe":
+            raise ValueError("Bundle observation deployment requires operating_mode observe")
+        # The PR1 bundle path already selected only observation components.
+        # Make that intent explicit when rendering an older custom document,
+        # without changing the supplied file or existing installed files.
+        controller["operating_mode"] = "observe"
         bgpls = controller.get("bgpls")
         if not isinstance(bgpls, dict) or bgpls.get("endpoint") != "127.0.0.1:50051":
             raise ValueError("Managed GoBGP requires bgpls.endpoint 127.0.0.1:50051")
