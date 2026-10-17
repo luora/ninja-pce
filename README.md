@@ -6,7 +6,46 @@ within a configured routing domain, computes constrained paths, and delivers
 initial paths to delegated router-owned LSPs. A web dashboard shows topology,
 protocol peers, tunnels, reservations and events.
 
-Version **0.5.0** brings the collector, PCEP listener and dashboard together
+## Run the application
+
+On Linux or macOS, install Python 3.10 or later with `venv` and `pip` support,
+then clone and launch:
+
+```bash
+git clone https://github.com/luora/ninja-pce.git
+cd ninja-pce
+./ninja-pce
+```
+
+Open <http://127.0.0.1:8088>. The launcher prepares its own Python environment
+and starts a labelled sample dashboard. Explore the topology, select a tunnel,
+and inspect its path and bandwidth. Stop the application with Ctrl-C.
+The first launch downloads pinned dependencies; later launches reuse the local
+installation. Application files and your local configuration live in the ignored
+`.ninja-pce/` directory.
+
+To connect your network, generate a workspace and edit its configuration:
+
+```bash
+./ninja-pce init
+./ninja-pce doctor
+./ninja-pce start
+```
+
+The sample uses synthetic data. A live controller requires GoBGP, `grpcurl`,
+routed reachability and router PCC configuration. The [getting-started guide](docs/getting_started.md)
+walks through the sample, live configuration and updates. The [deployment guide](docs/deployment.md)
+covers a managed installation and authenticated dashboard provisioning.
+
+## Application capabilities
+
+Version **0.7.0** adds the clone-and-run application launcher and network
+workspace commands. Version **0.6.0** introduced domain-wide dashboard provisioning for authenticated
+users, separate SSH transport enrollment, concurrent operation ownership, and
+an explicit migration that preserves existing authority and recovery history.
+See [domain provisioning](docs/domain_tunnel_provisioning.md) and its
+[validation record](docs/domain_tunnel_provisioning_validation.md).
+The collector, PCEP listener and dashboard run together
 under one configuration and a supervised application command. Start with the
 [user guide](docs/user_guide.md) and [deployment guide](docs/deployment.md).
 The deployment package includes a wheel, source archive, offline dependency
@@ -49,7 +88,10 @@ Historical evidence and engineering details remain available through
 
 ## What problem this solves
 
-Many regional and NREN-style operators already run MPLS, RSVP-TE, VPLS/VPWS/L3VPN, and OSPF/IS-IS. The harder part is operational: platforms may lack BGP-LS/PCEP/SR-TE controller support, so engineers manually inspect TE topology, bandwidth, and failures before editing RSVP-TE explicit paths.
+Traffic engineering depends on an accurate view of topology, available bandwidth,
+path constraints, and network failures. Ninja-PCE uses that information to compute
+and validate paths, with policy-controlled provisioning and recovery for qualified
+deployments.
 
 `ninja-pce` gives you a safe first step:
 

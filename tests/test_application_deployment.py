@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -71,11 +72,13 @@ def test_render_is_repeatable_and_performs_no_system_changes(options, tmp_path, 
     for destination in (plan.prefix, plan.config_dir, plan.data_dir, plan.unit_dir):
         assert not destination.exists()
     unit = first["ninja-controller.service"].decode()
-    assert f'ExecStart="{plan.executable}" controller run --config "{plan.config_path}"' in unit
+    assert f'ExecStart="{plan.python}" -I -m ninja_pce.cli controller run --config "{plan.config_path}"' in unit
     for setting in ("User=ninja-pce", "NoNewPrivileges=true", "PrivateTmp=true", "ProtectSystem=strict",
                     "ProtectHome=true", f'ReadWritePaths="{plan.data_dir}"'):
         assert setting in unit
     assert "ExecStartPre=" not in unit
+    assert f"WorkingDirectory={plan.data_dir}\n" in unit
+    assert "UnsetEnvironment=PYTHONPATH PYTHONHOME" in unit
 
 
 @pytest.mark.parametrize(("field", "value"), [
@@ -245,14 +248,15 @@ def test_render_allows_temporary_static_preview_but_install_rejects_it(options, 
         installer.systemd_access_preflight(plan)
 
 
-def test_distribution_rejects_private_source_members_and_wheel_files(tmp_path):
+@pytest.mark.parametrize("private", [".env", ".ninja-pce/installation.json"])
+def test_distribution_rejects_private_source_members_and_wheel_files(tmp_path, private):
     wheel = tmp_path / "application.whl"
     source = tmp_path / "application.tar.gz"
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr("ninja_pce/__init__.py", "")
     with tarfile.open(source, "w:gz") as archive:
         content = b"secret"
-        member = tarfile.TarInfo("ninja-pce/.env")
+        member = tarfile.TarInfo("ninja-pce/" + private)
         member.size = len(content)
         archive.addfile(member, io.BytesIO(content))
     with pytest.raises(ValueError, match="source archive"):
@@ -337,3 +341,27 @@ def test_distribution_provenance_excludes_only_own_build_scratch(tmp_path, monke
     assert manifest["source_revision"] is not None
     assert manifest["source_dirty"] is (source_change is not None)
     assert scratches and all(not scratch.exists() for scratch in scratches)
+
+
+def test_generated_unit_with_spaced_paths_is_accepted_by_systemd(options, tmp_path):
+    analyzer = shutil.which("systemd-analyze")
+    if analyzer is None:
+        pytest.skip("systemd parser is not installed")
+    plan = installer.deployment(options)
+    plan = replace(plan, prefix=tmp_path / "application with spaces",
+                   data_dir=tmp_path / "data with spaces")
+    plan.python.parent.mkdir(parents=True)
+    plan.python.write_text("#!/bin/sh\nexit 0\n")
+    plan.python.chmod(0o755)
+    unit = tmp_path / "ninja-parser-test.service"
+    unit.write_bytes(plan.unit())
+    result = subprocess.run([analyzer, "verify", "--man=no", str(unit)],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert not any("ninja-parser-test.service:" in line for line in result.stderr.splitlines()), result.stderr
+
+
+@pytest.mark.parametrize("path", ["/opt/application ", "/etc/configuration  "])
+def test_systemd_scalar_paths_refuse_trailing_whitespace(path):
+    with pytest.raises(ValueError, match="canonical absolute"):
+        installer.absolute_path(path)

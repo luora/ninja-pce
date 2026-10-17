@@ -14,6 +14,7 @@ from test_pcep_compute import PEER, prepare
 from test_pcep_delegation import initial_report
 
 from ninja_pce.pcep_domain_policy import DomainDelegationPolicy
+from ninja_pce.state import digest
 
 
 def document():
@@ -297,6 +298,21 @@ def test_policy_is_copied_immutable_and_canonical(topology):
     assert policy.proof(PEER, report(), topology) == proof
     assert policy.max_live_lsps("192.0.2.1") is None
     assert policy.max_live_lsps("bad-address") is None
+
+
+def test_canonical_policy_document_is_detached_and_retains_original_digest():
+    raw = document()
+    raw["pcc_prefixes"] = ["192.0.2.0/24", "10.255.0.0/24"]
+    policy = DomainDelegationPolicy.from_document(raw)
+    snapshot = policy.document()
+    assert snapshot["pcc_prefixes"] == ["10.255.0.0/24", "192.0.2.0/24"]
+    assert digest(snapshot) == policy.policy_digest
+    assert DomainDelegationPolicy.from_document(snapshot) == policy
+    snapshot["domain"]["autonomous_system"] = 1
+    snapshot["pcc_prefixes"].clear()
+    snapshot["destination_prefixes"].clear()
+    assert digest(policy.document()) == policy.policy_digest
+    assert policy.document()["domain"]["autonomous_system"] == 65000
 
 
 def test_unknown_policy_fields_missing_fields_and_duplicate_json_are_rejected(tmp_path):

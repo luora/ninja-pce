@@ -20,7 +20,13 @@ from typing import Any, Callable
 
 from .pcep_compute import PathReply, PcepPathComputer
 from .pcep_failover import FailureRecoveryPlanner, RecoveryDeferred, _mapped_edges, _reply_hash, _report
-from .pcep_provisioning import _FIELDS
+from .pcep_provisioning import (
+    _FIELDS,
+    _JOURNAL_MAX_BYTES,
+    _JOURNAL_MAX_OPERATIONS,
+    operation_policy_revision,
+    provisioning_operation_digest,
+)
 from .reservations import ReservationLedger, resource_lock
 from .state import digest, load_state
 
@@ -78,8 +84,9 @@ class ManagedFailureRecoveryPlanner(FailureRecoveryPlanner):
         self._authorization = copy.deepcopy(authorization)
         self._binding = {
             "operation_journal": str(self.operation_journal), "operation_id": operation_id,
-            "operation_digest": digest(operation), "authorization_digest": operation["authorization_digest"],
-            "provisioning_policy_digest": journal["policy_digest"],
+            "operation_digest": provisioning_operation_digest(operation),
+            "authorization_digest": operation["authorization_digest"],
+            "provisioning_policy_digest": operation_policy_revision(journal, operation),
             "hold_digest": digest({key: value for key, value in hold.items() if key != "resources"}),
             "topology_policy": self._topology_policy,
         }
@@ -441,13 +448,17 @@ class ManagedFailureRecoveryPlanner(FailureRecoveryPlanner):
                 "ospf_multi_area_digest": computer.ospf_multi_area.digest if computer.ospf_multi_area else None}
 
     def _owned_state(self) -> tuple[dict[str, Any], ReservationLedger, dict[str, Any], dict[str, Any]]:
-        _regular(self.operation_journal)
-        _regular(self.operation_journal.parent / ".ninja-pce-reservations.json")
+        _regular(self.operation_journal, _JOURNAL_MAX_BYTES)
         journal = load_state(self.operation_journal)
         operations = journal.get("operations")
+        schema = journal.get("provisioning_schema", 1)
+        _regular(self.operation_journal.parent / ".ninja-pce-reservations.json",
+                 _JOURNAL_MAX_BYTES if schema == 2 else 1_048_576)
+        limit = _JOURNAL_MAX_OPERATIONS if schema == 2 else 16
         if (journal.get("kind") != "cli_tunnel_provisioning" or
+                type(schema) is not int or schema not in (1, 2) or
                 not isinstance(journal.get("policy_digest"), str) or
-                not isinstance(operations, dict) or not 1 <= len(operations) <= 16):
+                not isinstance(operations, dict) or not 1 <= len(operations) <= limit):
             raise ValueError("Managed recovery requires the original bounded provisioning journal")
         operation = operations.get(self.operation_id)
         if (not isinstance(operation, dict) or operation.get("id") != self.operation_id or
@@ -455,8 +466,15 @@ class ManagedFailureRecoveryPlanner(FailureRecoveryPlanner):
             raise ValueError("Managed recovery requires one VERIFIED provisioning operation")
         for identifier, other in operations.items():
             if (not isinstance(other, dict) or other.get("id") != identifier or
-                    identifier != self.operation_id and other.get("status") not in {"REJECTED", "ROLLED_BACK"}):
+                    schema == 1 and identifier != self.operation_id and
+                    other.get("status") not in {"REJECTED", "ROLLED_BACK"}):
                 raise ValueError("Another unresolved provisioning operation prevents managed recovery")
+            if schema == 2:
+                operation_policy_revision(journal, other)
+                if (identifier != self.operation_id and other.get("status") not in {"REJECTED", "ROLLED_BACK"} and (
+                        other.get("owner") == operation.get("owner") or
+                        other.get("reservation_id") == operation.get("reservation_id"))):
+                    raise ValueError("Another provisioning operation claims the managed owner or reservation")
         authorization = operation.get("authorization")
         if (not isinstance(authorization, dict) or set(authorization) != _FIELDS or
                 operation.get("authorization_digest") != digest(authorization) or
@@ -468,6 +486,14 @@ class ManagedFailureRecoveryPlanner(FailureRecoveryPlanner):
                 any(operation.get(field) != authorization[field]
                     for field in ("plan_id", "tunnel_id", "bandwidth_bps", "ero", "path_edges"))):
             raise ValueError("Managed recovery operation differs from its immutable authorization")
+        for identifier, other in operations.items():
+            other_authorization = other.get("authorization")
+            if (schema == 2 and identifier != self.operation_id and
+                    other.get("status") not in {"REJECTED", "ROLLED_BACK"} and
+                    isinstance(other_authorization, dict) and
+                    all(other_authorization.get(field) == authorization[field]
+                        for field in ("peer", "source_ip", "tunnel_id"))):
+                raise ValueError("Another provisioning operation claims the managed tunnel identity")
         computer = self._configured_computer
         bandwidth, tunnel = authorization["bandwidth_bps"], authorization["tunnel_id"]
         source, destination, peer = (authorization["source_ip"], authorization["destination_ip"],
@@ -511,14 +537,16 @@ class ManagedFailureRecoveryPlanner(FailureRecoveryPlanner):
         return journal, ledger, operation, hold
 
     def _state_files(self) -> None:
-        for path in (self.operation_journal, self.operation_journal.parent / ".ninja-pce-reservations.json",
-                     self.operation_journal.parent / ".ninja-pce-resources.lock"):
-            _regular(path)
+        _regular(self.operation_journal, _JOURNAL_MAX_BYTES)
+        schema = load_state(self.operation_journal).get("provisioning_schema", 1)
+        _regular(self.operation_journal.parent / ".ninja-pce-reservations.json",
+                 _JOURNAL_MAX_BYTES if schema == 2 else 1_048_576)
+        _regular(self.operation_journal.parent / ".ninja-pce-resources.lock")
 
     def _check_binding(self, journal: dict[str, Any], operation: dict[str, Any], hold: dict[str, Any]) -> None:
         if (self._computer_policy() != self._topology_policy or
-                digest(operation) != self._binding["operation_digest"] or
-                journal["policy_digest"] != self._binding["provisioning_policy_digest"] or
+                provisioning_operation_digest(operation) != self._binding["operation_digest"] or
+                operation_policy_revision(journal, operation) != self._binding["provisioning_policy_digest"] or
                 digest({key: value for key, value in hold.items() if key != "resources"}) !=
                 self._binding["hold_digest"] or hold["resources"] != self._expected_resources):
             raise ValueError("Managed recovery immutable authority or held resources changed")

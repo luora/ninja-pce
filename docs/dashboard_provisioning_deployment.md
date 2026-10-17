@@ -4,15 +4,33 @@ These are sanitized deployment examples for the separate dashboard
 [configuration provisioning profile](dashboard_tunnel_creation.md#configuration-based-provisioning-profile).
 The shipped JSON has `qualified: false`, and the environment example disables
 writes. Installing these files does not qualify a device or enable public
-creation. Keep the new Nginx operator routes absent until the exact profile has
+creation. Keep the new Nginx provisioning routes absent until the exact profile has
 passed its private live qualification.
+
+The [0.6.0 domain validation record](domain_tunnel_provisioning_validation.md)
+documents completed concurrent authenticated creation, transport refusal,
+service restart preservation and RSVP/forwarding checks. The two qualification
+tunnels and holds remain in place. The qualified SSH backend changes running
+configuration without saving startup configuration; cold VM/router reboots,
+interactive live browser operation and every possible path remain outside that
+recorded scope. New deployments require their own reviewed enrollment and
+qualification.
 
 ## Private runtime policy and SSH
 
-The examples use the existing Ubuntu controller paths and private six-router
-address plan. Change paths, topology mappings and the HTTPS origin locally.
-The headend inventory's SSH host must also identify the authorized PCC loopback
-in `computer.headends`; do not substitute the console-server endpoint.
+The legacy examples use Ubuntu controller paths and a six-router address plan.
+Change paths, topology mappings and the HTTPS origin locally. That explicit
+profile requires its inventory SSH host to identify the authorized PCC loopback
+in `computer.headends`.
+
+For domain-wide creation, use [the domain runtime example](../deploy/examples/provisioning-domain.json)
+and [domain provisioning policy](domain_tunnel_provisioning.md). Set an explicit
+`domain_policy` path and `principal_policy: "authenticated"`; omit the top-level
+`headends`, `destinations` and `operators` lists. Fresh trusted domain membership
+supplies selectable headends and destinations, including transit routers.
+Inventory supplies enrolled transports only. Its SSH `host` may differ from the
+TE loopback and must have its own independently pinned key; a TE router ID never
+implicitly supplies management connectivity or cryptographic identity.
 
 For an explicitly qualified OSPF multi-area feed, add the JSON path
 `computer.ospf_multi_area_policy` to the private runtime policy. The file must
@@ -22,14 +40,18 @@ from runtime inputs and outputs and outside the mutable `state_dir`. The default
 configuration accepts only the original single-area feed.
 
 Provisioning requires the collector, API computation and listener capture to
-agree on the exact policy document and digest. Changing the identity policy
-requires explicit reconciliation of the provisioning journal. This option
-does not qualify writes or expand the configured headends, destinations or
-bandwidth limit; keep `qualified: false` until that exact deployment is tested.
+agree on the exact area policy document and digest. Existing legacy journals
+require explicit migration before adopting versioned domain provisioning.
+Each migrated or new operation retains its original authorization, owner and
+policy revision; later policy changes do not rewrite that authority. The area
+option alone does not expand provisioning scope or qualify writes. Keep
+`qualified: false` until the exact deployment is tested.
 
 | Example | Controller destination |
 |---|---|
 | [Runtime JSON](../gns3/controller/ubuntu-24.04/provisioning.json.example) | `/etc/ninja-pce/provisioning.json` |
+| [Domain runtime JSON](../deploy/examples/provisioning-domain.json) | Alternative `/etc/ninja-pce/provisioning.json` |
+| [Domain scope](../deploy/examples/domain-policy.json) | `/etc/ninja-pce/domain-policy.json` |
 | [IOS XE inventory](../gns3/controller/ubuntu-24.04/provisioning-inventory.yml.example) | `/etc/ninja-pce/provisioning-inventory.yml` |
 | [Environment variables](../gns3/controller/ubuntu-24.04/provisioning.env.example) | `/etc/ninja-pce/provisioning.env` |
 | [Service](../gns3/controller/ubuntu-24.04/ninja-provisioning.service) | `/etc/systemd/system/ninja-provisioning.service` |
@@ -72,7 +94,7 @@ scan alone does not establish identity. The runtime refuses a missing or
 symlinked file and uses Netmiko's strict host-key checking with only this
 specified file; it does not automatically trust an unknown or changed key.
 
-The operator username in JSON is the HTTPS Basic-auth principal, while the
+In the legacy allowlist profile, the operator username in JSON is the HTTPS Basic-auth principal, while the
 inventory username is the separate router SSH account. They are different
 identities and need not have the same name.
 
@@ -93,6 +115,14 @@ The unit runs:
 ```text
 /home/ubuntu/ninja-pce/.venv/bin/python -m ninja_pce.cli_provisioning --config /etc/ninja-pce/provisioning.json
 ```
+
+For a packaged deployment, point the reviewed service override at the release's
+installed interpreter, use `python -I -m ninja_pce.cli_provisioning`, and set
+`UnsetEnvironment=PYTHONPATH PYTHONHOME`. Verify `ninja_pce.__version__` and
+`ninja_pce.__file__` with that isolated interpreter before activation. Apply the
+same environment isolation to the controller service so its child processes
+inherit the reviewed installed environment; see the
+[activation check](deployment.md#validate-and-activate).
 
 It loads the secret through `EnvironmentFile`, creates
 `/run/ninja-provisioning` as `ubuntu:www-data` with mode0750, and the API creates
@@ -118,6 +148,53 @@ freshness and synchronization are unavailable. This journal permits initial
 control of the exact owned new tunnel; it does not widen Tunnel100's recovery
 allowlist to all managed IDs. All delivery processes must use the same durable
 reservation ledger directory.
+
+## Migrate an existing provisioning journal
+
+Keep the original private runtime configuration and inventory. Do not edit the
+only copy into the new domain policy: the migration validates the legacy
+journal's original policy digest against those original inputs. Prepare the
+new domain runtime configuration separately and retain its exact state paths.
+
+Use a maintenance window with provisioning and recovery writers quiesced. Take
+a fresh baseline of tunnels, owners, holds, failure/startup attempts and pending
+uncertainty. Create a private review plan; these paths are synthetic examples:
+
+```bash
+python -m ninja_pce.provisioning_migration plan \
+  --legacy-config /private/provisioning-legacy.json \
+  --config /private/provisioning-domain.json \
+  --plan /private/migration-plan.json \
+  --preserve /private/recovery/managed.json
+```
+
+Repeat `--preserve` for every recovery or reinstatement history JSON that must
+remain unchanged. The checksummed plan binds the original journal, exact
+reservation ledger, policy inputs and each preserved file. Inspect it locally
+alongside the original journal and ledger, confirming original ownership,
+authorizations, statuses and held resources.
+Then apply that reviewed plan to a new private backup directory outside mutable
+provisioning state:
+
+```bash
+python -m ninja_pce.provisioning_migration apply \
+  --plan /private/migration-plan.json \
+  --backup-dir /private/migration-backup
+```
+
+Apply rechecks all bound hashes, archives the exact original files and manifest,
+then atomically writes the version 2 provisioning journal. It adds policy
+history and each operation's original `policy_revision`, and explicitly clears
+old previews. It preserves operation authorization, principal, owner, tunnel
+identity, status, uncertainty, holds, recovery history and attempt limits.
+The reservation ledger and preserved recovery files are not rewritten.
+Plan and backup files remain private; do not commit them.
+
+Start matching reviewed listener and provisioning code only after migration.
+Recheck the baseline, fresh domain/PCC readiness and authenticated operation
+visibility before allowing new creation. New domain operations may run within
+the explicit concurrency limit; the existing exact managed recovery binding
+remains separate and retains its historical budget.
 
 ## Recovery of one provisioned tunnel
 
@@ -291,11 +368,14 @@ password file without replacing viewer credentials:
 sudo htpasswd /etc/nginx/ninja-dashboard/htpasswd operator
 ```
 
-The example API allowlist is `operators: ["operator"]`. The existing `dashboard`
-viewer is not authorized for the operator API. `GET /api/tunnel-options` issues
-the principal-bound session cookie and CSRF token; there is no separate session
-route. The API authorizes exact principal names, not an externally supplied role
-header.
+The legacy example API allowlist is `operators: ["operator"]`; its existing
+`dashboard` viewer receives 403 from the provisioning API. Domain mode uses
+`principal_policy: "authenticated"` with no `operators` list, so every account
+authenticated by this proxy can create within deployment policy. Preserve
+existing proxy accounts and manage authentication at that boundary.
+`GET /api/tunnel-options` issues the principal-bound session cookie and CSRF
+token; there is no separate session route. The API records the actual principal,
+scopes operations and idempotency keys to it, and accepts no external role header.
 
 After qualification, render the
 [proxy snippet](../gns3/controller/ubuntu-24.04/nginx/ninja-provisioning-proxy.conf.template)
@@ -326,8 +406,12 @@ Secure/HttpOnly/SameSite session cookie intact. See Nginx's
 [proxy configuration reference](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_set_header).
 
 Validate with `sudo nginx -t` before reloading. Confirm an unauthenticated
-HTTPS request still receives401, the viewer receives403 from operator routes,
-the authorized operator can fetch options/session state, and POST without
-matching Origin, session and CSRF remains forbidden. Keep the JSON unqualified
-and writes disabled until recorded qualification permits enabling this exact
-profile. Native PCInitiate remains separately unqualified.
+HTTPS request still receives 401. In the legacy profile a viewer outside the
+allowlist receives 403; in domain mode each authenticated account can fetch
+its own options/session and operation state. POST without matching Origin,
+session and CSRF remains forbidden in both modes. Qualify multiple principals
+and headends with concurrent independent operations, same-key retries, policy
+refusal, missing/changed transport identity, restart preservation and independent
+RSVP/forwarding checks before enabling the domain deployment. Keep the JSON
+unqualified and writes disabled until recorded qualification permits enabling
+the exact profile. Native PCInitiate remains separately unqualified.

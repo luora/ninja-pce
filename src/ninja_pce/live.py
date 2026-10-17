@@ -264,7 +264,8 @@ async def _serve_pcep(args: argparse.Namespace) -> int:
             provisioning_path = Path(args.provisioning_state).resolve()
             if provisioning_path in paths:
                 raise ValueError("Configuration provisioning journal must be distinct from capture and live inputs")
-            provisioning_authorizer = JournalProvisioningAuthorization(provisioning_path, computer.headends)
+            provisioning_authorizer = JournalProvisioningAuthorization(
+                provisioning_path, computer.headends, domain_policy=computer.domain_policy)
         server_options["delegated_computer"] = DelegatedPathComputer(
             computer, allowed_tunnels, provisioning_authorizer=provisioning_authorizer,
         )

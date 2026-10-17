@@ -15,31 +15,69 @@ import time
 from datetime import datetime, timezone
 from ipaddress import IPv4Address
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from .reservations import ReservationLedger
 from .state import digest, load_state
+
+if TYPE_CHECKING:
+    from .pcep_domain_policy import DomainDelegationPolicy
 
 _PLAN_ID = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
 _FIELDS = {"plan_id", "peer", "source_ip", "destination_ip", "tunnel_id", "symbolic_name",
            "bandwidth_bps", "setup_priority", "hold_priority", "expires_at", "ero", "path_edges"}
 _AUTHORIZED_STATES = {"PUSHING", "APPLIED_UNVERIFIED", "VERIFIED"}
+_JOURNAL_MAX_BYTES = 16 * 1_048_576
+_JOURNAL_MAX_OPERATIONS = 4096
+
+
+def operation_policy_revision(journal: dict[str, Any], operation: dict[str, Any]) -> str:
+    """Read immutable operation policy without rebinding it to current policy.
+
+    Legacy operations bind the journal's sole policy. The explicit v2 migration
+    adds only ``policy_revision`` to each operation and retains that policy's
+    complete document, so existing recovery bindings continue to identify the
+    same original authorization.
+    """
+    schema = journal.get("provisioning_schema", 1)
+    if type(schema) is not int or schema not in (1, 2):
+        raise ValueError("Unsupported provisioning journal schema")
+    revision = operation.get("policy_revision") if schema == 2 else journal.get("policy_digest")
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{64}", revision):
+        raise ValueError("Provisioning operation requires its original policy revision")
+    if schema == 2:
+        policies = journal.get("policies")
+        if (not isinstance(policies, dict) or not 1 <= len(policies) <= _JOURNAL_MAX_OPERATIONS or
+                not isinstance(policies.get(revision), dict) or digest(policies[revision]) != revision):
+            raise ValueError("Provisioning operation policy revision is missing or changed")
+    return revision
+
+
+def provisioning_operation_digest(operation: dict[str, Any]) -> str:
+    """Keep the original managed binding stable across policy-only migration."""
+    return digest({key: value for key, value in operation.items() if key != "policy_revision"})
 
 
 class JournalProvisioningAuthorization:
     """Resolve a recent owned configuration to one initial PCEP path update."""
 
-    def __init__(self, journal_path: Path, headends: dict[str, str]):
-        if not headends or len(headends) > 16:
+    def __init__(self, journal_path: Path, headends: dict[str, str], *,
+                 domain_policy: DomainDelegationPolicy | None = None):
+        if domain_policy is None and (not headends or len(headends) > 16):
             raise ValueError("Configuration provisioning requires bounded explicit headends")
         self.path = Path(journal_path)
         self.headends = {str(IPv4Address(peer)): str(IPv4Address(source)) for peer, source in headends.items()}
         if len(self.headends) != len(headends):
             raise ValueError("Configuration provisioning headends must be distinct")
-        self.policy_digest = digest({"journal_path": str(self.path.resolve()), "headends": self.headends})
+        self.domain_policy = domain_policy
+        authority = ({"domain_policy_digest": domain_policy.policy_digest} if domain_policy is not None else
+                     {"headends": self.headends})
+        self.policy_digest = digest({"journal_path": str(self.path.resolve()), **authority})
 
     def _resolve(self, peer: str, report: dict[str, Any]) -> dict[str, Any] | None:
         try:
-            if peer not in self.headends or self.path.stat().st_size > 1_048_576:
+            size = self.path.stat().st_size
+            if ((self.domain_policy is None and peer not in self.headends) or size > _JOURNAL_MAX_BYTES):
                 return None
             # The configuration writer holds this lock only for short local
             # state transitions, never for SSH I/O. Do not create missing
@@ -48,18 +86,27 @@ class JournalProvisioningAuthorization:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
                 try:
                     journal = load_state(self.path)
-                    ledger = load_state(self.path.parent / ".ninja-pce-reservations.json")
+                    ledger_path = self.path.parent / ".ninja-pce-reservations.json"
+                    if ledger_path.stat().st_size > _JOURNAL_MAX_BYTES:
+                        return None
+                    ledger = load_state(ledger_path)
                 finally:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
             operations = journal.get("operations")
             entries = ledger.get("entries")
+            schema = journal.get("provisioning_schema", 1)
+            limit = _JOURNAL_MAX_OPERATIONS if schema == 2 else 64
             if (journal.get("kind") != "cli_tunnel_provisioning" or not isinstance(operations, dict) or
-                    not 1 <= len(operations) <= 64 or not isinstance(entries, dict)):
+                    type(schema) is not int or schema not in (1, 2) or
+                    schema == 1 and size > 1_048_576 or
+                    not 1 <= len(operations) <= limit or not isinstance(entries, dict)):
                 return None
             matches = []
             for op_id, operation in operations.items():
                 if not isinstance(operation, dict) or operation.get("id") != op_id:
                     return None
+                if schema == 2:
+                    operation_policy_revision(journal, operation)
                 authorization = operation.get("authorization")
                 if authorization is None:
                     continue  # Planning/rejected operations grant no authority.
@@ -70,7 +117,7 @@ class JournalProvisioningAuthorization:
                     continue
                 if not self._owned_hold(operation, authorization, entries):
                     return None
-                if self._matches(peer, report, authorization):
+                if self._matches(peer, report, authorization, immutable_source=schema == 2):
                     matches.append(authorization)
             return matches[0] if len(matches) == 1 else None
         except (ValueError, OSError, KeyError, TypeError, OverflowError):
@@ -93,7 +140,8 @@ class JournalProvisioningAuthorization:
         return all(type(hold["resources"].get(edge)) is int and
                    hold["resources"][edge] >= authorization["bandwidth_bps"] for edge in authorization["path_edges"])
 
-    def _matches(self, peer: str, report: dict[str, Any], authorization: dict[str, Any]) -> bool:
+    def _matches(self, peer: str, report: dict[str, Any], authorization: dict[str, Any], *,
+                 immutable_source: bool = False) -> bool:
         if not isinstance(authorization["expires_at"], str):
             return False
         expiry = datetime.fromisoformat(authorization["expires_at"].replace("Z", "+00:00"))
@@ -102,7 +150,20 @@ class JournalProvisioningAuthorization:
         plan_id = authorization["plan_id"]
         tunnel_id = authorization["tunnel_id"]
         bandwidth = authorization["bandwidth_bps"]
-        source = self.headends[peer]
+        if any(not isinstance(authorization[field], str) or
+               str(IPv4Address(authorization[field])) != authorization[field]
+               for field in ("peer", "source_ip", "destination_ip")):
+            return False
+        source = (str(IPv4Address(authorization["source_ip"])) if immutable_source else self.headends[peer])
+        if self.domain_policy is not None:
+            # The computation path independently verifies fresh, unique TED
+            # membership. This check ensures a stored operation cannot escape
+            # the current domain's transport scope before computation.
+            address = IPv4Address(peer)
+            if peer != source or not any(address in network for network in self.domain_policy.pcc_prefixes):
+                return False
+        elif self.headends.get(peer) != source:
+            return False
         destination = str(IPv4Address(authorization["destination_ip"]))
         name = f"Tunnel{tunnel_id}_w"
         ero, edges = authorization["ero"], authorization["path_edges"]
@@ -111,7 +172,8 @@ class JournalProvisioningAuthorization:
                 type(bandwidth) is not int or not 0 < bandwidth <= 10**12 or
                 authorization["peer"] != peer or authorization["source_ip"] != source or
                 destination == source or authorization["symbolic_name"] != name or
-                authorization["setup_priority"] != 7 or authorization["hold_priority"] != 7 or
+                type(authorization["setup_priority"]) is not int or authorization["setup_priority"] != 7 or
+                type(authorization["hold_priority"]) is not int or authorization["hold_priority"] != 7 or
                 not isinstance(ero, list) or not 1 <= len(ero) <= 64 or
                 any(not isinstance(address, str) or str(IPv4Address(address)) != address for address in ero) or
                 not isinstance(edges, list) or len(edges) != len(ero) or len(set(edges)) != len(edges) or
@@ -154,6 +216,67 @@ class JournalProvisioningAuthorization:
         authorization = self._resolve(peer, report)
         return authorization["plan_id"] if authorization is not None else None
 
+    def owns(self, peer: str, report: dict[str, Any]) -> bool:
+        """Fence configured identities from fresh ordinary domain authority.
+
+        Expiry, rollback uncertainty and a refused exact authorization never
+        turn a configured tunnel into an unowned router request. If durable
+        ownership cannot be read, fail closed for new ordinary initial writes.
+        A proven released operation no longer fences its ID when the same
+        locked ledger confirms both its owner and reservation have no hold.
+        """
+        try:
+            if self.path.stat().st_size > _JOURNAL_MAX_BYTES:
+                return True
+            with (self.path.parent / ".ninja-pce-resources.lock").open("rb") as handle:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
+                try:
+                    journal = load_state(self.path)
+                    ledger_path = self.path.parent / ".ninja-pce-reservations.json"
+                    if ledger_path.stat().st_size > _JOURNAL_MAX_BYTES:
+                        return True
+                    ledger = ReservationLedger(self.path.parent).data
+                finally:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            operations = journal.get("operations")
+            entries = ledger.get("entries")
+            schema = journal.get("provisioning_schema", 1)
+            if (journal.get("kind") != "cli_tunnel_provisioning" or
+                    type(schema) is not int or schema not in (1, 2) or not isinstance(operations, dict) or
+                    len(operations) > _JOURNAL_MAX_OPERATIONS or not isinstance(entries, dict) or
+                    any(not isinstance(hold, dict) for hold in entries.values())):
+                return True
+            identifiers = report["identifiers"]
+            for identifier, operation in operations.items():
+                if not isinstance(operation, dict) or operation.get("id") != identifier:
+                    return True
+                if operation.get("status") not in {
+                        "PLANNED", "PUSHING", "APPLIED_UNVERIFIED", "VERIFIED", "VERIFICATION_FAILED",
+                        "ROLLBACK_REQUIRED", "REJECTED", "ROLLED_BACK"}:
+                    return True
+                if schema == 2:
+                    operation_policy_revision(journal, operation)
+                authorization = operation.get("authorization")
+                if operation.get("authorization_digest") != digest(authorization):
+                    return True
+                if operation.get("status") in {"REJECTED", "ROLLED_BACK"}:
+                    owner = operation.get("owner")
+                    if (owner != "cli-provision:" + identifier or operation.get("reservation_id") in entries or
+                            any(hold.get("owner") == owner for hold in entries.values())):
+                        return True
+                    continue
+                if authorization is None:
+                    continue
+                if (not isinstance(authorization, dict) or set(authorization) != _FIELDS or
+                        operation.get("authorization_digest") != digest(authorization)):
+                    return True
+                if (authorization["peer"] == peer and authorization["source_ip"] == identifiers.get("sender") and
+                        authorization["tunnel_id"] == identifiers.get("tunnel_id")):
+                    return True
+            return False
+        except (ValueError, OSError, KeyError, TypeError, OverflowError):
+            return True
+
     def validate_path(self, peer: str, report: dict[str, Any], plan_id: str, ero: Any) -> bool:
         """Reread current authority; the chosen ERO must remain the approved one."""
         authorization = self._resolve(peer, report)
@@ -175,7 +298,8 @@ def configured_initial_path_observed(capture: dict[str, Any], operation: dict[st
         if (not isinstance(authorization, dict) or set(authorization) != _FIELDS or
                 operation.get("authorization_digest") != digest(authorization) or
                 operation.get("status") not in _AUTHORIZED_STATES or
-                authorization["setup_priority"] != 7 or authorization["hold_priority"] != 7 or
+                type(authorization["setup_priority"]) is not int or authorization["setup_priority"] != 7 or
+                type(authorization["hold_priority"]) is not int or authorization["hold_priority"] != 7 or
                 type(authorization["bandwidth_bps"]) is not int or
                 not 0 < authorization["bandwidth_bps"] <= 10**12 or
                 authorization["symbolic_name"] != f"Tunnel{authorization['tunnel_id']}_w" or

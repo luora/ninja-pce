@@ -20,7 +20,7 @@ the controller process.
 
 | Location | Purpose |
 |---|---|
-| `/opt/ninja-pce/releases/0.5.0/venv` | Versioned application virtual environment |
+| `/opt/ninja-pce/releases/0.7.0/venv` | Versioned application virtual environment |
 | `/etc/ninja-pce/controller.json` | Controller configuration |
 | `/etc/ninja-pce/domain-policy.json` | Reviewed topology-domain policy |
 | `/var/lib/ninja-pce/live` | Current collector and PCEP observations |
@@ -83,7 +83,7 @@ the reviewed wheel and need only the runtime wheelhouse:
 ```bash
 python3 -m pip download --only-binary=:all: -c deploy/constraints.txt \
   --dest dist/wheelhouse \
-  dist/ninja_pce-0.5.0-py3-none-any.whl
+  dist/ninja_pce-0.7.0-py3-none-any.whl
 ```
 
 Inspect the release version and supplied artifacts before installation. Do not
@@ -236,7 +236,7 @@ bundle:
 
 ```bash
 python3 "$ninja_release_dir/deploy/install.py" \
-  --wheel "$ninja_release_dir/ninja_pce-0.5.0-py3-none-any.whl" \
+  --wheel "$ninja_release_dir/ninja_pce-0.7.0-py3-none-any.whl" \
   --config /path/to/controller.json \
   --domain-policy /path/to/domain-policy.json \
   --output-dir build/deployment
@@ -253,7 +253,7 @@ deployment files. Prepare the dependency wheelhouse before applying the bundle.
 
 ```bash
 sudo python3 "$ninja_release_dir/deploy/install.py" \
-  --wheel "$ninja_release_dir/ninja_pce-0.5.0-py3-none-any.whl" \
+  --wheel "$ninja_release_dir/ninja_pce-0.7.0-py3-none-any.whl" \
   --wheelhouse "$ninja_release_dir/wheelhouse" \
   --config /path/to/controller.json \
   --domain-policy /path/to/domain-policy.json \
@@ -275,13 +275,28 @@ installed release is refused even when its version matches.
 
 ## Validate and activate
 
+Verify that the service imports the installed release. Inherited `PYTHONPATH`
+or `PYTHONHOME` can select a source checkout or another Python environment.
+For both controller and provisioning service overrides, set
+`UnsetEnvironment=PYTHONPATH PYTHONHOME` and use the installed interpreter's
+`-I` option for module entrypoints, preserving their complete reviewed command
+arguments. Confirm the version and module location as the service account:
+
+```bash
+sudo -u ninja-pce /opt/ninja-pce/releases/0.7.0/venv/bin/python -I -c \
+  'import ninja_pce; print(ninja_pce.__version__); print(ninja_pce.__file__)'
+```
+
+The output must identify version 0.7.0 and the intended installed package.
+Recheck the effective unit with `systemctl cat` after installing any override.
+
 Check the installed policy and service permissions, then validate and review
 the planned commands as the service account:
 
 ```bash
-sudo -u ninja-pce /opt/ninja-pce/releases/0.5.0/venv/bin/ninja-pce controller validate \
+sudo -u ninja-pce /opt/ninja-pce/releases/0.7.0/venv/bin/ninja-pce controller validate \
   --config /etc/ninja-pce/controller.json
-sudo -u ninja-pce /opt/ninja-pce/releases/0.5.0/venv/bin/ninja-pce controller plan \
+sudo -u ninja-pce /opt/ninja-pce/releases/0.7.0/venv/bin/ninja-pce controller plan \
   --config /etc/ninja-pce/controller.json
 systemctl cat ninja-controller
 ```
@@ -298,7 +313,7 @@ When the network and external GoBGP service are ready:
 sudo systemctl enable --now ninja-controller
 systemctl status ninja-controller --no-pager
 journalctl -u ninja-controller --no-pager -n 80
-sudo -u ninja-pce /opt/ninja-pce/releases/0.5.0/venv/bin/ninja-pce controller status \
+sudo -u ninja-pce /opt/ninja-pce/releases/0.7.0/venv/bin/ninja-pce controller status \
   --config /etc/ninja-pce/controller.json
 curl --fail http://127.0.0.1:8088/api/controller
 ```
@@ -330,11 +345,28 @@ reverse proxy with authentication; the dashboard HTTP server does not supply
 either. The [dashboard guide](dashboard.md) describes the proxy boundary.
 
 To enable dashboard tunnel creation, independently configure and qualify the
-SSH provisioning inventory, pinned router host keys, credential environment,
-exact operator policy, permissioned Unix socket and authenticated HTTPS origin.
-Use [configuration provisioning deployment](dashboard_provisioning_deployment.md).
-The generic application's installation does not broaden that service's approved
-headends/destinations, change its qualification gate or enable PCInitiate.
+SSH transport enrollment, pinned router host keys, credential references,
+principal policy, permissioned Unix socket and authenticated HTTPS origin.
+The opt-in [domain provisioning profile](domain_tunnel_provisioning.md) selects
+every eligible router from the fresh trusted domain, including transit routers,
+and allows every authenticated proxy principal to create within deployment
+policy. Its explicit limits support concurrent independent operations without
+router, username or tunnel-number allowlists. Transport readiness remains
+separate from topology eligibility.
+
+The [0.6.0 validation record](domain_tunnel_provisioning_validation.md) covers
+the completed two-principal/headend creation, refusal, service restart and
+RSVP/forwarding checks with preserved original authority. Its current
+`max_outstanding` is 12, with three retained held services consuming three slots;
+two qualification tunnels/holds are retained. These are
+running-configuration changes; the SSH profile does not save startup
+configuration. Cold VM/router reboot, live interactive browser operation and
+every possible path remain outside that qualification.
+
+Use [configuration provisioning deployment](dashboard_provisioning_deployment.md)
+for setup and migration of existing state. The application's installation alone
+does not change the separate backend's policy or qualification gate, and native
+RSVP PCInitiate creation remains unqualified.
 
 ## Migrate an existing controller
 

@@ -1,0 +1,4 @@
+# Build tools for the repo-local launcher, compatible with Python 3.10+.
+setuptools==84.0.0
+wheel==0.48.0
+packaging==26.3

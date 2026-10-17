@@ -44,8 +44,12 @@ class _HTTPError(Exception):
 
 
 class ProvisioningManager(Protocol):
-    headends: dict[str, str]
-    allowed_destinations: tuple[str, ...]
+    @property
+    def headends(self) -> dict[str, str]: ...
+
+    @property
+    def allowed_destinations(self) -> tuple[str, ...]: ...
+
     max_bandwidth_bps: int
     max_outstanding: int
     policy_digest: str
@@ -105,7 +109,8 @@ class TunnelAPI:
     """
 
     def __init__(self, creation: CreationSession | ProvisioningBackend, socket_path: Path, allowed_proxy_uid: int,
-                 origin: str, allowed_operator: tuple[str, ...], qualified: bool = False):
+                 origin: str, allowed_operator: tuple[str, ...] = (), qualified: bool = False, *,
+                 principal_policy: str = "allowlist"):
         parsed = urlsplit(origin)
         if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or
                 origin != f"https://{parsed.netloc}" or not parsed.netloc.isascii()):
@@ -116,10 +121,16 @@ class TunnelAPI:
             raise ValueError("Invalid tunnel API origin port") from exc
         if type(allowed_proxy_uid) is not int or allowed_proxy_uid < 0:
             raise ValueError("An exact trusted proxy UID is required")
-        if (not isinstance(allowed_operator, tuple) or not 1 <= len(allowed_operator) <= 32 or
-                len(set(allowed_operator)) != len(allowed_operator) or
-                any(not isinstance(value, str) or not _PRINCIPAL.fullmatch(value) for value in allowed_operator)):
+        if not isinstance(principal_policy, str) or principal_policy not in {"allowlist", "authenticated"}:
+            raise ValueError("Tunnel API principal policy must be allowlist or authenticated")
+        if (not isinstance(allowed_operator, tuple) or len(allowed_operator) > 32 or
+                any(not isinstance(value, str) or not _PRINCIPAL.fullmatch(value) for value in allowed_operator) or
+                len(set(allowed_operator)) != len(allowed_operator)):
             raise ValueError("A bounded exact operator principal allowlist is required")
+        if principal_policy == "allowlist" and not allowed_operator:
+            raise ValueError("An exact operator allowlist is required by legacy principal policy")
+        if principal_policy == "authenticated" and allowed_operator:
+            raise ValueError("Authenticated principal policy must not configure an operator allowlist")
         if type(qualified) is not bool:
             raise ValueError("Tunnel API qualification must be explicit boolean policy")
         self.creation, self.path = creation, Path(socket_path)
@@ -127,6 +138,7 @@ class TunnelAPI:
             raise ValueError("Tunnel API socket path must be absolute")
         self.allowed_proxy_uid, self.origin, self.host = allowed_proxy_uid, origin, parsed.netloc
         self.allowed_operator, self.qualified = allowed_operator, qualified
+        self.principal_policy = principal_policy
         self.listener: asyncio.Server | None = None
         self._sessions: dict[str, _Session] = {}
         self._active = 0
@@ -181,6 +193,25 @@ class TunnelAPI:
 
     def _uses_plan(self) -> bool:
         return getattr(self.creation, "requires_plan", False) is True
+
+    def _headends(self) -> dict[str, str]:
+        return cast(dict[str, str], getattr(self.creation, "headends", self.creation.manager.headends))
+
+    def _destinations(self) -> tuple[str, ...]:
+        return cast(tuple[str, ...], getattr(self.creation, "allowed_destinations",
+                                           self.creation.manager.allowed_destinations))
+
+    def _node_readiness(self, headends: dict[str, str]) -> dict[str, dict[str, Any]]:
+        observe = getattr(self.creation, "node_readiness", None)
+        details = observe() if callable(observe) else {}
+        result: dict[str, dict[str, Any]] = {}
+        for name in headends:
+            item = details.get(name, {})
+            enabled, reason = self._ready(name)
+            result[name] = {key: item[key] for key in ("transport_enrolled", "transport_ready", "pcc_ready")
+                            if key in item}
+            result[name].update(enabled=enabled, reason=reason)
+        return result
 
     def _ready(self, headend: str | None = None) -> tuple[bool, str]:
         if not self.qualified:
@@ -290,20 +321,26 @@ class TunnelAPI:
     async def _route(self, method: str, path: str, headers: dict[str, str], body: bytes
                      ) -> tuple[int, dict[str, Any], str | None]:
         principal = headers.get("x-ninja-principal", "")
-        if principal not in self.allowed_operator:
+        if (not _PRINCIPAL.fullmatch(principal) or
+                self.principal_policy == "allowlist" and principal not in self.allowed_operator):
             raise _HTTPError(403, "This authenticated principal is not an authorized operator.")
         if headers.get("host") != self.host or ("origin" in headers and headers["origin"] != self.origin):
             raise _HTTPError(403, "Request host or origin does not match this controller.")
         if method == "GET" and path == "/api/tunnel-options":
             enabled, reason = self._ready()
-            token, session = self._session(headers, principal)
             manager = self.creation.manager
             uses_plan = self._uses_plan()
-            options = {"headends": list(manager.headends), "destinations": list(manager.allowed_destinations),
+            headends = self._headends()
+            destinations = self._destinations()
+            node_readiness = self._node_readiness(headends)
+            token, session = self._session(headers, principal)
+            options = {"headends": list(headends), "destinations": list(destinations),
+                       "headend_readiness": node_readiness, "principal": principal,
                        "max_bandwidth_bps": manager.max_bandwidth_bps, "enabled": enabled, "reason": reason,
                        "backend": getattr(self.creation, "backend_name", "pcep-initiation"),
                        "requires_plan": uses_plan,
                        "policy": {"revision": manager.policy_digest,
+                                  "principal_policy": self.principal_policy,
                                   "max_outstanding": getattr(manager, "max_outstanding", 1),
                                   "setup_priority": 7, "hold_priority": 7, "read_only": not enabled,
                                   "forwarding_verification": "unverified",
@@ -346,10 +383,9 @@ class TunnelAPI:
         if uses_plan and not is_preview:
             fields.add("approved_plan_id")
         if (not isinstance(intent, dict) or set(intent) != fields or
-                not isinstance(intent["headend"], str) or intent["headend"] not in manager.headends or
-                not isinstance(intent["destination"], str) or intent["destination"] not in manager.allowed_destinations or
+                not isinstance(intent["headend"], str) or not isinstance(intent["destination"], str) or
                 intent["headend"] == intent["destination"] or type(intent["bandwidth_bps"]) is not int or
-                not 0 < intent["bandwidth_bps"] <= manager.max_bandwidth_bps):
+                intent["bandwidth_bps"] <= 0):
             raise _HTTPError(400, "Intent must use authorized headend, destination and positive integer bandwidth.")
         plan_id = intent.get("approved_plan_id")
         if uses_plan and not is_preview and (not isinstance(plan_id, str) or not _PLAN.fullmatch(plan_id)):
@@ -365,6 +401,9 @@ class TunnelAPI:
                         previous[0].get("plan_id") != plan_id):
                     raise _HTTPError(409, "Idempotency key is already bound to another exact intent and plan.")
                 return 202, {"operation": self._checked_operation(previous[0])}, None
+        if (intent["headend"] not in self._headends() or intent["destination"] not in self._destinations() or
+                intent["bandwidth_bps"] > manager.max_bandwidth_bps):
+            raise _HTTPError(400, "Intent must use authorized headend, destination and positive integer bandwidth.")
         # Qualified configuration backends own readiness at the durable
         # admission boundary. Checking it here would lose a definitive
         # no-write result if readiness changed after the browser's preview.

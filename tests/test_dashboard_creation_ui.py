@@ -44,8 +44,14 @@ const $test = (id) => document.getElementById(id);
 const proof = {independent:true,scope:"headend-rsvp",pcep_control:true,checks:["identity","destination","bandwidth","ero","signaling"]};
 let statusCalls = 0;
 window.fetch = async(path, options={}) => {
-  if(path==="/api/controller") return reply({schema_version:1,read_only:true,mode:"live",sources:[],lsps:[],topology:{nodes:[],links:[]},summary:{},peers:[],events:[],computations:[],refresh_seconds:60});
-  if(path==="/api/tunnel-options") return reply({headends:["PE1"],destinations:["PE3"],enabled:!(window.testScenario==="retry"&&sessionStorage.getItem("test-reloaded")),reason:"New delivery temporarily unavailable",requires_plan:true,backend:"router-config",max_bandwidth_bps:5000000,csrf_token:"c".repeat(43),policy:{read_only:false}});
+  if(path==="/api/controller") return reply({schema_version:1,read_only:true,mode:window.testScenario==="sample"?"demo":"live",sources:[],lsps:[],topology:{nodes:[],links:[]},summary:{},peers:[],events:[],computations:[],refresh_seconds:60});
+  if(path==="/api/tunnel-options") {
+    if(window.testScenario==="sample") throw new Error("Sample requested live provisioning policy");
+    if(window.testScenario==="readonly") return reply({enabled:false,headends:[],destinations:[],max_bandwidth_bps:0,reason:"RSVP bandwidth creation has not been qualified for this controller."});
+    const domain = window.testScenario.startsWith("domain"), disabled = window.testScenario==="domain-unavailable";
+    return reply({principal:window.testPrincipal||"operator",headends:domain?["P2","PE1","P1"]:["PE1"],destinations:["PE3"],enabled:!(disabled||window.testScenario==="retry"&&sessionStorage.getItem("test-reloaded")),reason:"New delivery temporarily unavailable",requires_plan:true,backend:"router-config",max_bandwidth_bps:5000000,csrf_token:"c".repeat(43),policy:{read_only:false},...(domain?{headend_readiness:{P2:{enabled:false,transport_enrolled:false,pcc_ready:true,reason:"No pinned transport identity is enrolled."},PE1:{enabled:!disabled,transport_enrolled:true,pcc_ready:!disabled,reason:disabled?"PCC session unavailable.":"Provisioning ready."},P1:{enabled:!disabled,transport_enrolled:true,pcc_ready:!disabled,reason:disabled?"PCC session unavailable.":"Provisioning ready."}}}:{})});
+  }
+  if(path.startsWith("/api/tunnel-operations/")&&["multioperations","principals"].includes(window.testScenario)) return reply({operation:{id:path.split("/").pop(),principal:window.testPrincipal||"operator",status:"PUSHING"}});
   if(path.startsWith("/api/tunnel-operations/")&&window.testScenario==="stale-status") {
     statusCalls+=1; const request=statusCalls;
     await pause(request===1?40:900);
@@ -58,7 +64,7 @@ window.fetch = async(path, options={}) => {
     return reply({plan:{plan_id:(intent.bandwidth_bps===1000000?"e":"f").repeat(64),expires_at:new Date(expiry).toISOString(),rendered_config:`interface Tunnel200\n description <test-config>\n tunnel mpls traffic-eng bandwidth ${bps/1000}\n`,path_nodes:["PE1","P1","PE3"],...intent,bandwidth_bps:bps}});
   }
   if(path==="/api/tunnels") {
-    if(window.testScenario==="stale-status") return reply({operation:{id:String(calls.filter((call)=>call.path===path).length).repeat(32),status:"PUSHING"}});
+    if(["stale-status","multioperations","principals"].includes(window.testScenario)) return reply({operation:{id:String(calls.filter((call)=>call.path===path).length).repeat(32),principal:window.testPrincipal||"operator",status:"PUSHING"}});
     if(window.testScenario==="retry" && calls.filter((call)=>call.path===path).length===1) throw new TypeError("Synthetic lost response");
     if(window.testScenario==="rejected" && calls.filter((call)=>call.path===path).length===1) return reply({operation:{id:"1".repeat(32),status:"REJECTED",reason:"Reviewed plan expired before delivery."}});
     return reply({operation:{id:"1".repeat(32),status:"VERIFIED",verified:true,verification:proof,path_nodes:["PE1","P1","PE3"]}});
@@ -68,6 +74,18 @@ window.fetch = async(path, options={}) => {
 """
 
 CASES = {
+    "sample": r"""
+      assert(!$test("demo-banner").hidden&&$test("demo-banner").textContent.includes("Sample workspace"),"Sample identity missing");
+      assert($test("demo-banner").textContent.includes("No routers are connected"),"Sample connection state unclear");
+      assert($test("view-description").textContent.includes("Explore a sample topology"),"Sample overview claims live data");
+      assert($test("activity-feed-note").textContent==="Synthetic sample events","Sample events claim captured data");
+      document.querySelector('[data-view="topology"]').click();
+      document.querySelector('[data-view="overview"]').click();
+      assert($test("view-description").textContent.includes("Explore a sample topology"),"Navigation lost sample description");
+      $test("create-tunnel-button").click(); await pause(450);
+      assert($test("creation-policy").textContent.includes("Connect and configure your network"),"Sample lacks live setup guidance");
+      assert($test("creation-fields").disabled&&$test("creation-submit").disabled&&calls.length===0,"Sample requested creation");
+    """,
     "preview": r"""
       $test("create-tunnel-button").click(); await pause(20);
       assert($test("creation-submit").disabled,"Create enabled before preview");
@@ -135,12 +153,81 @@ CASES = {
       await pause(450);
       assert(!$test("creation-submit").disabled,"First rejection did not permit a new reviewed request");
       $test("creation-submit").click(); await pause(20);
-      const newer=JSON.parse(sessionStorage.getItem("ninja-pce-creation"));
+      const newer=JSON.parse(sessionStorage.getItem("ninja-pce-creations:operator")).pending;
       assert(newer.id==="2".repeat(32),"New operation did not start");
       await pause(500);
-      const retained=JSON.parse(sessionStorage.getItem("ninja-pce-creation"));
+      const retained=JSON.parse(sessionStorage.getItem("ninja-pce-creations:operator")).pending;
       assert(retained?.id===newer.id&&retained.key===newer.key,"Delayed old rejection cleared or overwrote the newer request");
       assert($test("creation-status").textContent.includes("Operation "+newer.id),"Old response replaced the newer operation status");
+    """,
+    "domain": r"""
+      $test("create-tunnel-button").click(); await pause(450);
+      assert(Array.from($test("creation-headend").options).map((item)=>item.value).join(",")==="P2,PE1,P1","Unenrolled transit node disappeared");
+      assert($test("creation-headend").value==="PE1","Unavailable node selected by default");
+      $test("creation-headend").value="P2";
+      $test("creation-headend").dispatchEvent(new Event("change",{bubbles:true})); await pause(400);
+      assert(!$test("creation-fields").disabled,"Unavailable headend blocks inspecting other domain nodes");
+      assert($test("creation-submit").disabled,"Unenrolled transport permits creation");
+      assert($test("creation-readiness").textContent.includes("Transport enrollment required")&&$test("creation-readiness").textContent.includes("PCC synchronized"),"Transport and PCC readiness conflated");
+      assert(calls.length===1,"Unavailable headend requested another plan");
+      $test("creation-headend").value="P1";
+      $test("creation-headend").dispatchEvent(new Event("change",{bubbles:true})); await pause(400);
+      assert(!$test("creation-submit").disabled,"Qualified transit headend unavailable");
+      $test("creation-submit").click(); await pause(20);
+      assert(calls.find((call)=>call.path==="/api/tunnels").body.headend==="P1","Transit headend was replaced");
+    """,
+    "domain-unavailable": r"""
+      $test("create-tunnel-button").click(); await pause(450);
+      assert(!$test("creation-fields").disabled,"Unavailable domain cannot be inspected");
+      assert($test("creation-headend").options.length===3,"Unavailable domain nodes disappeared");
+      $test("creation-headend").value="P1";
+      $test("creation-headend").dispatchEvent(new Event("change",{bubbles:true})); await pause(400);
+      assert($test("creation-readiness").textContent.includes("PCC unavailable"),"Missing PCC reason");
+      assert($test("creation-submit").disabled&&calls.length===0,"Unavailable domain requested delivery or preview");
+    """,
+    "multioperations": r"""
+      $test("create-tunnel-button").click(); await pause(450);
+      $test("creation-submit").click(); await pause(20);
+      assert(!$test("creation-new").hidden,"Acknowledged operation blocks independent requests");
+      $test("creation-new").click(); await pause(400);
+      assert(!$test("creation-submit").disabled,"Second plan unavailable");
+      $test("creation-submit").click(); await pause(20);
+      const saved=JSON.parse(sessionStorage.getItem("ninja-pce-creations:operator"));
+      assert(saved.operations.length===2&&saved.pending.id==="2".repeat(32),"Independent operations not retained");
+      assert(saved.operations[0].key!==saved.operations[1].key,"Independent operation reused idempotency key");
+      assert($test("creation-operation-list").children.length===2,"Operation history disappeared");
+      $test("creation-operation-list").children[1].click(); await pause(20);
+      assert(JSON.parse(sessionStorage.getItem("ninja-pce-creations:operator")).pending.id==="1".repeat(32),"Existing operation not recovered for polling");
+      assert(calls.filter((call)=>call.path==="/api/tunnels").length===2,"History selection resent an operation");
+    """,
+    "principals": r"""
+      $test("create-tunnel-button").click(); await pause(450);
+      $test("creation-submit").click(); await pause(20);
+      $test("create-tunnel-close").click(); window.testPrincipal="new-user";
+      $test("create-tunnel-button").click(); await pause(450);
+      assert($test("creation-operations").hidden,"Another principal sees browser operation history");
+      assert(!$test("creation-submit").disabled,"New principal inherited another user's pending operation");
+      $test("creation-submit").click(); await pause(20);
+      const first=JSON.parse(sessionStorage.getItem("ninja-pce-creations:operator"));
+      const second=JSON.parse(sessionStorage.getItem("ninja-pce-creations:new-user"));
+      assert(first.pending.principal==="operator"&&second.pending.principal==="new-user","Stored requests not scoped to principals");
+      assert(first.pending.key!==second.pending.key,"Principal change reused another request");
+      $test("create-tunnel-close").click(); window.testPrincipal="operator";
+      $test("create-tunnel-button").click(); await pause(20);
+      assert($test("creation-status").textContent.includes("1".repeat(32)),"Original principal lost operation history");
+      assert(calls.filter((call)=>call.path==="/api/tunnels").length===2,"Principal switch resent a request");
+    """,
+    "legacy": r"""
+      sessionStorage.setItem("ninja-pce-creation",JSON.stringify({key:"legacy-key",intent:{headend:"PE1",destination:"PE3",bandwidth_bps:1000000},approved_plan_id:"e".repeat(64)}));
+      $test("create-tunnel-button").click(); await pause(450);
+      assert($test("creation-submit").disabled,"Unbound legacy request can be sent by another principal");
+      assert($test("creation-status").textContent.includes("no authenticated principal binding"),"Unbound request reconciliation is not explained");
+      assert(calls.length===0,"Legacy unknown outcome caused delivery or replacement preview");
+    """,
+    "readonly": r"""
+      $test("create-tunnel-button").click(); await pause(450);
+      assert($test("creation-policy").textContent.includes("has not been qualified"),"Read-only dashboard lost qualification reason");
+      assert($test("creation-fields").disabled&&$test("creation-submit").disabled&&calls.length===0,"Read-only dashboard requested creation");
     """,
 }
 
@@ -173,7 +260,8 @@ def test_dashboard_configuration_creation_controls(tmp_path: Path, scenario: str
         '<script src="app.js" defer></script>',
         '<script src="harness.js" defer></script><script src="app.js" defer></script>'
         '<script src="case.js" defer></script>')
-    test_case = ("window.testScenario=" + json.dumps(scenario) + ";\n(async()=>{try{await pause(10);" +
+    harness = "window.testScenario=" + json.dumps(scenario) + ";\n" + HARNESS
+    test_case = ("(async()=>{try{await pause(10);" +
                  CASES[scenario] +
                  "document.body.dataset.testResult='passed';}catch(error){"
                  "document.body.dataset.testResult='failed';"
@@ -184,7 +272,7 @@ def test_dashboard_configuration_creation_controls(tmp_path: Path, scenario: str
             pass
 
         def do_GET(self):
-            resources = {"/": (index, "text/html"), "/harness.js": (HARNESS, "text/javascript"),
+            resources = {"/": (index, "text/html"), "/harness.js": (harness, "text/javascript"),
                          "/case.js": (test_case, "text/javascript")}
             if self.path in resources:
                 value, mime = resources[self.path]

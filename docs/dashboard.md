@@ -7,13 +7,16 @@ Dark and light themes work without external assets or Internet access.
 
 ## Try the interface
 
-From the repository root, with the project installed in its virtual environment:
+From a source checkout, start the local application:
 
 ```bash
-.venv/bin/ninja-pce dashboard --demo
+./ninja-pce
 ```
 
-Open <http://127.0.0.1:8088>. A persistent **Demo** banner identifies the synthetic
+The launcher prepares its own environment. An installed package also supports
+`ninja-pce app demo`; see [getting started](getting_started.md).
+
+Open <http://127.0.0.1:8088>. A persistent **Sample workspace** banner identifies the synthetic
 six-router example. Demo mode never reads or changes live controller files.
 
 ## Show the live controller
