@@ -8,8 +8,10 @@ import hmac
 import json
 import os
 import struct
+import sys
 from dataclasses import replace
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 from test_pcep_compute import prepare
@@ -212,6 +214,18 @@ def runtime_config(tmp_path):
                          "required_peers": ["192.0.2.1"]}}
 
 
+@pytest.fixture
+def netmiko_stub(monkeypatch):
+    """Runtime policy tests import the optional adapter without opening SSH."""
+    module = ModuleType("netmiko")
+
+    def connect_handler(**kwargs):
+        raise AssertionError("Runtime policy tests must not open a configuration transport")
+
+    module.ConnectHandler = connect_handler
+    monkeypatch.setitem(sys.modules, "netmiko", module)
+
+
 def test_runtime_domain_is_explicit_and_requires_no_per_router_mapping(tmp_path):
     config = runtime_config(tmp_path)
     before = copy.deepcopy(config)
@@ -279,7 +293,7 @@ def test_area_and_domain_policy_files_cannot_alias_each_other(tmp_path, kind):
 @pytest.mark.parametrize("enroll", [True, False])
 @pytest.mark.parametrize("principal_policy", [None, "authenticated"])
 def test_runtime_wires_domain_transports_authenticated_users_and_explicit_bounds(
-        tmp_path, monkeypatch, enroll, principal_policy):
+        tmp_path, monkeypatch, netmiko_stub, enroll, principal_policy):
     config = runtime_config(tmp_path)
     config.update(origin="https://controller.example.test", proxy_uid=33, socket_path=str(tmp_path / "api.sock"),
                   pce_address="192.0.2.10", pcep_capture=str(tmp_path / "pcep.json"), max_outstanding=8,
@@ -349,7 +363,7 @@ def test_runtime_wires_domain_transports_authenticated_users_and_explicit_bounds
 
 
 @pytest.mark.parametrize("field", ["headends", "destinations"])
-def test_domain_runtime_refuses_static_endpoint_allowlists(tmp_path, field):
+def test_domain_runtime_refuses_static_endpoint_allowlists(tmp_path, netmiko_stub, field):
     config = runtime_config(tmp_path)
     config[field] = ["PE1"]
     with pytest.raises(ValueError, match="discovers headends and destinations"):
@@ -363,7 +377,7 @@ def test_domain_runtime_refuses_static_endpoint_allowlists(tmp_path, field):
     {"principal_policy": "authenticated", "operators": ["legacy-operator"]},
     {"operators": ["legacy-operator"]},
 ])
-def test_domain_runtime_refuses_additional_principal_allowlist(tmp_path, fields):
+def test_domain_runtime_refuses_additional_principal_allowlist(tmp_path, netmiko_stub, fields):
     config = {**runtime_config(tmp_path), **fields}
     with pytest.raises(ValueError, match="authenticated principals without an operator allowlist"):
         asyncio.run(cli_provisioning.serve(config))
