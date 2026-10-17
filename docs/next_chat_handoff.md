@@ -1,5 +1,10 @@
 # Ninja-PCE next-chat handoff
 
+Testing branch decision, 2026-10-17 (Africa/Nairobi): use **`main`** for
+ongoing application testing. The integration includes domain provisioning and
+the 0.7.0 local launcher. Continue from updated `main`; retain the distinction
+between current source and the qualified live 0.6.0 artifact described below.
+
 Updated 2026-10-16 (Africa/Nairobi). The current source also includes the **0.7.0**
 clone-and-run application launcher. Start with `./ninja-pce` for a labelled
 loopback-only sample, then `init`, edit the generated network configuration,
