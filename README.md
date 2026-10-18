@@ -57,6 +57,8 @@ patched GoBGP and grpcurl with provenance and a signed manifest for fresh
 observation deployments.
 Managed services report [listener ownership and startup faults](docs/runtime_startup.md)
 and bound retries while preserving the dashboard after protocol failures.
+New observers can use [authenticated guided setup](docs/authenticated_setup.md)
+to review and activate generated configurations in a separate private workspace.
 See the [application validation record](docs/application_deployment_validation.md)
 for packaging, CI and deployment evidence.
 

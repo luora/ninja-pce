@@ -3,15 +3,19 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import fcntl
 import ipaddress
 import json
 import math
 import os
 import shutil
 import signal
+import stat
 import sys
 import tempfile
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -44,6 +48,7 @@ def add_live_commands(subparsers: Any) -> None:
     bgpls.add_argument("--once", action="store_true", help="Poll once and exit")
     bgpls.add_argument("--managed-startup", action="store_true",
                        help="Return exit status 78 for permanent managed-service startup errors")
+    bgpls.add_argument("--ownership-lock", help="Prepared runtime lock held by this collector throughout publication")
 
     pcep = subparsers.add_parser("pcep-listen", help="Observe lab PCEP; enable computation with explicit options")
     pcep.add_argument("--listen-host", default="127.0.0.1", help="Bind address; select the lab NIC explicitly")
@@ -139,8 +144,47 @@ def _stop_collector(_signum: int, _frame: Any) -> None:
     raise KeyboardInterrupt
 
 
+@contextmanager
+def _collector_ownership(value: str | None, protected: list[Path]) -> Iterator[None]:
+    """Fence a managed writer even if its supervising process disappears."""
+    if value is None:
+        yield
+        return
+    from .startup import PermanentStartupError, startup_finding
+
+    path = Path(value).expanduser().absolute()
+    resolved = path.resolve()
+    if any(resolved == candidate.resolve() or resolved in candidate.resolve().parents or
+           candidate.resolve() in resolved.parents for candidate in protected):
+        raise ValueError("Collector ownership lock must be distinct from every input and output")
+    if resolved != path:
+        raise ValueError("Collector ownership lock and its parents must not be symbolic links")
+    for directory in reversed((path.parent, *path.parent.parents)):
+        if not directory.exists():
+            directory.mkdir(mode=0o700)
+    parent = path.parent.lstat()
+    if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.getuid() or
+            stat.S_IMODE(parent.st_mode) & 0o022):
+        raise ValueError("Collector ownership lock requires an owned directory without group or world write access")
+    descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, 0o600)
+    try:
+        metadata = os.fstat(descriptor)
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or
+                stat.S_IMODE(metadata.st_mode) != 0o600 or metadata.st_nlink != 1):
+            raise ValueError("Collector ownership lock must be a private ordinary file owned by this account")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise PermanentStartupError(startup_finding(
+                "BGPLS_ALREADY_COLLECTING", "bgpls", "Another collector still owns this workspace's observation outputs.",
+                "Use the existing collector's managed shutdown and reconcile locally before starting another writer.")) from error
+        yield
+    finally:
+        os.close(descriptor)
+
+
 def collect_bgpls(args: argparse.Namespace) -> int:
-    from .bgpls import GoBgpTopologyProvider, parse_gobgp_snapshot, topology_document
+    from .bgpls import GoBgpTopologyProvider
 
     if getattr(args, "managed_startup", False) and shutil.which(args.grpcurl) is None:
         from .startup import PermanentStartupError, startup_finding
@@ -166,6 +210,19 @@ def collect_bgpls(args: argparse.Namespace) -> int:
     inputs = [Path(value).resolve() for value in (args.node_map, args.ospf_multi_area_policy) if value]
     if any(path.resolve() in inputs for path in paths):
         raise ValueError("Collector outputs must be distinct from node-map and OSPF policy inputs")
+    protected = paths + inputs + [Path(args.proto)]
+    executable = shutil.which(args.grpcurl)
+    if executable is not None:
+        protected.append(Path(executable))
+    with _collector_ownership(getattr(args, "ownership_lock", None), protected):
+        return _collect_bgpls_owned(args, provider, names, ospf_multi_area, peers, output, status)
+
+
+def _collect_bgpls_owned(args: argparse.Namespace, provider: Any, names: dict[str, str],
+                         ospf_multi_area: OspfMultiAreaPolicy | None, peers: tuple[str, ...],
+                         output: Path, status: Path) -> int:
+    from .bgpls import parse_gobgp_snapshot, topology_document
+
     previous_sigterm = signal.signal(signal.SIGTERM, _stop_collector)
     try:
         while True:

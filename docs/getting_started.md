@@ -1,5 +1,19 @@
 # Get started from a clone
 
+## Authenticated first-launch option
+
+For a new observer, [guided setup](authenticated_setup.md) provides a local
+administrator account, typed forms and reviewed configuration activation:
+
+~~~bash
+./ninja-pce admin init
+./ninja-pce admin serve --grpcurl /path/to/grpcurl --gobgpd /path/to/gobgpd
+~~~
+
+Keep the enrollment token private and open http://127.0.0.1:8080/setup. Use
+the verified release's installed commands when working offline. Existing
+workspaces keep the application workflow below and their original state.
+
 Ninja-PCE includes a local application launcher for Linux and macOS. It creates
 an isolated Python environment in the checkout, so you can use the application
 without activating a virtual environment or installing the package globally.

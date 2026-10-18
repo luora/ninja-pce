@@ -66,7 +66,7 @@ def test_fresh_bundle_render_is_observation_only_and_cross_host(options, verifie
     output = Path(options.output_dir)
     assert {path.name for path in output.iterdir()} == {
         "controller.json", "domain-policy.json", "gobgpd.toml", "ninja-controller.service",
-        "ninja-gobgpd.service", "deployment-manifest.json",
+        "ninja-gobgpd.service", "ninja-admin.service", "deployment-manifest.json",
     }
     document = json.loads(plan.controller)
     assert document["bgpls"]["grpcurl"] == str(plan.release / "bin/grpcurl")
@@ -84,6 +84,11 @@ def test_fresh_bundle_render_is_observation_only_and_cross_host(options, verifie
     assert "--api-address 127.0.0.1 --api-port 50051 --service ninja-gobgpd.service" in gobgp
     assert "StartLimitIntervalSec=60\nStartLimitBurst=3" in gobgp
     assert "RestartPreventExitStatus=78" in gobgp
+    admin = plan.admin_unit().decode()
+    assert f'ExecStart="{plan.python}" -I -m ninja_pce.cli admin serve --directory ' in admin
+    assert f'"{plan.data_dir / "admin-workspace"}"' in admin
+    assert "--port 8080 --managed-startup" in admin
+    assert "TimeoutStopSec=90" in admin
     assert "port = -1" in plan.gobgp_config.decode()
     assert "[[neighbors]]" not in plan.gobgp_config.decode()
     deployment_manifest = json.loads((output / "deployment-manifest.json").read_text())
@@ -109,6 +114,13 @@ def test_required_inputs_fail_before_render(arguments, message, tmp_path, capsys
 def test_bundle_refuses_unverified_overrides(options, verified, field):
     setattr(options, field, "/untrusted/payload")
     with pytest.raises(ValueError, match="verified wheel and wheelhouse"):
+        installer.deployment(options, verified)
+
+
+@pytest.mark.parametrize("name", ["ninja-gobgpd", "ninja-admin"])
+def test_bundle_reserves_managed_unit_names(options, verified, name):
+    options.unit_name = name
+    with pytest.raises(ValueError, match="must differ"):
         installer.deployment(options, verified)
 
 
@@ -164,7 +176,7 @@ def test_bundle_render_cannot_add_unsigned_output_to_release(options, verified):
     assert not Path(options.output_dir).exists()
 
 
-@pytest.mark.parametrize("conflict", ["gobgpd.toml", "ninja-gobgpd.service"])
+@pytest.mark.parametrize("conflict", ["gobgpd.toml", "ninja-gobgpd.service", "ninja-admin.service"])
 def test_bundle_preflight_preserves_existing_gobgp_configuration_and_unit(options, verified, conflict):
     plan = installer.deployment(options, verified)
     target = (plan.config_dir if conflict.endswith(".toml") else plan.unit_dir) / conflict
@@ -241,9 +253,12 @@ def test_verified_install_stages_tools_before_mutation_and_never_activates(mocke
     for name, contents in plan.configuration_files().items():
         assert (plan.config_dir / name).read_bytes() == contents
     assert (plan.unit_dir / "ninja-gobgpd.service").read_bytes() == plan.gobgp_unit()
+    assert (plan.unit_dir / "ninja-admin.service").read_bytes() == plan.admin_unit()
+    assert not plan.admin_workspace.exists()
     assert [args for args, _ in commands if args[0] == "systemctl"] == [["systemctl", "daemon-reload"]]
     assert sum("pip" in args for args, _ in commands) == 2
     assert sum("validate" in args for args, _ in commands) == 2
+    assert not any("admin" in args or "enable" in args or "start" in args for args, _ in commands)
 
 
 def test_invalid_gobgp_dry_run_leaves_installation_untouched(mocked_system, monkeypatch):
@@ -338,6 +353,7 @@ def test_generated_bundle_units_are_accepted_by_systemd_with_spaced_paths(option
         executable.write_text("#!/bin/sh\nexit 0\n")
         executable.chmod(0o755)
     plan.unit_dir.mkdir()
+    assert set(plan.service_files()) == {"ninja-controller.service", "ninja-gobgpd.service", "ninja-admin.service"}
     units = []
     for name, contents in plan.service_files().items():
         unit = plan.unit_dir / name

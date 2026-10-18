@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import configparser
 import shlex
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -28,7 +29,7 @@ def parsed_unit(contents: bytes) -> configparser.ConfigParser:
     return unit
 
 
-@pytest.mark.parametrize("unit_method", ["unit", "gobgp_unit"])
+@pytest.mark.parametrize("unit_method", ["unit", "gobgp_unit", "admin_unit"])
 def test_managed_units_stop_configuration_failures_and_bound_other_restarts(managed_plan, unit_method):
     unit = parsed_unit(getattr(managed_plan, unit_method)())
     assert unit["Unit"]["StartLimitIntervalSec"] == "60"
@@ -55,6 +56,38 @@ def test_gobgp_launches_installed_python_wrapper_with_unambiguous_spaced_paths(m
     for setting in ("NoNewPrivileges", "PrivateTmp", "ProtectHome"):
         assert unit["Service"][setting] == "true"
     assert unit["Service"]["ProtectSystem"] == "strict"
+
+
+def test_admin_is_separate_authenticated_management_with_explicit_workspace_setup(managed_plan):
+    unit = parsed_unit(managed_plan.admin_unit())
+    assert shlex.split(unit["Service"]["ExecStart"]) == [
+        str(managed_plan.python), "-I", "-m", "ninja_pce.cli", "admin", "serve",
+        "--directory", str(managed_plan.data_dir / "admin-workspace"),
+        "--grpcurl", str(managed_plan.release / "bin/grpcurl"),
+        "--gobgpd", str(managed_plan.release / "bin/gobgpd"), "--port", "8080", "--managed-startup",
+    ]
+    assert unit["Service"]["User"] == managed_plan.service_user
+    assert unit["Service"]["Group"] == managed_plan.service_group
+    assert unit["Service"]["WorkingDirectory"] == str(managed_plan.data_dir)
+    assert shlex.split(unit["Service"]["ReadWritePaths"]) == [str(managed_plan.data_dir)]
+    assert unit["Service"]["UnsetEnvironment"] == "PYTHONPATH PYTHONHOME"
+    assert unit["Service"]["TimeoutStopSec"] == "90"
+    assert unit["Service"]["UMask"] == "0077"
+    assert unit["Service"]["AmbientCapabilities"] == "CAP_NET_BIND_SERVICE"
+    assert unit["Service"]["CapabilityBoundingSet"] == "CAP_NET_BIND_SERVICE"
+    assert unit["Service"]["ProtectSystem"] == "strict"
+    for setting in ("NoNewPrivileges", "PrivateTmp", "ProtectHome"):
+        assert unit["Service"][setting] == "true"
+    for dependency in ("Requires", "BindsTo", "PartOf"):
+        assert dependency not in unit["Unit"]
+    assert "ExecStartPre" not in unit["Service"] and "ExecStartPost" not in unit["Service"]
+
+
+def test_legacy_wheel_deployment_cannot_claim_managed_administration(managed_plan):
+    legacy = replace(managed_plan, bundle=None)
+    assert set(legacy.service_files()) == {"ninja-controller.service"}
+    with pytest.raises(ValueError, match="authenticated release bundle"):
+        legacy.admin_unit()
 
 
 @pytest.mark.parametrize("name", ["ninja-bgpls", "ninja-pcep", "ninja-dashboard"])

@@ -120,7 +120,7 @@ Keep --output-dir outside the signed bundle; adding review files inside it
 would invalidate its inventory, so the installer refuses that destination.
 
 Review controller.json, domain-policy.json, gobgpd.toml,
-ninja-controller.service, ninja-gobgpd.service and deployment-manifest.json.
+ninja-controller.service, ninja-gobgpd.service, ninja-admin.service and deployment-manifest.json.
 The bootstrap configuration has no BGP peers, disables the BGP listener with
 port = -1, and binds the GoBGP gRPC API to 127.0.0.1:50051. GoBGP creates a
 BGP listener only for a positive port in the
@@ -158,6 +158,12 @@ permanent startup errors without retries. Other failures have bounded restart
 attempts. It binds its API only to loopback. Profiling/metrics listeners are disabled, including during
 configuration validation. The controller reads GoBGP through the bundled
 grpcurl and packaged read-only protobuf schema.
+
+For authenticated first-launch configuration, the optional ninja-admin unit
+owns a separate new observer workspace and its protocol children. Follow the
+[guided setup procedure](authenticated_setup.md) to initialize its account
+explicitly and choose it instead of competing controller/GoBGP units. The
+installer does not create a bootstrap token or administrator automatically.
 
 For a configured topology source, supply all three reviewed inputs together:
 

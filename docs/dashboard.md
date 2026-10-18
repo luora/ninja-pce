@@ -1,5 +1,12 @@
 # Controller dashboard
 
+## Authenticated setup for new observers
+
+The separate [guided setup service](authenticated_setup.md) protects its setup
+and observation views with a local administrator session. It stays available
+while configuring a new observer. The existing standalone dashboard described
+below retains its read-only access model and reverse-proxy boundary.
+
 The `feat/controller-dashboard` branch adds a read-only, UniFi-inspired web interface
 for topology, BGP-LS/PCEP peers, reported LSPs, computations and recent PCEP events.
 It uses the existing controller observations and needs no additional web packages.

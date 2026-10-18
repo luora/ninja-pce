@@ -28,6 +28,8 @@ Usage: ./ninja-pce [command] [options]
   doctor            Validate workspace configuration and local prerequisites
   start             Run the live controller using your workspace configuration
   status            Inspect the configured controller
+  admin init        Create a separate authenticated observation setup workspace
+  admin serve       Open guided setup at http://127.0.0.1:8080/setup
 
 init accepts --directory; doctor/start/status accept --config.
 Other commands are passed to the installed Ninja-PCE CLI.

@@ -361,6 +361,7 @@ def _validate_paths(data: dict[str, Any], source: Path) -> None:
         raise ValueError("Protocol inputs and outputs must be outside the wrapper runtime_dir")
     reserved = [str(runtime_dir / f".ninja-pce-controller-{component}{suffix}")
                 for component in COMPONENTS for suffix in (".json", ".lock", "-startup.json")]
+    reserved.append(str(runtime_dir / ".ninja-pce-bgpls-writer.lock"))
     all_paths = inputs + outputs
     if len(all_paths) != len(set(all_paths)) or set(all_paths) & set(reserved):
         raise ValueError("Controller input, output, journal and runtime paths must be distinct")
@@ -390,7 +391,8 @@ def component_commands(config: ControllerConfig, components: list[str] | tuple[s
     collector = [*prefix, "bgpls-collect", "--endpoint", bgpls["endpoint"], "--grpcurl", bgpls["grpcurl"],
                  "--proto", bgpls["proto_path"], "--output", outputs["topology"], "--status", outputs["bgpls_status"],
                  "--raw", outputs["bgpls_raw"], "--interval", str(bgpls["interval_seconds"]),
-                 "--timeout", str(bgpls["timeout_seconds"]), "--max-age", str(bgpls["max_age_seconds"])]
+                 "--timeout", str(bgpls["timeout_seconds"]), "--max-age", str(bgpls["max_age_seconds"]),
+                 "--ownership-lock", str(Path(data["runtime_dir"]) / ".ninja-pce-bgpls-writer.lock")]
     listener = [*prefix, "pcep-listen", "--listen-host", pcep["listen_host"], "--port", str(pcep["port"]),
                 "--capture", outputs["pcep_capture"], "--keepalive", str(pcep["keepalive_seconds"]),
                 "--deadtimer", str(pcep["deadtimer_seconds"]), "--compute-bgpls-raw", outputs["bgpls_raw"],

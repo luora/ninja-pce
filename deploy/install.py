@@ -30,6 +30,7 @@ UNIT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.@-]{0,63}\Z")
 VERSION = re.compile(r"[0-9][A-Za-z0-9_.+-]{0,63}\Z")
 PATH = re.compile(r"/[A-Za-z0-9_./+ -]+\Z")
 GOBGP_UNIT = "ninja-gobgpd"
+ADMIN_UNIT = "ninja-admin"
 
 
 def observation_configuration(config_dir: Path, data_dir: Path) -> dict[str, Any]:
@@ -238,6 +239,33 @@ class Deployment:
                 "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n"
                 "[Install]\nWantedBy=multi-user.target\n").encode()
 
+    @property
+    def admin_workspace(self) -> Path:
+        return self.data_dir / "admin-workspace"
+
+    def admin_unit(self) -> bytes:
+        if self.bundle is None:
+            raise ValueError("Managed administration requires an authenticated release bundle")
+        quote = json.dumps
+        return ("[Unit]\nDescription=Ninja-PCE observation administration\n"
+                "Wants=network-online.target\nAfter=network-online.target\n"
+                "StartLimitIntervalSec=60\nStartLimitBurst=3\n\n"
+                "[Service]\nType=simple\n"
+                f"User={self.service_user}\nGroup={self.service_group}\n"
+                f"WorkingDirectory={self.data_dir}\n"
+                f"ExecStart={quote(str(self.python))} -I -m ninja_pce.cli admin serve --directory "
+                f"{quote(str(self.admin_workspace))} --grpcurl {quote(str(self.release / 'bin/grpcurl'))} "
+                f"--gobgpd {quote(str(self.release / 'bin/gobgpd'))} --port 8080 --managed-startup\n"
+                "UnsetEnvironment=PYTHONPATH PYTHONHOME\n"
+                "Restart=on-failure\nRestartSec=5\nRestartPreventExitStatus=78\n"
+                "TimeoutStopSec=90\nUMask=0077\n"
+                "AmbientCapabilities=CAP_NET_BIND_SERVICE\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE\n"
+                "NoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nProtectHome=true\n"
+                f"ReadWritePaths={quote(str(self.data_dir))}\n"
+                f"RuntimeDirectory={ADMIN_UNIT}\n"
+                "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n"
+                "[Install]\nWantedBy=multi-user.target\n").encode()
+
     def configuration_files(self) -> dict[str, bytes]:
         result = {"controller.json": self.controller, "domain-policy.json": self.domain_policy}
         if self.bundle is not None:
@@ -249,6 +277,7 @@ class Deployment:
         result = {f"{self.unit_name}.service": self.unit()}
         if self.bundle is not None:
             result[f"{GOBGP_UNIT}.service"] = self.gobgp_unit()
+            result[f"{ADMIN_UNIT}.service"] = self.admin_unit()
         return result
 
     def manifest(self) -> dict[str, Any]:
@@ -280,8 +309,8 @@ def deployment(args: argparse.Namespace, bundle: Any = None) -> Deployment:
             raise ValueError("Service user/group must be a safe non-root system account name")
     if not UNIT.fullmatch(args.unit_name) or args.unit_name.endswith(".service"):
         raise ValueError("Unit name must be a safe systemd name without the .service suffix")
-    if bundle is not None and args.unit_name == GOBGP_UNIT:
-        raise ValueError("Controller unit name must differ from the managed GoBGP unit")
+    if bundle is not None and args.unit_name in {GOBGP_UNIT, ADMIN_UNIT}:
+        raise ValueError("Controller unit name must differ from the managed GoBGP and administration units")
     prefix, config_dir, data_dir, unit_dir = (
         absolute_path(value) for value in (args.prefix, args.config_dir, args.data_dir, args.unit_dir))
     # Persistent configuration, journals and source must be separate trees.

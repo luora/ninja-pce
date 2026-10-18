@@ -37,6 +37,7 @@ from .startup import (
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from .admin import add_admin_commands
     parser = argparse.ArgumentParser(
         prog="ninja-pce",
         description="CSPF, topology reconciliation, and approved RSVP-TE config delivery.",
@@ -151,6 +152,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_controller_commands(sub)
     add_application_commands(sub)
     add_runtime_commands(sub)
+    add_admin_commands(sub)
     return parser
 
 
@@ -660,6 +662,10 @@ def main(argv: list[str] | None = None) -> int:
             return application_command(args)
         if args.command == "runtime":
             return runtime_command(args)
+        if args.command == "admin":
+            from .admin import admin_command
+
+            return admin_command(args)
         parser.error(f"Unknown command: {args.command}")
         return 2
     except CspfSearchLimit as exc:
