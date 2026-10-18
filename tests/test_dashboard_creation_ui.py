@@ -42,6 +42,17 @@ const pause = (ms) => new Promise((resolve)=>setTimeout(resolve,ms));
 const assert = (value,message) => {if(!value)throw new Error(message);};
 const $test = (id) => document.getElementById(id);
 const proof = {independent:true,scope:"headend-rsvp",pcep_control:true,checks:["identity","destination","bandwidth","ero","signaling"]};
+const capabilityFixture=(nodes,available=true)=>({schema_version:1,capability:"tunnel_creation",generated_at:new Date().toISOString(),
+ scope:"existing-qualified-profile",available,informational:true,submission_revalidated:true,control_authority_verified:false,
+ control_ownership_verified:false,production_available:false,forwarding_verified:false,
+ checks:Object.fromEntries(["authenticated_operator","provisioning_service_ready","api_qualified","backend_qualified","backend_supported",
+  "writes_enabled","topology_ready","pcep_listener_ready","pcep_authorized","recovery_clear","topology_policy_matches"].map(key=>
+  [key,{state:"pass",required:true,code:"PREREQUISITE_OBSERVED",message:"Prerequisite observed.",next_action:""}])),
+ headends:Object.fromEntries(Object.entries(nodes).map(([name,node])=>[name,{available:node.enabled,
+  checks:Object.fromEntries(["domain_eligible","transport_enrolled","transport_ready","synchronized_headend"].map(key=>
+   [key,{state:(key==="transport_enrolled"&&node.transport_enrolled===false||key==="synchronized_headend"&&node.pcc_ready===false)?"fail":"pass",
+    required:true,code:"HEADEND_PREREQUISITE",message:node.reason||"Headend prerequisite observed.",next_action:node.enabled?"":"Review the selected headend."}]))}])),
+ next_action:"Review the exact plan before approval.",limitations:["Cross-controller ownership is unverified; production eligibility is unavailable."]});
 let statusCalls = 0;
 window.fetch = async(path, options={}) => {
   if(path==="/api/controller") return reply({schema_version:1,read_only:true,mode:window.testScenario==="sample"?"demo":"live",sources:[],lsps:[],topology:{nodes:[],links:[]},summary:{},peers:[],events:[],computations:[],refresh_seconds:60});
@@ -49,7 +60,9 @@ window.fetch = async(path, options={}) => {
     if(window.testScenario==="sample") throw new Error("Sample requested live provisioning policy");
     if(window.testScenario==="readonly") return reply({enabled:false,headends:[],destinations:[],max_bandwidth_bps:0,reason:"RSVP bandwidth creation has not been qualified for this controller."});
     const domain = window.testScenario.startsWith("domain"), disabled = window.testScenario==="domain-unavailable";
-    return reply({principal:window.testPrincipal||"operator",headends:domain?["P2","PE1","P1"]:["PE1"],destinations:["PE3"],enabled:!(disabled||window.testScenario==="retry"&&sessionStorage.getItem("test-reloaded")),reason:"New delivery temporarily unavailable",requires_plan:true,backend:"router-config",max_bandwidth_bps:5000000,csrf_token:"c".repeat(43),policy:{read_only:false},...(domain?{headend_readiness:{P2:{enabled:false,transport_enrolled:false,pcc_ready:true,reason:"No pinned transport identity is enrolled."},PE1:{enabled:!disabled,transport_enrolled:true,pcc_ready:!disabled,reason:disabled?"PCC session unavailable.":"Provisioning ready."},P1:{enabled:!disabled,transport_enrolled:true,pcc_ready:!disabled,reason:disabled?"PCC session unavailable.":"Provisioning ready."}}}:{})});
+    const enabled=!(disabled||window.testScenario==="retry"&&sessionStorage.getItem("test-reloaded"));
+    const nodes=domain?{P2:{enabled:false,transport_enrolled:false,pcc_ready:true,reason:"No pinned transport identity is enrolled."},PE1:{enabled:!disabled,transport_enrolled:true,pcc_ready:!disabled,reason:disabled?"PCC session unavailable.":"Provisioning ready."},P1:{enabled:!disabled,transport_enrolled:true,pcc_ready:!disabled,reason:disabled?"PCC session unavailable.":"Provisioning ready."}}:{PE1:{enabled,transport_enrolled:true,pcc_ready:true,reason:"Provisioning ready."}};
+    return reply({principal:window.testPrincipal||"operator",headends:domain?["P2","PE1","P1"]:["PE1"],destinations:["PE3"],enabled,reason:"New delivery temporarily unavailable",requires_plan:true,backend:"router-config",max_bandwidth_bps:5000000,csrf_token:"c".repeat(43),policy:{read_only:false},headend_readiness:nodes,capability:capabilityFixture(nodes,enabled)});
   }
   if(path.startsWith("/api/tunnel-operations/")&&["multioperations","principals"].includes(window.testScenario)) return reply({operation:{id:path.split("/").pop(),principal:window.testPrincipal||"operator",status:"PUSHING"}});
   if(path.startsWith("/api/tunnel-operations/")&&window.testScenario==="stale-status") {

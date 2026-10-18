@@ -157,8 +157,9 @@ def create_admin_server(store: AdminStore, *, host: str = "127.0.0.1", port: int
                 readiness = store.snapshot()["readiness"]
                 self.respond(200 if readiness["ready"] else 503, readiness)
             elif path == "/api/tunnel-options":
-                self.respond(200, {"enabled": False, "headends": [], "destinations": [], "max_bandwidth_bps": 0,
-                                   "reason": "Observation setup does not enable tunnel provisioning.", "policy": {"read_only": True}})
+                from .tunnel_capabilities import observer_options
+
+                self.respond(200, observer_options(store.snapshot(), authenticated=True))
             else:
                 self.respond(404, {"error": "NOT_FOUND", "message": "Unknown administration route."})
 

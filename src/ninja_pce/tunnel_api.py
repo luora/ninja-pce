@@ -21,6 +21,7 @@ from urllib.parse import urlsplit
 
 from .cspf import CspfNoPath, CspfSearchLimit
 from .pcep_creation import CreationSession
+from .tunnel_capabilities import capability_report, check
 
 _HEADERS = 8192
 _BODY = 1024
@@ -252,6 +253,86 @@ class TunnelAPI:
                 raise _HTTPError(503, "Creation acknowledgment cannot establish independent RSVP verification.")
         return operation
 
+    def _capability_options(self) -> dict[str, Any]:
+        """Sample structured backend evidence, retaining legacy options fields.
+
+        Legacy backends retain their API behavior but cannot acquire capability
+        claims from generic readiness prose. No method here admits an operation.
+        """
+        uses_plan = self._uses_plan()
+        supported = (uses_plan and getattr(self.creation, "backend_name", None) == "router-config" and
+                     getattr(self.creation, "independent_verification", False) is True)
+        checks = {
+            "authenticated_operator": check("pass", "PROVISIONING_OPERATOR_AUTHENTICATED",
+                "The trusted Unix proxy authenticated an authorized operator.", "Keep the current principal-bound session and CSRF boundary."),
+            "provisioning_service_ready": check("pass", "PROVISIONING_SERVICE_RESPONDING",
+                "The qualified provisioning API is responding; delivery prerequisites are checked separately.",
+                "Review every selected-headend prerequisite before previewing a plan."),
+            "api_qualified": check("pass" if self.qualified else "fail", "PROVISIONING_API_QUALIFIED" if self.qualified else "PROVISIONING_API_UNQUALIFIED",
+                "This API is explicitly enabled for its existing qualified profile." if self.qualified else
+                "This API has no explicit provisioning qualification.", "Qualify the exact deployment privately before enabling its API."),
+            "backend_supported": check("pass" if supported else "fail", "EXACT_PLAN_BACKEND_SUPPORTED" if supported else "PROVISIONING_BACKEND_UNSUPPORTED",
+                "The existing exact-plan router configuration and independent RSVP verification backend is selected." if supported else
+                "The capability workflow requires the existing qualified exact-plan configuration backend.",
+                "Use the independently qualified IOS XE configuration profile; native initiation remains separately unqualified."),
+        }
+        observe = getattr(self.creation, "capability_observations", None)
+        if callable(observe):
+            try:
+                observations = observe()
+                if not isinstance(observations, dict) or not isinstance(observations.get("checks"), dict):
+                    raise ValueError("Invalid capability observations")
+                headends = observations.get("headend_addresses")
+                destinations = observations.get("destinations")
+                node_observations = observations.get("headends")
+                if (not isinstance(headends, dict) or not isinstance(destinations, list) or
+                        not isinstance(node_observations, dict) or len(headends) > 256 or len(destinations) > 256 or
+                        any(not isinstance(name, str) or not name or len(name) > 128 for name in [*headends, *destinations]) or
+                        set(node_observations) != set(headends)):
+                    raise ValueError("Invalid bounded endpoint observations")
+                # Authentication and API qualification come from this boundary,
+                # never from a backend-supplied capability projection.
+                checks = {**observations["checks"], **checks}
+                endpoint_pairs = {name: any(destination != name for destination in destinations) for name in headends}
+                node_observations = {name: {"checks": {
+                    **(item.get("checks", {}) if isinstance(item, dict) and isinstance(item.get("checks"), dict) else {}),
+                    "destination_available": check("pass" if endpoint_pairs[name] else "fail",
+                        "DISTINCT_DESTINATION_AVAILABLE" if endpoint_pairs[name] else "DISTINCT_DESTINATION_UNAVAILABLE",
+                        "A distinct authorized destination is available." if endpoint_pairs[name] else
+                        "No distinct authorized destination is available for this headend.",
+                        "Wait for trusted domain discovery or review the authorized destination scope."),
+                }} for name, item in node_observations.items()}
+                capability = capability_report(checks, node_observations, scope="existing-qualified-profile",
+                                               enabled=self.qualified, node_enabled=endpoint_pairs)
+                ready = capability["available"]
+                failed = [item for item in capability["checks"].values() if item["required"] and item["state"] != "pass"]
+                reason = "" if ready else failed[0]["message"] if failed else "No selected headend meets the current provisioning prerequisites."
+                node_readiness = {}
+                for name, node in capability["headends"].items():
+                    node_checks = node["checks"]
+                    failed_node = [item for item in node_checks.values() if item["required"] and item["state"] != "pass"]
+                    node_readiness[name] = {"enabled": node["available"], "reason": failed_node[0]["message"] if failed_node else reason,
+                        "transport_enrolled": node_checks["transport_enrolled"]["state"] == "pass",
+                        "transport_ready": node_checks["transport_ready"]["state"] == "pass",
+                        "pcc_ready": node_checks["synchronized_headend"]["state"] == "pass"}
+                return {"enabled": ready, "reason": reason, "headends": list(headends), "destinations": destinations,
+                        "headend_readiness": node_readiness, "capability": capability}
+            except (ValueError, OSError, RuntimeError, TypeError, KeyError, AttributeError, RecursionError, OverflowError):
+                capability = capability_report(checks, {}, scope="existing-qualified-profile", enabled=False)
+                return {"enabled": False, "reason": "Current structured provisioning evidence is unavailable.",
+                        "headends": [], "destinations": [], "headend_readiness": {}, "capability": capability}
+        try:
+            enabled, reason = self._ready()
+            headends = self._headends()
+            destinations = self._destinations()
+            node_readiness = self._node_readiness(headends)
+        except (ValueError, OSError, RuntimeError, TypeError, KeyError, AttributeError, RecursionError) as exc:
+            raise _HTTPError(503, "Current provisioning observations are unavailable.") from exc
+        capability = capability_report(checks, {name: {} for name in headends},
+                                       scope="existing-qualified-profile", enabled=False)
+        return {"enabled": enabled, "reason": reason, "headends": list(headends), "destinations": list(destinations),
+                "headend_readiness": node_readiness, "capability": capability}
+
     def _cookie_session(self, headers: dict[str, str], principal: str) -> tuple[str, _Session] | None:
         tokens = []
         for part in headers.get("cookie", "").split(";"):
@@ -327,16 +408,13 @@ class TunnelAPI:
         if headers.get("host") != self.host or ("origin" in headers and headers["origin"] != self.origin):
             raise _HTTPError(403, "Request host or origin does not match this controller.")
         if method == "GET" and path == "/api/tunnel-options":
-            enabled, reason = self._ready()
             manager = self.creation.manager
             uses_plan = self._uses_plan()
-            headends = self._headends()
-            destinations = self._destinations()
-            node_readiness = self._node_readiness(headends)
+            observed_options = self._capability_options()
+            enabled = observed_options["enabled"]
             token, session = self._session(headers, principal)
-            options = {"headends": list(headends), "destinations": list(destinations),
-                       "headend_readiness": node_readiness, "principal": principal,
-                       "max_bandwidth_bps": manager.max_bandwidth_bps, "enabled": enabled, "reason": reason,
+            options = {**observed_options, "principal": principal,
+                       "max_bandwidth_bps": manager.max_bandwidth_bps,
                        "backend": getattr(self.creation, "backend_name", "pcep-initiation"),
                        "requires_plan": uses_plan,
                        "policy": {"revision": manager.policy_digest,

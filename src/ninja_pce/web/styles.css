@@ -234,6 +234,18 @@ dialog .kv{border-top:1px solid var(--border);border-bottom:1px solid var(--bord
 /* Operator intent dialog; topology rendering remains independent of creation. */
 #create-tunnel-dialog { width: min(520px, calc(100vw - 32px)); }
 .creation-policy { border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 13px; }
+.creation-capability { border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 12px; overflow-wrap: anywhere; }
+.creation-capability h3 { margin: 0 0 8px; font-size: 13px; }
+#creation-capability-checks { padding-left: 20px; max-height: 240px; overflow: auto; }
+#creation-capability-checks li { margin: 10px 0; }
+#creation-capability-checks strong, #creation-capability-checks small { display: block; }
+#creation-capability-checks [data-state="fail"] strong { color: var(--red); }
+#creation-capability-checks [data-state="unknown"] strong { color: var(--text-2); }
+.creation-stages { display: grid; gap: 6px; padding-left: 24px; margin: 18px 0; font-size: 12px; }
+.creation-stages li span { color: var(--text-3); margin-left: 8px; }
+.creation-stages [aria-current="step"] { font-weight: 600; }
+.creation-stages [data-state="complete"] span { color: var(--green); }
+.creation-stages [data-state="uncertain"] span, .creation-stages [data-state="failed"] span { color: var(--red); }
 #creation-fields { border: 0; margin: 18px 0; padding: 0; }
 .creation-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 #creation-fields label { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }

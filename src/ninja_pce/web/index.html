@@ -99,6 +99,16 @@
     <div class="dialog-heading"><h2 id="create-tunnel-heading">Create tunnel</h2><button class="button compact" id="create-tunnel-close" type="button">Close</button></div>
     <p class="muted">Create an RSVP-TE LSP between two routers. Customer traffic steering is configured separately.</p>
     <p id="creation-policy" class="creation-policy">Checking authenticated access and domain policy…</p>
+    <section class="creation-capability" aria-labelledby="creation-capability-heading">
+      <h3 id="creation-capability-heading">Creation prerequisites</h3>
+      <p id="creation-capability-status" role="status" aria-live="polite">Availability is unconfirmed.</p>
+      <p id="creation-capability-scope" class="muted">Eligibility does not grant write authority. Cross-controller ownership and traffic forwarding remain unverified.</p>
+      <ul id="creation-capability-checks"></ul>
+      <p id="creation-next-action" class="muted"></p>
+      <ul id="creation-capability-limitations" class="muted"></ul>
+      <button class="button compact" id="creation-refresh" type="button">Refresh availability</button>
+    </section>
+    <ol id="creation-stages" class="creation-stages" aria-label="Tunnel workflow"></ol>
     <form id="create-tunnel-form">
       <fieldset id="creation-fields" disabled>
         <div class="creation-grid"><label>Headend<select id="creation-headend" required></select></label><label>Destination<select id="creation-destination" required></select></label></div>

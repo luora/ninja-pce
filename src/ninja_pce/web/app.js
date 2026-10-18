@@ -153,13 +153,101 @@
   $("info-toggle").addEventListener("click", () => $("info-dialog").showModal());
   $("info-close").addEventListener("click", () => $("info-dialog").close());
 
-  const creation = { options: null, principal: null, pending: null, operations: [], busy: false, timer: null, plan: null, planIntent: null, previewBusy: false, previewTimer: null, expiryTimer: null, previewGeneration: 0, releasedMessage: null };
+  const creation = { options: null, principal: null, pending: null, operation: null, operations: [], busy: false, timer: null, plan: null, planIntent: null, previewBusy: false, previewTimer: null, expiryTimer: null, capabilityTimer: null, previewGeneration: 0, optionsEpoch: 0, releasedMessage: null, observationReason: null };
+  const globalCreationChecks = ["authenticated_operator", "provisioning_service_ready", "api_qualified", "backend_qualified", "backend_supported", "writes_enabled", "topology_ready", "pcep_listener_ready", "pcep_authorized", "recovery_clear", "topology_policy_matches"];
+  const headendCreationChecks = ["domain_eligible", "transport_enrolled", "transport_ready", "synchronized_headend"];
+  const creationRecord = value => value && typeof value === "object" && !Array.isArray(value);
+  function validCreationChecks(checks, mandatory) {
+    if (!creationRecord(checks) || Object.keys(checks).length > 32 || !mandatory.every(key => Object.hasOwn(checks, key) && checks[key]?.required === true)) return false;
+    return Object.entries(checks).every(([key, check]) => /^[a-z][a-z0-9_]{0,63}$/.test(key) && creationRecord(check) &&
+      ["pass", "fail", "unknown"].includes(check.state) && typeof check.required === "boolean" &&
+      typeof check.code === "string" && /^[A-Z][A-Z0-9_]{1,95}$/.test(check.code) &&
+      typeof check.message === "string" && check.message.length <= 2048 &&
+      typeof check.next_action === "string" && check.next_action.length <= 2048);
+  }
+  function validCreationCapability(capability) {
+    if (!creationRecord(capability) || capability.schema_version !== 1 || capability.capability !== "tunnel_creation" ||
+        !["existing-qualified-profile", "observe", "standalone", "demo"].includes(capability.scope) ||
+        typeof capability.available !== "boolean" || capability.informational !== true || capability.submission_revalidated !== true ||
+        capability.control_authority_verified !== false || capability.control_ownership_verified !== false ||
+        capability.production_available !== false || capability.forwarding_verified !== false ||
+        !validCreationChecks(capability.checks, globalCreationChecks) || !creationRecord(capability.headends) ||
+        Object.keys(capability.headends).length > 512 || typeof capability.next_action !== "string" || capability.next_action.length > 2048 ||
+        !Array.isArray(capability.limitations) || capability.limitations.length > 20 ||
+        capability.limitations.some(item => typeof item !== "string" || item.length > 2048)) return false;
+    const stamp = typeof capability.generated_at === "string" ? Date.parse(capability.generated_at) : NaN;
+    if (!Number.isFinite(stamp) || Date.now() - stamp >= 30000 || stamp - Date.now() > 5000) return false;
+    return Object.entries(capability.headends).every(([name, node]) => name.length > 0 && name.length <= 128 && creationRecord(node) &&
+      typeof node.available === "boolean" && validCreationChecks(node.checks, headendCreationChecks));
+  }
+  const requiredCreationChecksPass = checks => Object.values(checks).every(check => !check.required || check.state === "pass");
+  function renderCreationCapability() {
+    const capability = creation.options?.capability, target = $("creation-capability-checks");
+    target.replaceChildren(); $("creation-capability-limitations").replaceChildren();
+    $("creation-capability-scope").textContent = "Eligibility does not grant write authority. Cross-controller ownership and traffic forwarding remain unverified.";
+    if (state.data?.mode !== "live" || state.error || state.paused || !validCreationCapability(capability)) {
+      $("creation-capability-status").textContent = creation.observationReason || (state.error || state.paused || state.data?.mode !== "live" ?
+        "Availability is unconfirmed: a connected live controller with polling enabled is required for new creation." :
+        "Availability is unconfirmed: the capability report is missing, unsupported or stale.");
+      $("creation-next-action").textContent = "Resume controller polling, confirm the connection and refresh availability. Existing operations can still be recovered.";
+      return;
+    }
+    const selected = $("creation-headend").value, node = capability.headends[selected];
+    $("creation-capability-status").textContent = selectedHeadendReady() ? "Existing qualified profile is eligible for a reviewed request." : "New creation is unavailable. Review the missing prerequisites below.";
+    $("creation-capability-scope").textContent = capability.scope === "existing-qualified-profile" ?
+      "Scope: existing qualified lab profile. Production eligibility, cross-controller ownership and traffic forwarding remain unverified. Every submission is authorized again." :
+      `Scope: ${capability.scope}. This workspace does not grant provisioning authority.`;
+    const rows = [...Object.entries(capability.checks).map(([key, check]) => [key, check, "Controller"]),
+      ...Object.entries(node?.checks || {}).map(([key, check]) => [key, check, selected])];
+    const rank = {fail: 0, unknown: 1, pass: 2};
+    rows.sort((left, right) => rank[left[1].state] - rank[right[1].state]);
+    for (const [key, check, scope] of rows.slice(0, 64)) {
+      const row = el("li"); row.dataset.state = check.state;
+      row.append(el("strong", "", `${check.state.toUpperCase()} · ${scope} · ${key.replaceAll("_", " ")}`),
+        el("span", "", check.message.slice(0, 1024)), el("small", "mono", check.code));
+      if (check.state !== "pass" && check.next_action) row.append(el("p", "muted", `Next step: ${check.next_action.slice(0, 1024)}`));
+      target.append(row);
+    }
+    if (selected && !node) target.append(el("li", "", "Selected headend prerequisites are unconfirmed; new creation is disabled."));
+    $("creation-next-action").textContent = capability.next_action.slice(0, 1024);
+    $("creation-capability-limitations").replaceChildren(...capability.limitations.map(item => el("li", "", item.slice(0, 1024))));
+  }
+  function invalidateCreationObservation(reason) {
+    creation.optionsEpoch += 1; creation.observationReason = reason; creation.operation = null;
+    if (creation.options) creation.options.capability = null;
+    clearTimeout(creation.capabilityTimer); invalidatePreview();
+    if (creation.pending && !creation.busy) creationMessage(creation.pending.id ?
+      `Current operation state is unconfirmed. Check status using operation ${creation.pending.id}; its recorded request is retained.` :
+      "The previous submission outcome is unconfirmed. Retry the exact same request to recover its operation; its idempotency key is retained.");
+    creationControls();
+  }
+  function renderCreationStages() {
+    const connected = state.data?.mode === "live" && !state.error && !state.paused;
+    const operation = connected && creation.operation?.id === creation.pending?.id ? creation.operation : null;
+    const status = operation?.status, approved = Boolean(creation.pending?.approved_plan_id);
+    const previewed = approved || Boolean(creation.plan && date(creation.plan.expires_at)?.getTime() > Date.now());
+    const delivered = ["CREATED", "APPLIED_UNVERIFIED", "VERIFIED", "VERIFICATION_FAILED"].includes(status);
+    const stages = [
+      ["Select endpoints", creation.options?.headends?.length ? "complete" : "current"],
+      ["Preview path and bandwidth", previewed ? "complete" : creation.previewBusy ? "current" : "pending"],
+      ["Approve exact plan", approved ? "complete" : previewed ? "current" : "pending"],
+      ["Provision", status === "ROLLBACK_REQUIRED" || creation.pending && !operation && !creation.busy ? "uncertain" : status === "REJECTED" || status === "ROLLED_BACK" ? "failed" : delivered ? "complete" : creation.pending || creation.busy ? "current" : "pending"],
+      ["Verify PCEP / RSVP", status === "VERIFIED" ? "complete" : status === "VERIFICATION_FAILED" ? "failed" : delivered ? "current" : "pending"],
+      ["Forwarding unverified", "unknown"],
+    ];
+    $("creation-stages").replaceChildren(...stages.map(([label, stage]) => {
+      const item = el("li", "", label); item.dataset.state = stage;
+      if (stage === "current") item.setAttribute("aria-current", "step");
+      item.append(el("span", "", stage === "unknown" ? "Independent traffic test required" : titleCase(stage)));
+      return item;
+    }));
+  }
   function storedRequest(value) {
     return value && typeof value.key === "string" && value.intent && (!value.id || /^[0-9a-f]{32}$/.test(value.id));
   }
   function loadCreation(principal) {
     if (creation.principal !== principal) { creation.releasedMessage = null; $("creation-status").replaceChildren(); }
-    creation.principal = principal; creation.pending = null; creation.operations = [];
+    creation.principal = principal; creation.pending = null; creation.operation = null; creation.operations = [];
     try {
       const saved = JSON.parse(sessionStorage.getItem(`ninja-pce-creations:${principal}`) || "null");
       if (storedRequest(saved?.pending) && saved.pending.principal === principal) creation.pending = saved.pending;
@@ -183,7 +271,7 @@
       button.disabled = creation.busy || Boolean(creation.pending && !creation.pending.id);
       button.addEventListener("click", () => {
         if (creation.busy || creation.pending && !creation.pending.id) return;
-        creation.pending = { ...request }; saveCreation(); invalidatePreview();
+        creation.pending = { ...request }; creation.operation = null; saveCreation(); invalidatePreview();
         $("creation-headend").value = request.intent.headend; $("creation-destination").value = request.intent.destination;
         $("creation-bandwidth").value = String(request.intent.bandwidth_bps / 1e6);
         if (request.plan) showPlan(request.plan, true);
@@ -217,9 +305,11 @@
     $("creation-check").disabled = creation.busy;
     $("creation-new").hidden = !creation.pending?.id;
     $("creation-new").disabled = creation.busy;
+    $("creation-refresh").disabled = creation.busy;
     renderCreationOperations();
+    renderCreationCapability(); renderCreationStages();
     const readiness = creation.options?.headend_readiness?.[$("creation-headend").value];
-    $("creation-readiness").textContent = readiness ? [
+    $("creation-readiness").textContent = state.error || state.paused ? "Current controller observations are unconfirmed. Existing operation recovery remains available." : readiness ? [
       readiness.transport_enrolled === true ? "Transport enrolled." : readiness.transport_enrolled === false ? "Transport enrollment required." : "",
       readiness.transport_ready === false && readiness.transport_enrolled === true ? "Transport identity unavailable." : "",
       readiness.pcc_ready === true ? "PCC synchronized." : readiness.pcc_ready === false ? "PCC unavailable." : "",
@@ -227,9 +317,13 @@
     ].filter(Boolean).join(" ") : "";
   }
   function selectedHeadendReady() {
-    if (creation.options?.enabled !== true) return false;
+    const capability = creation.options?.capability;
+    if (state.data?.mode !== "live" || state.error || state.paused || creation.options?.enabled !== true || creation.options.requires_plan !== true || !validCreationCapability(capability) ||
+        capability.scope !== "existing-qualified-profile" || capability.available !== true || !requiredCreationChecksPass(capability.checks)) return false;
+    const selected = capability.headends[$("creation-headend").value];
+    if (!selected || selected.available !== true || !requiredCreationChecksPass(selected.checks)) return false;
     const states = creation.options.headend_readiness;
-    return !states || states[$("creation-headend").value]?.enabled === true;
+    return states?.[$("creation-headend").value]?.enabled === true;
   }
   function creationIntent() {
     const amount = $("creation-bandwidth").value;
@@ -295,6 +389,7 @@
       const proof = operation.verification, checks = ["identity", "destination", "bandwidth", "ero", "signaling"];
       if (creation.options?.requires_plan !== true || proof?.independent !== true || proof.scope !== "headend-rsvp" || proof.pcep_control !== true || !Array.isArray(proof.checks) || proof.checks.length !== checks.length || !checks.every((check) => proof.checks.includes(check))) throw new Error("Independent RSVP verification is unavailable.");
     }
+    creation.operation = operation;
     creation.pending.id = operation.id; creation.pending.status = operation.status;
     creation.pending.principal = creation.principal; delete creation.pending.unbound;
     creation.operations = creation.operations.filter((request) => request.id !== operation.id);
@@ -311,7 +406,7 @@
     creationMessage(messages[operation.status] || `Operation state: ${operation.status}`, operation);
     if (["REJECTED", "ROLLED_BACK"].includes(operation.status)) {
       creation.releasedMessage = `${messages[operation.status]}${operation.reason ? ` ${operation.reason}` : ""}`;
-      creation.pending = null; saveCreation(); queuePreview();
+      creation.pending = null; creation.operation = null; saveCreation(); queuePreview();
     }
     clearTimeout(creation.timer);
     if ((["PLANNED", "PUSHING", "CREATED"].includes(operation.status) || operation.status === "APPLIED_UNVERIFIED" && (creation.options?.requires_plan === true || !["ACTIVE", "UP"].includes(operation.reported?.operational_state))) && $("create-tunnel-dialog").open) creation.timer = setTimeout(checkCreation, 2000);
@@ -327,17 +422,22 @@
       if (!current()) return;
       if (result.operation?.id !== id) throw new Error("Operation status does not match the requested identity.");
       showOperation(result.operation);
-    } catch (error) { if (current()) creationMessage(`${error.message} Keep this operation ID for reconciliation: ${id}`); }
+    } catch (error) { if (current()) { creation.operation = null; creationMessage(`${error.message} Keep this operation ID for reconciliation: ${id}`); renderCreationStages(); } }
   }
   async function openCreation() {
-    $("create-tunnel-dialog").showModal();
+    if (creation.busy) return;
+    if (!$("create-tunnel-dialog").open) $("create-tunnel-dialog").showModal();
+    const epoch = ++creation.optionsEpoch;
+    const current = () => epoch === creation.optionsEpoch && $("create-tunnel-dialog").open;
+    clearTimeout(creation.capabilityTimer);
     invalidatePreview();
-    if (!creation.pending) $("creation-status").replaceChildren();
+    creation.operation = null; creation.observationReason = null; $("creation-status").replaceChildren();
     creation.options = null; creationControls(); $("creation-operations").hidden = true;
     if (state.data?.mode === "demo") { $("creation-policy").textContent = "This sample is for exploring the dashboard. Connect and configure your network to create tunnels."; return; }
     $("creation-policy").textContent = "Checking authenticated access and domain policy…";
     try {
       const options = await creationFetch("/api/tunnel-options");
+      if (!current()) return;
       if (!options || !Array.isArray(options.headends) || !Array.isArray(options.destinations) || typeof options.enabled !== "boolean") throw new Error("Unsupported creation policy.");
       if (options.enabled === false && !options.headends.length && !options.principal) {
         creation.principal = null; creation.pending = null; creation.operations = []; creation.options = options;
@@ -346,6 +446,8 @@
       }
       if (typeof options.principal !== "string" || !/^[A-Za-z0-9_.@-]{1,128}$/.test(options.principal)) throw new Error("Authenticated principal is unavailable.");
       loadCreation(options.principal); creation.options = options;
+      if (validCreationCapability(options.capability)) creation.capabilityTimer = setTimeout(creationControls,
+        Math.max(1, Date.parse(options.capability.generated_at) + 30000 - Date.now()));
       for (const [id, names] of [["creation-headend", options.headends], ["creation-destination", options.destinations]]) {
         $(id).replaceChildren(...names.filter((name) => typeof name === "string").map((name) => { const option = el("option", "", name); option.value = name; return option; }));
       }
@@ -364,18 +466,19 @@
         else creationMessage("A previous submission has an unknown outcome. Retry the same request to recover its operation; do not submit a different intent.");
       }
       else queuePreview();
-    } catch (error) { $("creation-policy").textContent = error.message; }
-    creationControls();
+    } catch (error) { if (current()) $("creation-policy").textContent = error.message; }
+    if (current()) creationControls();
   }
   $("create-tunnel-button").addEventListener("click", openCreation);
   $("create-tunnel-close").addEventListener("click", () => $("create-tunnel-dialog").close());
-  $("create-tunnel-dialog").addEventListener("close", () => { if (!$("create-tunnel-dialog").open) { clearTimeout(creation.timer); invalidatePreview(); } });
+  $("create-tunnel-dialog").addEventListener("close", () => { if (!$("create-tunnel-dialog").open) { creation.optionsEpoch += 1; clearTimeout(creation.timer); clearTimeout(creation.capabilityTimer); invalidatePreview(); } });
+  $("creation-refresh").addEventListener("click", openCreation);
   $("creation-fields").addEventListener("input", queuePreview);
   $("creation-fields").addEventListener("change", queuePreview);
   $("creation-check").addEventListener("click", checkCreation);
   $("creation-new").addEventListener("click", () => {
     if (creation.busy || !creation.pending?.id) return;
-    clearTimeout(creation.timer); creation.pending = null; creation.releasedMessage = null;
+    clearTimeout(creation.timer); creation.pending = null; creation.operation = null; creation.releasedMessage = null;
     if (!creation.options.headends.includes($("creation-headend").value)) $("creation-headend").value = creation.options.headends.find((name) => !creation.options.headend_readiness || creation.options.headend_readiness[name]?.enabled === true) || creation.options.headends[0] || "";
     if (!creation.options.destinations.includes($("creation-destination").value) || $("creation-headend").value === $("creation-destination").value) $("creation-destination").value = creation.options.destinations.find((name) => name !== $("creation-headend").value) || "";
     saveCreation(); queuePreview();
@@ -388,7 +491,7 @@
       let intent;
       try { intent = creationIntent(); } catch (error) { creationMessage(error.message); return; }
       if (creation.options.requires_plan === true && (!creation.plan || date(creation.plan.expires_at)?.getTime() <= Date.now() || JSON.stringify(intent) !== JSON.stringify(creation.planIntent))) { queuePreview(); return; }
-      creation.pending = { key: crypto.randomUUID(), principal: creation.principal, intent };
+      creation.pending = { key: crypto.randomUUID(), principal: creation.principal, intent }; creation.operation = null;
       if (creation.options.requires_plan === true) { creation.pending.approved_plan_id = creation.plan.plan_id; creation.pending.plan = creation.plan; }
       saveCreation();
     }
@@ -954,12 +1057,12 @@
       const data = await response.json();
       if (!data || data.schema_version !== 1 || data.read_only !== true || !["live", "demo"].includes(data.mode) || !Array.isArray(data.sources) || !Array.isArray(data.lsps) || !data.topology || !Array.isArray(data.topology.nodes) || !Array.isArray(data.topology.links)) throw new Error("Controller returned an unsupported snapshot.");
       state.data = data; state.receivedAt = Date.now(); state.error = null;
-      if (data.mode === "demo") clearDiagnostics("Sample data does not establish deployment health."); else refreshDiagnostics();
+      if (data.mode === "demo") { clearDiagnostics("Sample data does not establish deployment health."); invalidateCreationObservation("Sample data does not establish provisioning eligibility."); } else refreshDiagnostics();
       if (!list(data.lsps).some((lsp) => String(lsp.id) === state.selected)) state.selected = data.lsps.length ? String(data.lsps[0].id) : null;
-    } catch (error) { state.error = error.name === "AbortError" ? "Controller request timed out." : error instanceof SyntaxError ? "Controller returned invalid JSON." : string(error.message, "Controller connection failed."); clearDiagnostics("Management is disconnected. Previous diagnostic evidence has been cleared."); }
+    } catch (error) { state.error = error.name === "AbortError" ? "Controller request timed out." : error instanceof SyntaxError ? "Controller returned invalid JSON." : string(error.message, "Controller connection failed."); clearDiagnostics("Management is disconnected. Previous diagnostic evidence has been cleared."); invalidateCreationObservation("Management connection was lost. Refresh availability after reconnecting; existing operation recovery remains available."); }
     finally { clearTimeout(timeout); state.loading = false; render(); schedule(); }
   }
-  $("poll-toggle").addEventListener("click", () => { state.paused = !state.paused; render(); if (state.paused) { clearTimeout(state.timer); clearDiagnostics("Polling is paused; current diagnostic coverage is unconfirmed."); } else refresh(); });
+  $("poll-toggle").addEventListener("click", () => { state.paused = !state.paused; render(); if (state.paused) { clearTimeout(state.timer); clearDiagnostics("Polling is paused; current diagnostic coverage is unconfirmed."); invalidateCreationObservation("Controller polling was paused. Resume polling and refresh availability before new creation; existing operation recovery remains available."); } else refresh(); });
   $("refresh-button").addEventListener("click", refresh);
   setInterval(() => {
     if (state.diagnostics && Date.now() - Date.parse(state.diagnostics.generated_at) > 30000) {

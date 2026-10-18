@@ -11,6 +11,7 @@ import json
 import math
 import os
 import re
+import stat
 import time
 import uuid
 from dataclasses import asdict, replace
@@ -24,7 +25,7 @@ from .models import DemandOutput, ManagedDevice, PathConstraints, ServiceDemand
 from .pcep_compute import PcepPathComputer
 from .reservations import ReservationLedger, resource_lock
 from .southbound import PushPlan, SouthboundError, build_pce_push_plan, push_plan, verify_plan
-from .state import digest, load_state, write_state
+from .state import SCHEMA_VERSION, digest, load_state, write_state
 
 if TYPE_CHECKING:
     from .pcep_domain_policy import DomainDelegationPolicy
@@ -45,6 +46,105 @@ def _expiry(value: str) -> datetime:
 
 class _AdmissionRejected(ValueError):
     """A known refusal before this request acquires resources or write authority."""
+
+
+_CAPABILITY_TEXT = {
+    "backend_qualified": (("The configured backend is explicitly qualified.",
+                           "The configured backend has not been qualified.",
+                           "Backend qualification is unknown."),
+                          "Complete the separate device-profile qualification before enabling provisioning."),
+    "writes_enabled": (("The controller's existing write policy is enabled.",
+                        "The controller's preview-only policy disables writes.",
+                        "The controller's write policy is unknown."),
+                       "Review the controller's preview-only policy with the authorized operator."),
+    "topology_ready": (("A fresh, consistent topology snapshot is available.",
+                        "The topology is not ready for provisioning.",
+                        "A fresh, consistent topology snapshot could not be established."),
+                       "Restore BGP-LS synchronization and validate the trusted topology policy."),
+    "pcep_listener_ready": (("The current PCEP capture reports a running listener without a capture error.",
+                             "The current PCEP capture reports a stopped listener or a capture error.",
+                             "Current PCEP listener readiness could not be established."),
+                            "Inspect the PCEP service and restore a fresh, valid listener capture."),
+    "pcep_authorized": (("The current PCEP listener reports the exact provisioning authorization policy.",
+                         "The current PCEP listener does not authorize this provisioning policy.",
+                         "Current PCEP provisioning authorization could not be established."),
+                        "Reconcile the listener's provisioning capability and trusted authorization policy."),
+    "recovery_clear": (("The current listener capture reports no recovery barrier.",
+                       "The current listener capture reports recovery requiring reconciliation.",
+                       "Current recovery status could not be established."),
+                      "Review retained operations and resolve recovery through the existing owned recovery procedure."),
+    "topology_policy_matches": (("The listener and provisioning backend use the same OSPF area policy.",
+                                "The listener and provisioning backend have different OSPF area policies.",
+                                "The listener's current OSPF area policy could not be established."),
+                               "Reconcile the listener and provisioning backend's trusted OSPF area policy."),
+    "domain_eligible": (("The headend belongs to the current trusted provisioning scope.",
+                         "The headend is outside the current trusted provisioning scope.",
+                         "Current trusted headend membership could not be established."),
+                        "Validate the headend's unique topology identity and trusted domain policy."),
+    "transport_enrolled": (("The headend has an enrolled configuration transport.",
+                            "The headend has no enrolled configuration transport.",
+                            "Transport enrollment could not be established."),
+                           "Enroll the headend's management transport using the existing trusted enrollment procedure."),
+    "transport_ready": (("The enrolled transport meets the backend's current readiness policy.",
+                         "The enrolled transport does not meet the backend's current readiness policy.",
+                         "Current transport readiness could not be established."),
+                        "Review the supported device profile, credential availability and independently pinned SSH identity."),
+    "synchronized_headend": (("The selected PCC is fresh, established and synchronized.",
+                              "The selected PCC is disconnected, stale or not synchronized.",
+                              "A fresh, synchronized session for the selected PCC could not be established."),
+                             "Restore the selected PCC session and wait for synchronization before requesting a new plan."),
+}
+
+
+def _capability_check(name: str, result: bool | None) -> dict[str, str]:
+    """Fixed messages keep local errors, credentials and captures out of reports."""
+    state = "unknown" if result is None else "pass" if result else "fail"
+    messages, action = _CAPABILITY_TEXT[name]
+    return {"state": state, "code": f"{name.upper()}_{state.upper()}",
+            "message": messages[0 if result is True else 1 if result is False else 2],
+            "next_action": action}
+
+
+def _capability_number(value: Any) -> float | None:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _capability_capture(path: Path) -> dict[str, Any]:
+    """Read one bounded ordinary capture without touching locks or local state."""
+    maximum = 16_777_216
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return {}
+    with os.fdopen(descriptor, "rb") as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > maximum:
+            raise ValueError("PCEP capability capture must be a bounded ordinary file")
+        raw = handle.read(maximum + 1)
+    if len(raw) > maximum:
+        raise ValueError("PCEP capability capture exceeds its bound")
+
+    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        document: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in document:
+                raise ValueError("Duplicate capability capture field")
+            document[key] = value
+        return document
+
+    data = json.loads(raw, object_pairs_hook=unique)
+    if not isinstance(data, dict) or type(data.get("version")) is not int or data["version"] != SCHEMA_VERSION:
+        raise ValueError("Unsupported capability capture schema")
+    checksum = data.pop("checksum", None)
+    if checksum != digest(data):
+        raise ValueError("Capability capture checksum mismatch")
+    return data
 
 
 class CliProvisioner:
@@ -281,6 +381,112 @@ class CliProvisioner:
         if len(matches) != 1:
             raise ValueError("Unknown operation")
         return matches[0]
+
+    def capability_observations(self) -> dict[str, Any]:
+        """Informational prerequisites, sampled once without admission or writes.
+
+        These observations never establish exclusive ownership, perform router
+        I/O, inspect reservations or replace the durable submission guards.
+        Legacy optional recovery and area-policy fields retain their existing
+        readiness meaning. Missing required evidence remains unknown.
+        """
+        names = ("backend_qualified", "writes_enabled", "topology_ready", "pcep_listener_ready",
+                 "pcep_authorized", "recovery_clear", "topology_policy_matches")
+        checks = {name: _capability_check(name, None) for name in names}
+        checks["backend_qualified"] = _capability_check("backend_qualified", self.qualified)
+        checks["writes_enabled"] = _capability_check(
+            "writes_enabled", os.environ.get("NINJA_PCE_PREVIEW_ONLY", "").lower() not in {"1", "true", "yes", "on"})
+        headends: dict[str, str] = {}
+        destinations: tuple[str, ...] = ()
+        try:
+            topology, _ = self.computer.validated_snapshot()
+            if self.domain_policy is None:
+                headends, destinations = dict(self._headends), self._allowed_destinations
+            else:
+                from .provisioning_policy import domain_destinations, domain_headends
+
+                headends = domain_headends(topology, self.domain_policy)
+                destinations = domain_destinations(topology, self.domain_policy)
+            checks["topology_ready"] = _capability_check("topology_ready", True)
+        except (ValueError, OSError, RuntimeError, KeyError, TypeError, RecursionError):
+            # Do not retain previously selectable endpoints after a failed TED.
+            headends, destinations = {}, ()
+
+        now = time.time()
+        try:
+            capture = _capability_capture(self.pcep_capture)
+        except (ValueError, OSError, UnicodeError, TypeError, RecursionError, OverflowError):
+            capture = {}
+        generated = _capability_number(capture.get("generated_at"))
+        current = generated is not None and -1 <= now - generated <= 5
+        peers: Any = None
+        if current:
+            running = capture.get("listener_running")
+            listener = False if capture.get("capture_error") else running if type(running) is bool else None
+            checks["pcep_listener_ready"] = _capability_check("pcep_listener_ready", listener)
+            capabilities = capture.get("capabilities")
+            peers = capture.get("peers")
+            policy_digest = capture.get("provisioning_policy_digest")
+            capability = capabilities.get("configuration_provisioning") if isinstance(capabilities, dict) else None
+            authorized: bool | None = None
+            if capability is False or isinstance(policy_digest, str) and policy_digest != self.authorization.policy_digest:
+                authorized = False
+            elif capability is True and policy_digest == self.authorization.policy_digest and isinstance(peers, dict):
+                authorized = True
+            checks["pcep_authorized"] = _capability_check("pcep_authorized", authorized)
+
+            recovery = capture.get("failure_recovery")
+            recovery_clear: bool | None = (True if recovery is None else not bool(recovery.get("pending"))
+                                           if isinstance(recovery, dict) else None)
+            if "managed_failure_recovery" in capture:
+                managed = capture["managed_failure_recovery"]
+                managed_clear = (not bool(managed.get("pending") or managed.get("blocked") or
+                                          managed.get("status") == "RECOVERY_REQUIRED")
+                                 if isinstance(managed, dict) else None)
+                recovery_clear = (False if recovery_clear is False or managed_clear is False else
+                                  None if recovery_clear is None or managed_clear is None else True)
+            checks["recovery_clear"] = _capability_check("recovery_clear", recovery_clear)
+
+            identity_policy = getattr(self.computer, "ospf_multi_area", None)
+            expected_policy = (None if identity_policy is None else {
+                "ospf_multi_area": identity_policy.document(), "ospf_multi_area_digest": identity_policy.digest})
+            actual_policy = capture.get("topology_policy")
+            matching_policy: bool | None = None
+            if expected_policy is None:
+                matching_policy = "topology_policy" not in capture
+            elif isinstance(actual_policy, dict):
+                matching_policy = actual_policy == expected_policy
+            checks["topology_policy_matches"] = _capability_check("topology_policy_matches", matching_policy)
+
+        details: dict[str, Any] = {}
+        for name, address in headends.items():
+            enrolled = name in self.devices
+            transport: bool | None = enrolled
+            if enrolled and self.transport_registry is not None:
+                try:
+                    observed, _ = self.transport_registry.readiness(name)
+                    transport = observed if type(observed) is bool else None
+                except (ValueError, OSError, UnicodeError, RuntimeError, TypeError):
+                    transport = None
+            synchronized: bool | None = None
+            peer = peers.get(address) if isinstance(peers, dict) else None
+            if isinstance(peer, dict):
+                state, fresh, synced, until = (peer.get("state"), peer.get("fresh"),
+                                               peer.get("synchronized"), peer.get("valid_until"))
+                until_number = _capability_number(until)
+                if (isinstance(state, str) and state != "ESTABLISHED" or fresh is False or synced is False or
+                        until_number is not None and until_number <= now):
+                    synchronized = False
+                elif state == "ESTABLISHED" and fresh is True and synced is True and until_number is not None:
+                    synchronized = until_number > now
+            details[name] = {"checks": {
+                "domain_eligible": _capability_check("domain_eligible", True),
+                "transport_enrolled": _capability_check("transport_enrolled", enrolled),
+                "transport_ready": _capability_check("transport_ready", transport),
+                "synchronized_headend": _capability_check("synchronized_headend", synchronized),
+            }}
+        return {"checks": checks, "headends": details, "headend_addresses": dict(headends),
+                "destinations": list(destinations)}
 
     def readiness(self, headend: str | None = None) -> tuple[bool, str]:
         try:

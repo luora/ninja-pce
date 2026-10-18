@@ -1,5 +1,11 @@
 # Dashboard tunnel creation design
 
+The dialog includes [capability-driven prerequisites and workflow stages](tunnel_capabilities.md).
+It explains global and selected-headend eligibility while retaining exact
+approval, principal-bound recovery and independent verification. Existing lab
+eligibility does not establish production ownership or PCC fencing; observation
+setup remains unable to provision.
+
 Status: experimental implementation; the configuration backend passed
 [one private IOS XE 16.9.7 qualification](dashboard_configuration_validation.md).
 Shipped examples and the default server keep creation disabled. Native

@@ -1,5 +1,10 @@
 # Configuration provisioning deployment
 
+The [capability-driven dialog](tunnel_capabilities.md) uses the existing options
+route and security boundary. Upgrade the API and packaged UI together to expose
+current prerequisites. Installing these changes grants no new write authority
+or production ownership qualification.
+
 These are sanitized deployment examples for the separate dashboard
 [configuration provisioning profile](dashboard_tunnel_creation.md#configuration-based-provisioning-profile).
 The shipped JSON has `qualified: false`, and the environment example disables

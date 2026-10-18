@@ -7,6 +7,11 @@ does not grant topology membership or remove routers from the selector. A new
 router needs a valid domain identity and transport enrollment for writes; it
 does not need a new dashboard router or tunnel-number allowlist.
 
+The [capability report and dialog](tunnel_capabilities.md) explain current global
+and per-headend prerequisites and manual next steps. Reporting is informational;
+backend admission revalidates the exact reviewed plan. Production ownership and
+cross-controller fencing remain independently unverified.
+
 The qualified creation path remains Cisco IOS XE 16.9.7 configuration over SSH,
 followed by initial PCEP control and independent headend verification. Other
 renderers and the shared policy boundary do not establish NETCONF or other

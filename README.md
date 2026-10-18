@@ -61,6 +61,9 @@ New observers can use [authenticated guided setup](docs/authenticated_setup.md)
 to review and activate generated configurations in a separate private workspace.
 The [diagnostics guide](docs/diagnostics.md) describes shared CLI and GUI findings,
 explicit read-only live checks and manual repair guidance.
+The [capability-driven tunnel workflow](docs/tunnel_capabilities.md) explains
+missing provisioning prerequisites and preserves exact-plan approval and recovery
+for qualified deployments.
 See the [application validation record](docs/application_deployment_validation.md)
 for packaging, CI and deployment evidence.
 

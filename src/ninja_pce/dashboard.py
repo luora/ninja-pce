@@ -631,12 +631,9 @@ def create_dashboard_server(config: DashboardConfig) -> ThreadingHTTPServer:
 
                 self._respond(200, json.dumps(snapshot_report(store.snapshot(), include_host=False), allow_nan=False).encode())
             elif path == "/api/tunnel-options":
-                self._respond(200, json.dumps({
-                    "enabled": False, "headends": [], "destinations": [], "max_bandwidth_bps": 0,
-                    "reason": ("Tunnel creation is disabled in the demo workspace." if config.demo else
-                               "RSVP bandwidth creation has not been qualified for this controller."),
-                    "policy": {"read_only": True},
-                }).encode())
+                from .tunnel_capabilities import observer_options
+
+                self._respond(200, json.dumps(observer_options(store.snapshot()), allow_nan=False).encode())
             elif path == "/healthz":
                 self._respond(200, json.dumps({"status": "ok", "read_only": True,
                                               "mode": "demo" if config.demo else "live"}).encode())
