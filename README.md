@@ -59,6 +59,8 @@ Managed services report [listener ownership and startup faults](docs/runtime_sta
 and bound retries while preserving the dashboard after protocol failures.
 New observers can use [authenticated guided setup](docs/authenticated_setup.md)
 to review and activate generated configurations in a separate private workspace.
+The [diagnostics guide](docs/diagnostics.md) describes shared CLI and GUI findings,
+explicit read-only live checks and manual repair guidance.
 See the [application validation record](docs/application_deployment_validation.md)
 for packaging, CI and deployment evidence.
 
@@ -239,7 +241,7 @@ YAML/JSON topology  YAML/JSON demand  YAML/JSON inventory
 - `dashboard.py` and `web/` serve a read-only view of snapshots, reports and events.
 - `cli.py` is the command surface for `compute`, `validate`,
   `inventory-validate`, `push`, `reconcile`, `topology-summary`, `gns3-demo`,
-  `daemon`, `lab-render`, `bgpls-collect`, `pcep-listen` and `dashboard`.
+  `daemon`, `lab-render`, `bgpls-collect`, `pcep-listen`, `dashboard`, `admin` and `diagnostics`.
 
 ### Input and domain model
 

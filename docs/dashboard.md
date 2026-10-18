@@ -7,6 +7,11 @@ and observation views with a local administrator session. It stays available
 while configuring a new observer. The existing standalone dashboard described
 below retains its read-only access model and reverse-proxy boundary.
 
+Overview and Peers include [structured diagnostic findings](diagnostics.md),
+with severity filters, bounded evidence and manual next steps. The standalone
+dashboard reads snapshot evidence; explicit live checks use authenticated setup
+or the CLI.
+
 The `feat/controller-dashboard` branch adds a read-only, UniFi-inspired web interface
 for topology, BGP-LS/PCEP peers, reported LSPs, computations and recent PCEP events.
 It uses the existing controller observations and needs no additional web packages.
@@ -202,7 +207,8 @@ substitution to `'${PUBLIC_IP}'` so Nginx variables remain intact. If the DHCP
 address changes, update the bind configuration and certificate identity.
 
 The proxy mounts the dashboard at `/` and allows only `/`, `/index.html`,
-`/styles.css`, `/app.js`, `/api/controller` and `/healthz`. Every dashboard route
+`/styles.css`, `/app.js`, `/api/controller`, `/api/diagnostics`, `/api/tunnel-options`
+and `/healthz`. Every dashboard route
 requires HTTP Basic authentication over TLS. The proxy permits GET/HEAD, disables
 caching and removes the authentication header before forwarding to the dashboard.
 The API and health check receive the same protection as the page.

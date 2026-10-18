@@ -221,7 +221,7 @@ def collect_bgpls(args: argparse.Namespace) -> int:
 def _collect_bgpls_owned(args: argparse.Namespace, provider: Any, names: dict[str, str],
                          ospf_multi_area: OspfMultiAreaPolicy | None, peers: tuple[str, ...],
                          output: Path, status: Path) -> int:
-    from .bgpls import parse_gobgp_snapshot, topology_document
+    from .bgpls import BgplsError, parse_gobgp_snapshot, topology_document
 
     previous_sigterm = signal.signal(signal.SIGTERM, _stop_collector)
     try:
@@ -236,7 +236,7 @@ def _collect_bgpls_owned(args: argparse.Namespace, provider: Any, names: dict[st
                     ospf_multi_area=ospf_multi_area,
                 )
                 if not topology.nodes or not topology.links:
-                    raise ValueError("BGP-LS has no computable TE graph; inspect the raw capture and excluded objects")
+                    raise BgplsError("BGP-LS has no computable TE graph; inspect the raw capture and excluded objects", code="BGPLS_EMPTY_GRAPH")
                 document = topology_document(topology)
                 # The existing file-fed engine consumes this atomic live snapshot.
                 _write_document(output, document)
@@ -250,7 +250,8 @@ def _collect_bgpls_owned(args: argparse.Namespace, provider: Any, names: dict[st
                 # Never leave a last-good topology available as a current feed after
                 # a known failed poll. Independent captures retain the evidence.
                 output.unlink(missing_ok=True)
-                failure = {"status": "unavailable", "observed_at": observed, "error": str(exc)}
+                failure = {"status": "unavailable", "observed_at": observed, "error": str(exc),
+                           "diagnostic_code": exc.code if isinstance(exc, BgplsError) else "BGPLS_COLLECTION_FAILED"}
                 write_state(status, failure)
                 print(json.dumps(failure, sort_keys=True), file=sys.stderr, flush=True)
                 if args.once:

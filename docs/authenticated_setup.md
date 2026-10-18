@@ -79,6 +79,11 @@ existing read-only dashboard and separately qualified provisioning proxy.
    to inspect the existing observation views under the same authenticated
    session; tunnel provisioning stays disabled.
 
+Diagnostics offers a snapshot refresh and explicit live read-only checks with
+stable codes, evidence and manual next steps. Management remains responsive
+while these checks wait. See the [diagnostics guide](diagnostics.md) for coverage,
+API boundaries and limits.
+
 Preview responses bind a random five-minute preview ID to the administrator,
 expected current revision and exact generated contents. Apply compares that
 revision again. A conflict requires reloading the saved settings and reviewing

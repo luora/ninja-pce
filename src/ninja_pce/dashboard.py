@@ -185,6 +185,7 @@ class DashboardStore:
             "topology": {"name": "Controller topology", "nodes": [], "links": []},
             "peers": [], "lsps": [], "computations": [], "events": [],
             "reservations": {"configured": False, "state": "unconfigured", "holds": 0, "entries": []},
+            "diagnostic_observations": {"bgpls": {}, "topology": {}, "pcep": {"peers": []}},
         }
         now = self._topology(result, now, refresh_clock=refresh_clock)
         result["generated_at"] = now.isoformat()
@@ -258,6 +259,23 @@ class DashboardStore:
         bgpls_source = _source("bgpls", "BGP-LS collector", status, now, config.max_age_seconds,
                               status_metadata.get("timestamp"), status_error)
         observed = _time(status.get("observed_at")) if status else None
+        diagnostic = result["diagnostic_observations"]
+        diagnostic["topology"]["abr_projection_configured"] = config.ospf_multi_area is not None
+        if status and observed and 0 <= (now - observed).total_seconds() <= config.max_age_seconds:
+            state = status.get("status")
+            diagnostic["bgpls"]["collector_state"] = state if isinstance(state, str) and state in {"ok", "unavailable", "stopped"} else "unknown"
+            diagnostic["bgpls"]["observed_at"] = observed.isoformat()
+            code = status.get("diagnostic_code")
+            if isinstance(code, str) and code in {"BGPLS_RPC_UNAVAILABLE", "BGPLS_SESSION_DOWN", "BGPLS_EOR_INCOMPLETE", "BGPLS_FAMILY_UNAVAILABLE",
+                        "BGPLS_PEER_MISSING", "BGPLS_PEER_IDENTITY_INVALID", "BGPLS_SOURCE_RESTARTING", "BGPLS_EMPTY_GRAPH",
+                        "BGPLS_INPUT_INVALID", "BGPLS_COLLECTION_FAILED", "BGPLS_PEER_METADATA_INVALID"}:
+                diagnostic["bgpls"]["diagnostic_code"] = code
+                if code == "BGPLS_RPC_UNAVAILABLE":
+                    diagnostic["bgpls"]["rpc_available"] = False
+                elif code == "BGPLS_SESSION_DOWN":
+                    diagnostic["bgpls"]["session_state"] = "DOWN"
+                elif code == "BGPLS_EOR_INCOMPLETE":
+                    diagnostic["bgpls"].update(session_state="ESTABLISHED", eor_complete=False)
         if bgpls_source["state"] == "fresh" and (
                 observed is None or not 0 <= (now - observed).total_seconds() <= config.max_age_seconds):
             bgpls_source.update(state="invalid", message="Collector observation time is invalid or expired.")
@@ -282,6 +300,7 @@ class DashboardStore:
                             raise ValueError("Collector OSPF area policy requires dashboard opt-in")
                     elif (item.get("ospf_multi_area") != config.ospf_multi_area.document() or
                           item.get("ospf_multi_area_digest") != config.ospf_multi_area.digest):
+                        diagnostic["topology"]["ospf_multi_area_policy_validated"] = False
                         raise ValueError("Collector OSPF area policy differs from dashboard policy")
                 nodes = _list(feed.get("nodes"), MAX_NODES)
                 links = _list(feed.get("links"), MAX_LINKS)
@@ -317,6 +336,11 @@ class DashboardStore:
                     result["topology_complete"] = bool(parsed.nodes and parsed.links and not any(
                         item.get("nlri_type") not in {3, 4}
                         for item in parsed.raw_metadata["excluded_objects"]))
+                    diagnostic["bgpls"].update(rpc_available=True, session_state="ESTABLISHED", eor_complete=True,
+                        excluded_node_link_count=sum(item.get("nlri_type") not in {3, 4} for item in parsed.raw_metadata["excluded_objects"]),
+                        excluded_prefix_count=sum(item.get("nlri_type") in {3, 4} for item in parsed.raw_metadata["excluded_objects"]))
+                    if config.ospf_multi_area is not None:
+                        diagnostic["topology"].update(ospf_multi_area_policy_validated=True, policy_digest=config.ospf_multi_area.digest)
                     for address in required:
                         result["peers"].append({
                             "id": f"bgpls:{address}", "protocol": "BGP-LS", "address": address,
@@ -374,6 +398,7 @@ class DashboardStore:
                     })
             except (ValueError, TypeError, KeyError, OverflowError, AttributeError):
                 source.update(state="invalid", message="PCEP observation schema is invalid.")
+                result["diagnostic_observations"]["pcep"]["peers"] = []
                 result["peers"] = [peer for peer in result["peers"] if peer["protocol"] != "PCEP"]
                 result["lsps"], result["computations"], result["events"] = [], [], []
         result["sources"].append(source)
@@ -399,6 +424,20 @@ class DashboardStore:
             "last_seen": last.isoformat() if last else None,
             "capabilities": ["Stateful"] if peer.get("local_stateful") else [], "reports": len(reports),
         })
+        remote = _mapping(peer.get("peer_open")) if isinstance(peer.get("peer_open"), dict) else {}
+        flags = remote.get("stateful_flags")
+        observation = {"address": address, "state": _text(peer.get("state"), "UNKNOWN"), "fresh": fresh,
+                       "synchronized": synchronized and fresh,
+                       "stale_reason": peer.get("stale_reason") if peer.get("stale_reason") in (
+                           "deadtimer_expired", "process_restart", "server_shutdown", "transport_eof", "transport_closed",
+                           "openwait_expired", "message_rate_exceeded", "unknown_messages_exceeded", "synchronization_incomplete") else "unknown"}
+        if type(peer.get("local_stateful")) is bool:
+            observation["local_stateful"] = peer["local_stateful"]
+        if type(remote.get("stateful")) is bool:
+            observation["remote_stateful"] = remote["stateful"]
+        if type(flags) is int and flags >= 0:
+            observation["remote_lsp_update"] = bool(flags & 1)
+        result["diagnostic_observations"]["pcep"]["peers"].append(observation)
         current: dict[Any, tuple[str, dict[str, Any]]] = {}
         for key, value in reports.items():
             report = _mapping(value)
@@ -587,6 +626,10 @@ def create_dashboard_server(config: DashboardConfig) -> ThreadingHTTPServer:
                 self._respond(200, files("ninja_pce").joinpath("web").joinpath(name).read_bytes(), content_type)
             elif path == "/api/controller":
                 self._respond(200, json.dumps(store.snapshot(), allow_nan=False).encode())
+            elif path == "/api/diagnostics":
+                from .diagnostics import snapshot_report
+
+                self._respond(200, json.dumps(snapshot_report(store.snapshot(), include_host=False), allow_nan=False).encode())
             elif path == "/api/tunnel-options":
                 self._respond(200, json.dumps({
                     "enabled": False, "headends": [], "destinations": [], "max_bandwidth_bps": 0,

@@ -21,9 +21,12 @@ _COOKIE = "ninja_admin"
 
 
 def create_admin_server(store: AdminStore, *, host: str = "127.0.0.1", port: int = 8080) -> ThreadingHTTPServer:
+    from .diagnostics import DiagnosticService
+
     if host != "127.0.0.1" or type(port) is not int or not 0 <= port <= 65535:
         raise ValueError("Administration requires IPv4 loopback and a port between 0 and 65535")
     auth = AuthStore(store.admin)
+    diagnostic_service = DiagnosticService()
     public_assets = {"/setup": ("setup.html", "text/html; charset=utf-8"),
                      "/setup.js": ("setup.js", "text/javascript; charset=utf-8"),
                      "/setup.css": ("setup.css", "text/css; charset=utf-8")}
@@ -146,6 +149,8 @@ def create_admin_server(store: AdminStore, *, host: str = "127.0.0.1", port: int
                 self.respond(200, store.status())
             elif path == "/api/admin/audit":
                 self.respond(200, store.audit())
+            elif path in {"/api/admin/diagnostics", "/api/diagnostics"}:
+                self.respond(200, diagnostic_service.run(store, live=False))
             elif path == "/api/controller":
                 self.respond(200, store.snapshot())
             elif path == "/readyz":
@@ -186,6 +191,11 @@ def create_admin_server(store: AdminStore, *, host: str = "127.0.0.1", port: int
             elif path == "/api/admin/runtime":
                 self.fields(document, {"expected_revision", "action"})
                 self.respond(200, store.control_runtime(document["action"], document["expected_revision"], actor))
+            elif path == "/api/admin/diagnostics":
+                self.fields(document, {"live"})
+                if type(document["live"]) is not bool:
+                    raise ValueError("live must be a boolean")
+                self.respond(200, diagnostic_service.run(store, live=document["live"]))
             else:
                 self.respond(404, {"error": "NOT_FOUND", "message": "Unknown administration route."})
 

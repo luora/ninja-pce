@@ -10,7 +10,7 @@
     lsps: ["LSPs", "Reported label switched paths", "Select a report to inspect its identity, bandwidth and explicit route."],
     activity: ["Activity", "Controller activity", "Captured protocol events and path computation outcomes."],
   };
-  const state = { data: null, selected: null, view: "overview", lspFilter: "all", logFilter: "all", search: "", paused: false, loading: false, error: null, timer: null, receivedAt: 0, inspected: null };
+  const state = { data: null, selected: null, view: "overview", lspFilter: "all", logFilter: "all", search: "", paused: false, loading: false, error: null, timer: null, receivedAt: 0, inspected: null, diagnostics: null, diagnosticEpoch: 0 };
   const string = (value, fallback = "—") => value === null || value === undefined || value === "" ? fallback : String(value);
   const list = (value) => Array.isArray(value) ? value : [];
   const number = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
@@ -28,6 +28,58 @@
   const fullTime = (value) => date(value)?.toLocaleString(undefined, { hour12: false }) || "Unknown timestamp";
   const age = (value) => number(value) === null ? "Age unknown" : value < 60 ? `${Math.floor(value)}s ago` : value < 3600 ? `${Math.floor(value / 60)}m ago` : `${Math.floor(value / 3600)}h ago`;
   const el = (tag, className, text) => { const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; return node; };
+
+  function clearDiagnostics(reason = "Diagnostic coverage is unconfirmed.") {
+    state.diagnostics = null;
+    state.diagnosticEpoch += 1;
+    $("diagnostics-summary").textContent = "Unknown";
+    $("diagnostics-summary").className = "tag diagnostic-tone-unknown";
+    $("diagnostics-status").textContent = reason;
+    $("diagnostics-findings").replaceChildren();
+    $("diagnostics-limitations").replaceChildren();
+  }
+  function renderDiagnostics() {
+    const report = state.diagnostics;
+    if (!report || state.error || state.paused) return;
+    const rows = list(report.findings).slice(0, 256).filter(item => item && typeof item === "object");
+    const rank = {blocker: 0, warning: 1, unknown: 2, info: 3, ok: 4};
+    const severity = item => Object.hasOwn(rank, item.severity) ? item.severity : "unknown";
+    const counts = Object.fromEntries(Object.keys(rank).map(key => [key, rows.filter(item => severity(item) === key).length]));
+    const overall = counts.blocker ? "blocked" : counts.warning ? "warning" : counts.unknown || report.complete !== true || !rows.length ? "unknown" : "ok";
+    $("diagnostics-summary").textContent = titleCase(overall);
+    $("diagnostics-summary").className = `tag diagnostic-tone-${overall}`;
+    $("diagnostics-status").textContent = `${counts.blocker} blockers · ${counts.warning} warnings · ${counts.unknown} unknown · observed ${fullTime(report.generated_at)}`;
+    $("diagnostics-scope").textContent = "Read-only snapshot report. Live RPC, host and service checks are available through authenticated setup.";
+    $("diagnostics-findings").replaceChildren();
+    const selected = $("diagnostics-filter").value;
+    for (const item of rows.filter(item => selected === "all" || severity(item) === selected).sort((a, b) => rank[severity(a)] - rank[severity(b)]).slice(0, 80)) {
+      const row = el("article", "diagnostic-finding"); row.dataset.severity = severity(item);
+      row.append(el("h4", "", `${severity(item).toUpperCase()} · ${string(item.code).slice(0, 96)}`),
+        el("small", "muted", string(item.category).slice(0, 32)), el("p", "", string(item.message).slice(0, 1024)),
+        el("p", "diagnostic-guidance", `Next step: ${string(item.remediation).slice(0, 2048)}`));
+      if (item.evidence && typeof item.evidence === "object") {
+        const details = el("details"); details.append(el("summary", "", "Observed evidence"), el("pre", "", JSON.stringify(item.evidence, null, 2).slice(0, 6000))); row.append(details);
+      }
+      $("diagnostics-findings").append(row);
+    }
+    $("diagnostics-limitations").replaceChildren(...list(report.limitations).slice(0, 20).map(item => el("li", "", string(item).slice(0, 1024))));
+  }
+  async function refreshDiagnostics() {
+    const epoch = ++state.diagnosticEpoch;
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 4000);
+    try {
+      const response = await fetch("/api/diagnostics", {cache: "no-store", signal: controller.signal, headers: {Accept: "application/json"}});
+      if (!response.ok) throw new Error("Diagnostic API unavailable");
+      const report = await response.json();
+      if (!report || report.schema_version !== 1 || report.read_only !== true || report.scope !== "snapshot" || !Array.isArray(report.findings)) throw new Error("Unsupported diagnostic report");
+      const stamp = typeof report.generated_at === "string" ? Date.parse(report.generated_at) : NaN;
+      if (!Number.isFinite(stamp) || Date.now() - stamp > 30000 || stamp - Date.now() > 5000) throw new Error("Unconfirmed diagnostic timestamp");
+      if (epoch !== state.diagnosticEpoch || state.paused || state.error) return;
+      state.diagnostics = report; renderDiagnostics();
+    } catch (_) { if (epoch === state.diagnosticEpoch) clearDiagnostics("Diagnostics unavailable; no previous report is presented as current."); }
+    finally { clearTimeout(timeout); }
+  }
+  $("diagnostics-filter").addEventListener("change", renderDiagnostics);
   const svg = (tag, attributes = {}, text) => { const node = document.createElementNS(NS, tag); for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value)); if (text !== undefined) node.textContent = text; return node; };
   const cell = (row, text, className = "") => { const node = el("td", className); if (text instanceof Node) node.append(text); else node.textContent = string(text); row.append(node); return node; };
   const emptyTable = (body, columns, message) => { const row = el("tr"); const node = cell(row, message, "table-empty"); node.colSpan = columns; body.append(row); };
@@ -902,12 +954,18 @@
       const data = await response.json();
       if (!data || data.schema_version !== 1 || data.read_only !== true || !["live", "demo"].includes(data.mode) || !Array.isArray(data.sources) || !Array.isArray(data.lsps) || !data.topology || !Array.isArray(data.topology.nodes) || !Array.isArray(data.topology.links)) throw new Error("Controller returned an unsupported snapshot.");
       state.data = data; state.receivedAt = Date.now(); state.error = null;
+      if (data.mode === "demo") clearDiagnostics("Sample data does not establish deployment health."); else refreshDiagnostics();
       if (!list(data.lsps).some((lsp) => String(lsp.id) === state.selected)) state.selected = data.lsps.length ? String(data.lsps[0].id) : null;
-    } catch (error) { state.error = error.name === "AbortError" ? "Controller request timed out." : error instanceof SyntaxError ? "Controller returned invalid JSON." : string(error.message, "Controller connection failed."); }
+    } catch (error) { state.error = error.name === "AbortError" ? "Controller request timed out." : error instanceof SyntaxError ? "Controller returned invalid JSON." : string(error.message, "Controller connection failed."); clearDiagnostics("Management is disconnected. Previous diagnostic evidence has been cleared."); }
     finally { clearTimeout(timeout); state.loading = false; render(); schedule(); }
   }
-  $("poll-toggle").addEventListener("click", () => { state.paused = !state.paused; render(); if (state.paused) clearTimeout(state.timer); else refresh(); });
+  $("poll-toggle").addEventListener("click", () => { state.paused = !state.paused; render(); if (state.paused) { clearTimeout(state.timer); clearDiagnostics("Polling is paused; current diagnostic coverage is unconfirmed."); } else refresh(); });
   $("refresh-button").addEventListener("click", refresh);
+  setInterval(() => {
+    if (state.diagnostics && Date.now() - Date.parse(state.diagnostics.generated_at) > 30000) {
+      clearDiagnostics("Previous diagnostic evidence expired. Refresh to recheck.");
+    }
+  }, 1000);
   try { $("log-timezone").textContent = `Times shown in ${Intl.DateTimeFormat().resolvedOptions().timeZone || "your local timezone"}.`; } catch { /* Keep the local-time label. */ }
   refresh();
 })();

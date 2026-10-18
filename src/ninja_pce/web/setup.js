@@ -3,7 +3,8 @@
   "use strict";
   const $ = id => document.getElementById(id);
   const state = {authenticated: false, bootstrap: false, csrf: null, revision: null,
-    preview: null, generation: 0, dirty: false, busy: false, loaded: false};
+    preview: null, generation: 0, dirty: false, busy: false, loaded: false, diagnostics: null,
+    diagnosticsBusy: false, diagnosticsEpoch: 0, diagnosticsReceivedAt: 0};
   const reconciliationGuidance = " Run ninja-pce admin reconcile with this workspace directory from the local CLI before another activation.";
   const requestError = (message, status) => Object.assign(new Error(message), {status});
 
@@ -12,8 +13,9 @@
     $("message").className = "message" + (kind ? " " + kind : "");
   }
 
-  async function api(path, body) {
+  async function api(path, body, signal) {
     const options = {credentials: "same-origin", cache: "no-store", headers: {Accept: "application/json"}};
+    if (signal) options.signal = signal;
     if (body !== undefined) {
       options.method = "POST";
       options.headers["Content-Type"] = "application/json";
@@ -34,6 +36,129 @@
     return value;
   }
 
+  const diagnosticText = (value, limit = 1024) => String(value ?? "").slice(0, limit);
+  const diagnosticSeverity = value => ["ok", "info", "warning", "blocker", "unknown"].includes(value) ? value : "unknown";
+  const diagnosticTime = value => {
+    const parsed = new Date(value);
+    return typeof value === "string" && Number.isFinite(parsed.getTime()) ? parsed.toLocaleString() : "Timestamp unknown";
+  };
+  function diagnosticEvidence(value, depth = 0) {
+    if (value === null || typeof value === "boolean" || typeof value === "number") return value;
+    if (typeof value === "string") return diagnosticText(value, 500);
+    if (depth >= 3) return "[Further detail omitted]";
+    if (Array.isArray(value)) return value.slice(0, 10).map(item => diagnosticEvidence(item, depth + 1));
+    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).slice(0, 10).map(([key, item]) => [diagnosticText(key, 80), diagnosticEvidence(item, depth + 1)]));
+    return "Unknown";
+  }
+  function validateDiagnostics(report) {
+    if (!report || report.schema_version !== 1 || report.read_only !== true ||
+        !["snapshot", "live"].includes(report.scope) || !Array.isArray(report.findings)) {
+      throw new Error("The server returned an unsupported diagnostic report.");
+    }
+    const stamp = typeof report.generated_at === "string" ? Date.parse(report.generated_at) : NaN;
+    if (!Number.isFinite(stamp) || Date.now() - stamp > 30000 || stamp - Date.now() > 5000) {
+      throw new Error("Diagnostic timestamp is stale or unconfirmed. Check host time and refresh the report.");
+    }
+    return report;
+  }
+  function paintDiagnostics(report) {
+    $("diagnostics-findings").replaceChildren();
+    $("diagnostics-limitations").replaceChildren();
+    if (!report) return;
+    const findings = report.findings.slice(0, 200).filter(item => item && typeof item === "object");
+    const counts = {ok: 0, info: 0, warning: 0, blocker: 0, unknown: 0};
+    for (const finding of findings) counts[diagnosticSeverity(finding.severity)] += 1;
+    const overall = counts.blocker ? "blocked" : counts.warning ? "warning" : report.complete !== true || counts.unknown || !findings.length ? "unknown" : report.overall === "ok" ? "ok" : "unknown";
+    const labels = {ok: "Checks passed", blocked: "Blocked", warning: "Warnings", unknown: "Unknown or incomplete"};
+    $("diagnostics-status").textContent = labels[overall] + " · " + Object.entries(counts).map(([key, value]) => value + " " + key).join(" · ");
+    $("diagnostics-status").className = "diagnostics-status diagnostic-tone-" + overall;
+    if ($("diagnostics-summary")) {
+      $("diagnostics-summary").textContent = labels[overall];
+      $("diagnostics-summary").className = "tag diagnostic-tone-" + overall;
+    }
+    $("diagnostics-scope").textContent = (report.scope === "live" ? "Live read-only report" : "Snapshot report · no live network checks") + " · observed " + diagnosticTime(report.generated_at) + ". This report records a past check; refresh to recheck.";
+    const selected = $("diagnostics-filter").value;
+    const rank = {blocker: 0, warning: 1, unknown: 2, info: 3, ok: 4};
+    const visible = findings.filter(item => selected === "all" || diagnosticSeverity(item.severity) === selected)
+      .sort((left, right) => rank[diagnosticSeverity(left.severity)] - rank[diagnosticSeverity(right.severity)]).slice(0, 80);
+    for (const finding of visible) {
+      const row = document.createElement("article");
+      const severity = diagnosticSeverity(finding.severity);
+      row.className = "diagnostic-finding";
+      row.dataset.severity = severity;
+      const heading = document.createElement("h4");
+      heading.textContent = severity.toUpperCase() + " · " + diagnosticText(finding.code, 96);
+      const category = document.createElement("small");
+      category.textContent = diagnosticText(finding.category, 80) + " · " + diagnosticTime(finding.observed_at);
+      const cause = document.createElement("p");
+      cause.textContent = diagnosticText(finding.message);
+      const guidance = document.createElement("p");
+      guidance.className = "diagnostic-guidance";
+      guidance.textContent = "Next step: " + diagnosticText(finding.remediation || "Review the evidence and deployment guide before making changes.");
+      row.append(heading, category, cause, guidance);
+      if (finding.evidence && typeof finding.evidence === "object" && Object.keys(finding.evidence).length) {
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = "Observed evidence";
+        const pre = document.createElement("pre");
+        pre.tabIndex = 0;
+        pre.textContent = JSON.stringify(diagnosticEvidence(finding.evidence), null, 2).slice(0, 6000);
+        details.append(summary, pre);
+        row.append(details);
+      }
+      $("diagnostics-findings").append(row);
+    }
+    if (!visible.length) {
+      const empty = document.createElement("p");
+      empty.textContent = findings.length ? "No findings match this severity." : "No checks were reported. Coverage is unconfirmed.";
+      $("diagnostics-findings").append(empty);
+    }
+    const limitations = Array.isArray(report.limitations) ? report.limitations.slice(0, 20) : [];
+    if (report.complete !== true) limitations.unshift("This report is incomplete. Missing checks remain unknown.");
+    if (report.findings.length > 80) limitations.unshift("Display is limited to 80 findings per severity filter; blockers are shown first.");
+    for (const limitation of limitations) {
+      const item = document.createElement("li");
+      item.textContent = diagnosticText(limitation);
+      $("diagnostics-limitations").append(item);
+    }
+  }
+
+  function clearDiagnostics(reason = "No diagnostic report loaded.") {
+    state.diagnostics = null;
+    state.diagnosticsEpoch += 1;
+    paintDiagnostics(null);
+    $("diagnostics-status").textContent = reason;
+    $("diagnostics-status").className = "diagnostics-status diagnostic-tone-unknown";
+    $("diagnostics-scope").textContent = "Current diagnostic coverage is unconfirmed. Refresh the snapshot or request live checks.";
+  }
+
+  async function refreshDiagnostics(live = false) {
+    if (!state.authenticated || state.diagnosticsBusy) return;
+    const epoch = ++state.diagnosticsEpoch;
+    state.diagnosticsBusy = true;
+    state.diagnostics = null;
+    paintDiagnostics(null);
+    $("diagnostics-status").className = "diagnostics-status diagnostic-tone-unknown";
+    $("diagnostics-status").textContent = live ? "Running live read-only checks…" : "Reading diagnostic snapshot…";
+    controls();
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 12000);
+    try {
+      const report = validateDiagnostics(await api("/api/admin/diagnostics", live ? {live: true} : undefined, controller.signal));
+      if (!state.authenticated || epoch !== state.diagnosticsEpoch) return;
+      state.diagnostics = report;
+      state.diagnosticsReceivedAt = Date.now();
+      paintDiagnostics(report);
+    } catch (error) {
+      if (epoch !== state.diagnosticsEpoch || !state.authenticated) return;
+      clearDiagnostics("Diagnostics unavailable. " + diagnosticText(error.message));
+      if (error.status === 401) errorMessage(error);
+    } finally {
+      clearTimeout(timeout);
+      state.diagnosticsBusy = false;
+      controls();
+    }
+  }
+
   function controls() {
     $("setup-fields").disabled = state.busy || !state.loaded;
     $("preview-button").disabled = state.busy || !state.loaded;
@@ -43,6 +168,8 @@
     $("runtime-stop").disabled = state.busy || !state.revision;
     $("reload-config").disabled = state.busy;
     $("logout").disabled = state.busy;
+    $("refresh-diagnostics").disabled = state.busy || state.diagnosticsBusy || !state.authenticated;
+    $("run-live-diagnostics").disabled = state.busy || state.diagnosticsBusy || !state.authenticated;
   }
 
   function invalidate() {
@@ -72,6 +199,7 @@
 
   function showAuth(bootstrap) {
     state.authenticated = false;
+    clearDiagnostics("Sign in to view diagnostic evidence.");
     state.bootstrap = bootstrap;
     state.csrf = null;
     state.preview = null;
@@ -292,6 +420,7 @@
     if (!state.authenticated) return;
     try { statusView(await api("/api/admin/status")); }
     catch (error) {
+      clearDiagnostics("Administration disconnected. Previous diagnostic evidence has been cleared.");
       $("runtime-state").textContent = "Unavailable";
       $("runtime-state").className = "";
       $("runtime-detail").textContent = "Current process state is unconfirmed.";
@@ -338,7 +467,7 @@
     state.loaded = false;
     controls();
     await loadConfig();
-    await Promise.all([refreshStatus(), refreshAudit()]);
+    await Promise.all([refreshStatus(), refreshAudit(), refreshDiagnostics()]);
     if (state.authenticated) message("Review the observer settings below. No network readiness is implied by a saved revision.");
   }
 
@@ -420,11 +549,12 @@
     state.preview = null;
     state.busy = true;
     controls();
+    clearDiagnostics("Configuration is changing. Refresh diagnostics after the transaction completes.");
     message(activate ? "Saving and activating the reviewed observer revision…" : "Saving the reviewed configuration…");
     try {
       const value = await api("/api/admin/apply", {preview_id: preview.preview_id, expected_revision: preview.expected_revision, activate});
       await loadConfig();
-      await Promise.all([refreshStatus(), refreshAudit()]);
+      await Promise.all([refreshStatus(), refreshAudit(), refreshDiagnostics()]);
       const descriptions = {SAVED: "Configuration saved. Activation has not been requested; network readiness is separate.",
         ACTIVE: "Observer revision activated. Check network readiness above for current topology availability.",
         ROLLED_BACK: "Activation failed and the previous revision was restored. Review runtime status and audit events.",
@@ -443,10 +573,11 @@
     if (state.busy || !state.revision || action === "start" && state.dirty) return;
     state.busy = true;
     controls();
+    clearDiagnostics("Runtime is changing. Refresh diagnostics after the action completes.");
     try {
       const value = await api("/api/admin/runtime", {action, expected_revision: state.revision});
       statusView(value);
-      await Promise.all([refreshStatus(), refreshAudit()]);
+      await Promise.all([refreshStatus(), refreshAudit(), refreshDiagnostics()]);
       const transaction = value.transaction || {};
       if (["FAILED", "UNCERTAIN"].includes(transaction.status)) {
         const detail = transaction.message || transaction.error || value.message ||
@@ -470,6 +601,9 @@
   });
   $("refresh-status").addEventListener("click", refreshStatus);
   $("refresh-audit").addEventListener("click", refreshAudit);
+  $("refresh-diagnostics").addEventListener("click", () => refreshDiagnostics());
+  $("run-live-diagnostics").addEventListener("click", () => refreshDiagnostics(true));
+  $("diagnostics-filter").addEventListener("change", () => paintDiagnostics(state.diagnostics));
 
   async function initialize() {
     try {
@@ -482,5 +616,10 @@
     } catch (error) { message(error.message, "error"); }
   }
   initialize();
-  window.setInterval(() => { if (state.authenticated && !state.busy) refreshStatus(); }, 10000);
+  window.setInterval(() => {
+    if (state.authenticated && !state.busy) refreshStatus();
+    if (state.diagnostics && Date.now() - state.diagnosticsReceivedAt > 30000) {
+      clearDiagnostics("Diagnostic report expired. Refresh the snapshot or request live checks to recheck.");
+    }
+  }, 10000);
 })();

@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import shutil
 from pathlib import Path
 from typing import Any
@@ -131,13 +132,14 @@ def doctor(config_path: str | Path) -> int:
         print(f"grpcurl available: {tool}")
     mode = effective_operating_mode(config)
     print(f"Operating mode: {mode}")
-    print(f"GoBGP must be configured separately at {data['bgpls']['endpoint']}.")
+    print(f"Configured GoBGP API: {data['bgpls']['endpoint']} (not probed by doctor).")
     if mode == "observe":
         print("PCEP is disabled in observation mode; no PCC session is required.")
-        print("Before connecting topology, replace the example BGP-LS addresses and validate your domain identities.")
+        print("Live BGP-LS session, End-of-RIB and topology health have not been checked.")
     else:
-        print("Before starting, replace the example addresses and domain scope, and verify BGP-LS and PCC connectivity.")
+        print("Live BGP-LS and PCC connectivity have not been checked.")
     print("These checks validate local configuration and tools; live network health requires the running controller.")
+    print(f"Inspect current findings with: ninja-pce diagnostics --config {shlex.quote(str(config.path))} --live --format text")
     return 0 if tool is not None else 1
 
 

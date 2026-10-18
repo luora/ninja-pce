@@ -252,3 +252,20 @@ dialog .kv{border-top:1px solid var(--border);border-bottom:1px solid var(--bord
 #creation-operation-list { display: flex; flex-direction: column; gap: 8px; }
 #creation-operation-list button { text-align: left; font-size: 12px; overflow-wrap: anywhere; }
 @media (max-width: 600px) { .creation-grid { grid-template-columns: 1fr; } #create-tunnel-button { padding: 6px 9px; font-size: 11px; } }
+
+/* Bounded, text-only diagnostic evidence shared with the setup view. */
+.diagnostics { margin-bottom: 18px; }
+.diagnostics-filter { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
+.diagnostics-filter select { width: auto; max-width: 100%; }
+.diagnostics-findings { display: grid; gap: 12px; margin: 14px 0; }
+.diagnostic-finding { border: 1px solid var(--border); border-left: 3px solid var(--text-3); border-radius: 7px; padding: 14px; min-width: 0; overflow-wrap: anywhere; }
+.diagnostic-finding h4 { margin: 0 0 6px; font-size: 13px; }
+.diagnostic-finding p { margin: 8px 0; }
+.diagnostic-finding pre { overflow: auto; max-height: 240px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+.diagnostic-finding[data-severity="blocker"] { border-left-color: var(--red); }
+.diagnostic-finding[data-severity="warning"], .diagnostic-finding[data-severity="unknown"] { border-left-color: var(--amber); }
+.diagnostic-tone-blocked { color: var(--red); }
+.diagnostic-tone-warning, .diagnostic-tone-unknown { color: var(--amber); }
+.diagnostic-tone-ok { color: var(--green); }
+.diagnostic-guidance { color: var(--text-2); }
+.diagnostics-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }

@@ -94,6 +94,13 @@ Check the configuration and prerequisites before starting:
 
 `doctor` validates local configuration and checks for `grpcurl` without opening
 protocol listeners or contacting routers. `plan` shows the configured component commands.
+Use [structured diagnostics](diagnostics.md) for observation findings and manual
+repair guidance; add `--live` explicitly for bounded local RPC and host probes:
+
+```bash
+./ninja-pce diagnostics --config .ninja-pce/workspace/config/controller.json --live
+```
+
 `start` runs the components selected by the configuration in the foreground.
 New workspaces start the collector and dashboard; existing configurations without
 a mode field retain PCEP. It uses your configuration and does not fall back to sample data.

@@ -29,6 +29,10 @@ _AF = {"afi": "AFI_LS", "safi": "SAFI_LS"}
 class BgplsError(ValueError):
     """A poll cannot establish a usable, current topology snapshot."""
 
+    def __init__(self, message: str, *, code: str = "BGPLS_INPUT_INVALID"):
+        self.code = code
+        super().__init__(message)
+
 
 @dataclass(frozen=True)
 class OspfAbrBinding:
@@ -269,15 +273,22 @@ def _peers(responses: Any, required: tuple[str, ...]) -> dict[str, tuple[Any, ..
         ls = [family for family in families if _object(family, "family").get("state", {}).get("family") == _AF]
         if address not in required:
             continue
-        if address in result or state.get("sessionState") != "ESTABLISHED" or state.get("adminState") != "UP":
-            raise BgplsError("Required BGP-LS peer is duplicate or not Established/Up")
+        if address in result:
+            raise BgplsError("Required BGP-LS peer is duplicate or not Established/Up", code="BGPLS_PEER_IDENTITY_INVALID")
+        if state.get("sessionState") not in ("ESTABLISHED", "IDLE", "CONNECT", "ACTIVE", "OPENSENT", "OPENCONFIRM") or state.get("adminState") not in ("UP", "DOWN", "PFX_CT"):
+            raise BgplsError("Required BGP-LS peer is duplicate or not Established/Up", code="BGPLS_PEER_METADATA_INVALID")
+        if state.get("sessionState") != "ESTABLISHED" or state.get("adminState") != "UP":
+            raise BgplsError("Required BGP-LS peer is duplicate or not Established/Up", code="BGPLS_SESSION_DOWN")
         if len(ls) != 1 or ls[0].get("state", {}).get("enabled") is not True:
-            raise BgplsError("Required BGP-LS address family is not enabled")
-        if ls[0].get("mpGracefulRestart", {}).get("state", {}).get("endOfRibReceived") is not True:
-            raise BgplsError("BGP-LS End-of-RIB has not been received")
+            raise BgplsError("Required BGP-LS address family is not enabled", code="BGPLS_FAMILY_UNAVAILABLE")
+        eor = _object(_object(ls[0].get("mpGracefulRestart", {}), "multiprotocol graceful restart").get("state", {}), "restart state").get("endOfRibReceived")
+        if type(eor) is not bool:
+            raise BgplsError("BGP-LS End-of-RIB has not been received", code="BGPLS_PEER_METADATA_INVALID")
+        if eor is False:
+            raise BgplsError("BGP-LS End-of-RIB has not been received", code="BGPLS_EOR_INCOMPLETE")
         restart = _object(peer.get("gracefulRestart", {}), "graceful restart")
         if restart.get("peerRestarting") or restart.get("localRestarting"):
-            raise BgplsError("BGP-LS restart/stale state prohibits ingestion")
+            raise BgplsError("BGP-LS restart/stale state prohibits ingestion", code="BGPLS_SOURCE_RESTARTING")
         uptime = peer.get("timers", {}).get("state", {}).get("uptime")
         _time(uptime, "peer uptime")
         received = state.get("messages", {}).get("received", {})
@@ -285,7 +296,7 @@ def _peers(responses: Any, required: tuple[str, ...]) -> dict[str, tuple[Any, ..
                            received.get("withdrawUpdate", "0"), received.get("withdrawPrefix", "0"),
                            ls[0].get("state", {}).get("accepted", "0"))
     if set(result) != set(required):
-        raise BgplsError("A required BGP-LS peer is missing")
+        raise BgplsError("A required BGP-LS peer is missing", code="BGPLS_PEER_MISSING")
     return result
 
 
@@ -573,13 +584,13 @@ class GoBgpTopologyProvider:
                 result = self.runner(command, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
                                      timeout=self.timeout_seconds + 1, check=False)
                 if result.returncode:
-                    raise BgplsError(f"GoBGP {method} RPC failed (exit {result.returncode})")
+                    raise BgplsError(f"GoBGP {method} RPC failed (exit {result.returncode})", code="BGPLS_RPC_UNAVAILABLE")
                 if stdout.tell() > _MAX_OUTPUT:
                     raise BgplsError("GoBGP output exceeds the size limit")
                 stdout.seek(0)
                 output = stdout.read(_MAX_OUTPUT + 1).decode("utf-8")
             except (OSError, subprocess.TimeoutExpired, UnicodeError) as exc:
-                raise BgplsError(f"GoBGP {method} RPC unavailable or timed out") from exc
+                raise BgplsError(f"GoBGP {method} RPC unavailable or timed out", code="BGPLS_RPC_UNAVAILABLE") from exc
         return decode_json_stream(output)
 
     def capture(self) -> dict[str, Any]:

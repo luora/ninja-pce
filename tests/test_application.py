@@ -121,7 +121,8 @@ def test_doctor_is_read_only_and_checks_local_executable_without_execution(tmp_p
     assert main(["app", "doctor", "--config", str(config_path)]) == 0
     output = capsys.readouterr().out
     assert "Configuration valid" in output and "grpcurl available" in output
-    assert "GoBGP must be configured separately" in output
+    assert "Configured GoBGP API" in output and "not probed by doctor" in output
+    assert "diagnostics --config" in output
     assert "Operating mode: observe" in output
     assert "PCEP is disabled" in output and "no PCC session is required" in output
     assert "PCC connectivity" not in output
