@@ -231,7 +231,7 @@ def test_offline_builder_rejects_constraint_options_before_pip(native_inputs, si
     assert not (tmp_path / "release").exists()
 
 
-def test_signing_key_cannot_be_inside_source_checkout(native_inputs, signing_key, tmp_path, monkeypatch):
+def test_signing_key_cannot_be_inside_source_checkout(native_inputs, signing_key, fake_build, tmp_path, monkeypatch):
     repository = tmp_path / "source"
     repository.mkdir()
     unsafe_key = repository / "ignored-private-key.pem"
