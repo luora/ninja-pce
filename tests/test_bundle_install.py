@@ -79,10 +79,11 @@ def test_fresh_bundle_render_is_observation_only_and_cross_host(options, verifie
                                      "--component", "bgpls", "--component", "dashboard"])
     assert args.component == ["bgpls", "dashboard"]
     gobgp = plan.gobgp_unit().decode()
-    assert "--api-hosts=127.0.0.1:50051" in gobgp
-    assert "--pprof-disable --metrics-path= --config-strict" in gobgp
+    assert f'ExecStart="{plan.python}" -I -m ninja_pce.cli runtime gobgp --binary ' in gobgp
+    assert f'"{plan.release / "bin/gobgpd"}" --config "{plan.config_dir / "gobgpd.toml"}"' in gobgp
+    assert "--api-address 127.0.0.1 --api-port 50051 --service ninja-gobgpd.service" in gobgp
     assert "StartLimitIntervalSec=60\nStartLimitBurst=3" in gobgp
-    assert "RestartPreventExitStatus" not in gobgp
+    assert "RestartPreventExitStatus=78" in gobgp
     assert "port = -1" in plan.gobgp_config.decode()
     assert "[[neighbors]]" not in plan.gobgp_config.decode()
     deployment_manifest = json.loads((output / "deployment-manifest.json").read_text())

@@ -15,6 +15,7 @@ import json
 import math
 import os
 import re
+import shutil
 import signal
 import stat
 import sys
@@ -25,6 +26,13 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any, BinaryIO
 
+from .startup import (
+    PERMANENT_EXIT,
+    PermanentStartupError,
+    permanent_os_error,
+    require_available_listener,
+    startup_finding,
+)
 from .state import digest, write_state
 
 COMPONENTS = ("bgpls", "pcep", "dashboard")
@@ -352,7 +360,7 @@ def _validate_paths(data: dict[str, Any], source: Path) -> None:
     if any(Path(value).is_relative_to(runtime_dir) for value in inputs + outputs):
         raise ValueError("Protocol inputs and outputs must be outside the wrapper runtime_dir")
     reserved = [str(runtime_dir / f".ninja-pce-controller-{component}{suffix}")
-                for component in COMPONENTS for suffix in (".json", ".lock")]
+                for component in COMPONENTS for suffix in (".json", ".lock", "-startup.json")]
     all_paths = inputs + outputs
     if len(all_paths) != len(set(all_paths)) or set(all_paths) & set(reserved):
         raise ValueError("Controller input, output, journal and runtime paths must be distinct")
@@ -429,6 +437,8 @@ def component_commands(config: ControllerConfig, components: list[str] | tuple[s
         if "reinstatement_path" in managed:
             listener.extend(("--managed-reinstate-request", managed["reinstatement_path"]))
     commands = {"bgpls": collector, "pcep": listener, "dashboard": web}
+    for command in commands.values():
+        command.append("--managed-startup")
     return {key: commands[key] for key in _components(config, components)}
 
 
@@ -459,9 +469,26 @@ def _runtime_path(config: ControllerConfig, component: str) -> Path:
     return Path(config.document["runtime_dir"]) / f".ninja-pce-controller-{component}.json"
 
 
+def _startup_fault_path(config: ControllerConfig, component: str) -> Path:
+    return Path(config.document["runtime_dir"]) / f".ninja-pce-controller-{component}-startup.json"
+
+
 def _runtime_status(config: ControllerConfig, component: str) -> dict[str, Any]:
     from .dashboard import _read
 
+    try:
+        fault = _read(_startup_fault_path(config, component), checksummed=True)
+        supervisor = fault.get("supervisor", {})
+        if (fault.get("kind") == "controller_startup_fault" and fault.get("component") == component and
+                fault.get("config_digest") == config.config_digest and isinstance(supervisor, dict) and
+                type(supervisor.get("pid")) is int and isinstance(supervisor.get("start_ticks"), str) and
+                _process_identity(supervisor["pid"]) == supervisor["start_ticks"] and
+                isinstance(fault.get("finding"), dict)):
+            return {"component": component, "state": "failed", "returncode": PERMANENT_EXIT,
+                    "updated_at": fault.get("updated_at"), "finding": fault["finding"],
+                    "error": str(fault["finding"].get("message", "Startup ownership conflict"))[:512]}
+    except (OSError, ValueError, TypeError, RecursionError):
+        pass
     try:
         record = _read(_runtime_path(config, component), checksummed=True)
     except (OSError, ValueError, TypeError, RecursionError):
@@ -479,7 +506,8 @@ def _runtime_status(config: ControllerConfig, component: str) -> dict[str, Any]:
     return {"component": component,
             "state": "running" if running else "failed" if record.get("state") == "failed" else "stopped",
             "updated_at": record.get("updated_at"), "returncode": record.get("returncode"),
-            "error": record["error"][:512] if isinstance(record.get("error"), str) else None}
+            "error": record["error"][:512] if isinstance(record.get("error"), str) else None,
+            "finding": record.get("finding") if isinstance(record.get("finding"), dict) else None}
 
 
 def controller_status(config: ControllerConfig) -> tuple[dict[str, Any], int]:
@@ -533,7 +561,7 @@ async def _stop_children(processes: dict[str, asyncio.subprocess.Process]) -> No
     await asyncio.gather(*waits, return_exceptions=True)
 
 
-async def _supervise(config: ControllerConfig, commands: dict[str, list[str]]) -> int:
+async def _supervise(config: ControllerConfig, commands: dict[str, list[str]], *, preflight: bool = False) -> int:
     _components(config, tuple(commands))
     processes: dict[str, asyncio.subprocess.Process] = {}
     locks: list[BinaryIO] = []
@@ -551,6 +579,19 @@ async def _supervise(config: ControllerConfig, commands: dict[str, list[str]]) -
     _recheck_configuration(config)
     runtime_dir.mkdir(parents=True, exist_ok=True)
 
+    def lock_component(component: str) -> None:
+        descriptor = os.open(runtime_dir / f".ninja-pce-controller-{component}.lock",
+                             os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        handle = os.fdopen(descriptor, "r+b")
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            handle.close()
+            raise PermanentStartupError(startup_finding(
+                "COMPONENT_ALREADY_SUPERVISED", component, f"Controller component already supervised: {component}",
+                "Use the existing component's managed stop/restart workflow; do not launch another owner.")) from exc
+        locks.append(handle)
+
     async def stop_protocols() -> None:
         await _stop_children({key: child for key, child in processes.items() if key != "dashboard"})
         for key, child in processes.items():
@@ -564,15 +605,6 @@ async def _supervise(config: ControllerConfig, commands: dict[str, list[str]]) -
                 print(f"Cannot persist protocol stop for {key}: {exc}", file=sys.stderr, flush=True)
 
     try:
-        for component in ordered:
-            descriptor = os.open(runtime_dir / f".ninja-pce-controller-{component}.lock",
-                                 os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
-            handle = os.fdopen(descriptor, "r+b")
-            locks.append(handle)
-            try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as exc:
-                raise ValueError(f"Controller component already supervised: {component}") from exc
         for signum in (signal.SIGTERM, signal.SIGINT):
             previous_handlers[signum] = signal.getsignal(signum)
             loop.add_signal_handler(signum, stop.set)
@@ -586,21 +618,41 @@ async def _supervise(config: ControllerConfig, commands: dict[str, list[str]]) -
             record = {"kind": "controller_component", "component": component, "config_digest": config.config_digest,
                       "run_token": token, "state": "starting", "updated_at": time.time(),
                       "supervisor": {"pid": os.getpid(), "start_ticks": _process_identity(os.getpid())}, "child": {}}
+            locked = False
             try:
+                lock_component(component)
+                locked = True
+                if preflight and component in {"dashboard", "pcep"}:
+                    listener = config.document[component]
+                    require_available_listener(listener["listen_host"], listener["port"], component=component)
+                if preflight and component == "bgpls" and shutil.which(config.document["bgpls"]["grpcurl"]) is None:
+                    raise PermanentStartupError(startup_finding(
+                        "BGPLS_CLIENT_MISSING", component,
+                        "The configured grpcurl executable is missing or not executable.",
+                        "Install the verified client or correct bgpls.grpcurl before restarting the collector."))
                 process = await asyncio.create_subprocess_exec(*commands[component])
                 processes[component] = process
                 record.update(state="running", child={"pid": process.pid, "start_ticks": _process_identity(process.pid)})
                 records[component] = record
                 write_state(_runtime_path(config, component), record)
                 print(json.dumps({"component": component, "state": "started", "pid": process.pid}), flush=True)
-            except OSError as exc:
+            except (OSError, PermanentStartupError) as exc:
                 if not keep_management or component == "dashboard":
                     raise
                 protocol_failed = True
                 record.update(state="failed", error=f"Component startup failed: {exc}", updated_at=time.time())
-                records[component] = record
+                if isinstance(exc, PermanentStartupError):
+                    record.update(finding=exc.finding, returncode=PERMANENT_EXIT)
+                elif permanent_os_error(exc):
+                    record.update(finding=startup_finding("STARTUP_LOCAL_RESOURCE_ERROR", component, str(exc),
+                                                         errno=exc.errno), returncode=PERMANENT_EXIT)
                 try:
-                    write_state(_runtime_path(config, component), record)
+                    if locked:
+                        records[component] = record
+                        write_state(_runtime_path(config, component), record)
+                    else:
+                        fault = {**record, "kind": "controller_startup_fault"}
+                        write_state(_startup_fault_path(config, component), fault)
                 except OSError:
                     pass
                 print(json.dumps({"component": component, "state": "startup_failed", "error": str(exc)}),
@@ -620,11 +672,15 @@ async def _supervise(config: ControllerConfig, commands: dict[str, list[str]]) -
                 component = "dashboard" if "dashboard" in exited else exited[0]
                 print(json.dumps({"component": component, "state": "unexpected_exit",
                                   "returncode": processes[component].returncode}), file=sys.stderr, flush=True)
-                return 1
+                return PERMANENT_EXIT if processes[component].returncode == PERMANENT_EXIT else 1
             for component in exited:
                 record = records[component]
                 record.update(state="failed", updated_at=time.time(), returncode=processes[component].returncode,
                               error="Protocol component exited unexpectedly; management remains available.")
+                if processes[component].returncode == PERMANENT_EXIT:
+                    record["finding"] = startup_finding(
+                        "COMPONENT_PERMANENT_STARTUP_FAILURE", component,
+                        "Component rejected startup with exit status 78; inspect its original structured error.")
                 try:
                     write_state(_runtime_path(config, component), record)
                 except OSError as exc:
@@ -662,16 +718,21 @@ async def _supervise(config: ControllerConfig, commands: dict[str, list[str]]) -
 
 def _recheck_configuration(config: ControllerConfig) -> None:
     if load_controller_config(config.path).config_digest != config.config_digest:
-        raise ValueError("Controller configuration or static policy inputs changed before component startup")
+        raise PermanentStartupError(startup_finding(
+            "CONTROLLER_CONFIGURATION_CHANGED", "controller",
+            "Controller configuration or static policy inputs changed before component startup"))
 
 
 def run_controller(config: ControllerConfig, components: list[str] | tuple[str, ...] | None = None) -> int:
     try:
-        return asyncio.run(_supervise(config, component_commands(config, components)))
+        return asyncio.run(_supervise(config, component_commands(config, components), preflight=True))
     except KeyboardInterrupt:
         return 0
     except OSError as exc:
-        raise ValueError(f"Cannot start controller components: {exc}") from exc
+        if permanent_os_error(exc):
+            raise PermanentStartupError(startup_finding("STARTUP_LOCAL_RESOURCE_ERROR", "controller", str(exc),
+                                                       errno=exc.errno)) from exc
+        raise
 
 
 def add_controller_commands(subparsers: Any) -> None:
@@ -686,9 +747,19 @@ def add_controller_commands(subparsers: Any) -> None:
 
 
 def controller_command(args: argparse.Namespace) -> int:
-    config = load_controller_config(args.config)
+    try:
+        config = load_controller_config(args.config)
+    except ValueError as exc:
+        if args.controller_action == "run":
+            raise PermanentStartupError(startup_finding("CONTROLLER_CONFIGURATION_INVALID", "controller", str(exc))) from exc
+        raise
     if args.controller_action == "run":
-        return run_controller(config, args.component)
+        try:
+            return run_controller(config, args.component)
+        except PermanentStartupError:
+            raise
+        except ValueError as exc:
+            raise PermanentStartupError(startup_finding("CONTROLLER_CONFIGURATION_INVALID", "controller", str(exc))) from exc
     if args.controller_action == "status":
         document, code = controller_status(config)
     elif args.controller_action == "plan":

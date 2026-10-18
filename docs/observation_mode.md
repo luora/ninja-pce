@@ -139,6 +139,11 @@ Read-only collection can recover from an unavailable source within its normal
 polling loop. That is distinct from restarting a crashed protocol process.
 No recovery journal or reservation ownership is cleared during these changes.
 
+[Managed startup checks](runtime_startup.md) now report occupied ports, missing
+clients and duplicate component ownership as permanent faults. Readiness also
+includes startup_findings, rendered in the dashboard banner. Ordinary source
+connectivity failures remain recoverable within the collector's polling loop.
+
 ## Upgrade order and validation
 
 This change follows the verified offline-bundle PR. Merge that PR first.
@@ -153,7 +158,7 @@ and browser handling of disconnected snapshots. They use local processes and
 captured/synthetic protocol inputs. Independent live router evidence remains
 necessary for release acceptance.
 
-Authenticated bootstrap/setup, live process-ownership diagnostics and
+Authenticated bootstrap/setup and
 provisioning capability integration remain later PRs. The management dashboard
 continues to require loopback access or the existing authenticated reverse
 proxy.

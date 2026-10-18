@@ -12,7 +12,9 @@ def evaluate_readiness(snapshot: dict[str, Any], operating_mode: str,
     scope = "runtime" if processes is not None else "observations"
 
     def finding(state: str, message: str, *, ready: bool = False) -> dict[str, Any]:
-        return {"state": state, "ready": ready, "message": message, "scope": scope,
+        faults = [item["finding"] for item in runtime.values() if item.get("state") == "failed" and
+                  isinstance(item.get("finding"), dict)]
+        return {"state": state, "ready": ready, "message": message, "scope": scope, "startup_findings": faults,
                 "operating_mode": operating_mode, "control_authority_verified": False,
                 "forwarding_verified": False}
 

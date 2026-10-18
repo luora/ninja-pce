@@ -192,7 +192,7 @@ def test_start_reuses_existing_controller_validation_and_runtime(tmp_path, monke
     document = json.loads(config_path.read_text())
     document["pcep"]["port"] = 0
     config_path.write_text(json.dumps(document))
-    assert main(["app", "start", "--config", str(config_path)]) == 1
+    assert main(["app", "start", "--config", str(config_path)]) == 78
     assert len(captured) == 1
 
 

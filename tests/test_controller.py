@@ -189,7 +189,7 @@ def test_commands_reuse_low_level_parser_without_per_tunnel_registration(config_
 
 
 def test_shared_freshness_limit_reaches_collector_computer_and_dashboard(config_file, monkeypatch):
-    from ninja_pce import pcep, pcep_compute
+    from ninja_pce import pcep, pcep_compute, startup
     from ninja_pce.live import _serve_pcep
 
     path, document = config_file
@@ -222,6 +222,7 @@ def test_shared_freshness_limit_reaches_collector_computer_and_dashboard(config_
 
     monkeypatch.setattr(pcep_compute, "PcepPathComputer", computer)
     monkeypatch.setattr(pcep, "PcepServer", Server)
+    monkeypatch.setattr(startup, "require_available_listener", lambda *args, **kwargs: None)
     args = build_parser().parse_args(commands["pcep"][3:])
     assert asyncio.run(_serve_pcep(args)) == 0
     assert received["max_age_seconds"] == 12.0

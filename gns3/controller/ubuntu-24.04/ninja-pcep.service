@@ -2,15 +2,18 @@
 Description=Ninja-PCE passive PCEP listener for the isolated lab
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
 
 [Service]
 Type=simple
 User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/ninja-pce
-ExecStart=/home/ubuntu/ninja-pce/.venv/bin/ninja-pce pcep-listen --listen-host 172.16.100.10 --allow-peer 10.255.0.1 --allow-peer 172.16.100.102 --capture /home/ubuntu/ninja-pce/build/live/pcep.json
+ExecStart=/home/ubuntu/ninja-pce/.venv/bin/ninja-pce pcep-listen --managed-startup --listen-host 172.16.100.10 --allow-peer 10.255.0.1 --allow-peer 172.16.100.102 --capture /home/ubuntu/ninja-pce/build/live/pcep.json
 Restart=on-failure
 RestartSec=3
+RestartPreventExitStatus=78
 NoNewPrivileges=true
 PrivateTmp=true
 

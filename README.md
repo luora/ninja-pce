@@ -55,6 +55,8 @@ wheelhouse, checksums, configuration examples and a systemd installer.
 The optional [verified offline bundle](docs/offline_bundles.md) also packages
 patched GoBGP and grpcurl with provenance and a signed manifest for fresh
 observation deployments.
+Managed services report [listener ownership and startup faults](docs/runtime_startup.md)
+and bound retries while preserving the dashboard after protocol failures.
 See the [application validation record](docs/application_deployment_validation.md)
 for packaging, CI and deployment evidence.
 

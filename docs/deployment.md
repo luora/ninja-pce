@@ -337,7 +337,11 @@ collector/PCEP/dashboard units or another foreground instance against the same
 ports and files. With a dashboard selected, a protocol failure stops and reaps
 the protocol group while retaining the dashboard and original fault record.
 A dashboard failure or headless child failure exits with a failure status;
-the installed systemd unit restarts it after five seconds. An operator stop shuts down the children
+the installed systemd unit retries ordinary failures after five seconds, up to
+three starts in sixty seconds. Permanent configuration, dependency and local
+listener faults use exit 78 and are not retried. Read the
+[startup diagnostics guide](runtime_startup.md) for ownership inspection and
+recovery. An operator stop shuts down the children
 gracefully, with a bounded wait before forced termination. Inspect the service
 logs and recorded source health if the supervisor repeatedly restarts.
 

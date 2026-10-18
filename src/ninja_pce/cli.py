@@ -21,10 +21,18 @@ from .live import add_live_commands, collect_bgpls, listen_pcep
 from .loaders import InputError, load_demand, load_inventory, load_topology
 from .reconcile import file_fingerprint, reconcile_once
 from .render import write_outputs
+from .runtime import add_runtime_commands, runtime_command
 from .southbound import (
     SouthboundError,
     build_push_plan,
     require_approved_execution,
+)
+from .startup import (
+    PERMANENT_EXIT,
+    PermanentStartupError,
+    listener_startup_error,
+    permanent_os_error,
+    startup_finding,
 )
 
 
@@ -137,9 +145,12 @@ def build_parser() -> argparse.ArgumentParser:
                            help="Required trusted BGP-LS peer; repeat for each peer")
     dashboard.add_argument("--controller-config", help="Managed controller configuration for process readiness")
     dashboard.add_argument("--controller-digest", help="Expected digest of the managed controller configuration")
+    dashboard.add_argument("--managed-startup", action="store_true",
+                           help="Return exit status 78 for permanent managed-service startup errors")
     add_live_commands(sub)
     add_controller_commands(sub)
     add_application_commands(sub)
+    add_runtime_commands(sub)
     return parser
 
 
@@ -600,6 +611,8 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     try:
         server = create_dashboard_server(config)
     except OSError as exc:
+        if permanent_os_error(exc):
+            raise listener_startup_error(exc, config.host, config.port, component="dashboard") from exc
         raise ValueError(f"Cannot bind dashboard listener: {exc}") from exc
     print(f"Ninja-PCE dashboard: http://{config.host}:{server.server_address[1]}/", flush=True)
     print("Synthetic demo data" if config.demo else "Read-only controller observations", flush=True)
@@ -645,12 +658,28 @@ def main(argv: list[str] | None = None) -> int:
             return controller_command(args)
         if args.command == "app":
             return application_command(args)
+        if args.command == "runtime":
+            return runtime_command(args)
         parser.error(f"Unknown command: {args.command}")
         return 2
     except CspfSearchLimit as exc:
         print(f"INDETERMINATE / SEARCH_LIMIT: {exc}", file=sys.stderr)
         return 3
+    except PermanentStartupError as exc:
+        print(json.dumps(exc.finding, sort_keys=True), file=sys.stderr)
+        return PERMANENT_EXIT
+    except OSError as exc:
+        if getattr(args, "managed_startup", False) and permanent_os_error(exc):
+            finding = startup_finding("STARTUP_LOCAL_RESOURCE_ERROR", args.command, str(exc), errno=exc.errno)
+            print(json.dumps(finding, sort_keys=True), file=sys.stderr)
+            return PERMANENT_EXIT
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
     except (InputError, CspfNoPath, SouthboundError, ValueError) as exc:
+        if getattr(args, "managed_startup", False):
+            finding = startup_finding("STARTUP_CONFIGURATION_INVALID", args.command, str(exc))
+            print(json.dumps(finding, sort_keys=True), file=sys.stderr)
+            return PERMANENT_EXIT
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 

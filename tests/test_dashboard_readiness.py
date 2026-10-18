@@ -306,3 +306,29 @@ def test_browser_shows_mode_readiness_and_disabled_pcep_without_retaining_ready(
     monkeypatch.setattr(creation_ui, "HARNESS", harness)
     monkeypatch.setitem(creation_ui.CASES, "readiness", case)
     creation_ui.test_dashboard_configuration_creation_controls(tmp_path, "readiness")
+
+
+@pytest.mark.skipif(creation_ui.CHROME is None, reason="Optional headless Chromium is unavailable")
+def test_browser_displays_startup_cause_and_remediation_as_text(tmp_path, monkeypatch):
+    harness = r"""
+    const pause=(ms)=>new Promise(resolve=>setTimeout(resolve,ms));
+    const assert=(value,message)=>{if(!value)throw new Error(message);};
+    const $test=id=>document.getElementById(id);
+    window.fetch=async()=>({ok:true,status:200,json:async()=>({schema_version:1,read_only:true,mode:"live",
+      operating_mode:"pcep-control",readiness:{state:"PCEP_UNAVAILABLE",ready:false,message:"PCEP startup failed.",
+        startup_findings:[{code:"PCEP_PORT_IN_USE",message:"Existing owner <test-owner> occupies port 4189.",
+          remediation:"Use the owner's managed stop workflow before restarting."}]},
+      sources:[],lsps:[],topology:{nodes:[],links:[]},summary:{},peers:[],events:[],computations:[],refresh_seconds:60})});
+    """
+    case = r"""
+    const banner=$test("readiness-message");
+    assert(banner.textContent.includes("PCEP_PORT_IN_USE"),"Startup code missing");
+    assert(banner.textContent.includes("Existing owner <test-owner> occupies port 4189."),"Original cause missing");
+    assert(banner.textContent.includes("managed stop workflow"),"Remediation missing");
+    assert(!banner.querySelector("test-owner"),"Finding interpreted as HTML");
+    $test("poll-toggle").click();
+    assert(!banner.textContent.includes("PCEP_PORT_IN_USE"),"Paused snapshot presents an old owner as current");
+    """
+    monkeypatch.setattr(creation_ui, "HARNESS", harness)
+    monkeypatch.setitem(creation_ui.CASES, "startup", case)
+    creation_ui.test_dashboard_configuration_creation_controls(tmp_path, "startup")

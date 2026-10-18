@@ -7,6 +7,7 @@ import ipaddress
 import json
 import math
 import os
+import shutil
 import signal
 import sys
 import tempfile
@@ -41,6 +42,8 @@ def add_live_commands(subparsers: Any) -> None:
     bgpls.add_argument("--timeout", type=float, default=10.0)
     bgpls.add_argument("--max-age", type=float, default=30.0)
     bgpls.add_argument("--once", action="store_true", help="Poll once and exit")
+    bgpls.add_argument("--managed-startup", action="store_true",
+                       help="Return exit status 78 for permanent managed-service startup errors")
 
     pcep = subparsers.add_parser("pcep-listen", help="Observe lab PCEP; enable computation with explicit options")
     pcep.add_argument("--listen-host", default="127.0.0.1", help="Bind address; select the lab NIC explicitly")
@@ -49,6 +52,8 @@ def add_live_commands(subparsers: Any) -> None:
     pcep.add_argument("--capture", required=True, help="Atomic session and LSP-report capture JSON")
     pcep.add_argument("--keepalive", type=int, default=30)
     pcep.add_argument("--deadtimer", type=int, default=120)
+    pcep.add_argument("--managed-startup", action="store_true",
+                      help="Return exit status 78 for permanent managed-service startup errors")
     pcep.add_argument("--stateless-peer", action="append", default=[],
                       help="Omit stateful capability for this allowed PCC; repeatable")
     pcep.add_argument("--compute-bgpls-raw", help="Enable PCReq replies using this live raw BGP-LS capture")
@@ -137,6 +142,13 @@ def _stop_collector(_signum: int, _frame: Any) -> None:
 def collect_bgpls(args: argparse.Namespace) -> int:
     from .bgpls import GoBgpTopologyProvider, parse_gobgp_snapshot, topology_document
 
+    if getattr(args, "managed_startup", False) and shutil.which(args.grpcurl) is None:
+        from .startup import PermanentStartupError, startup_finding
+
+        raise PermanentStartupError(startup_finding(
+            "BGPLS_CLIENT_MISSING", "bgpls", "The configured grpcurl executable is missing or not executable.",
+            "Install the verified client or correct bgpls.grpcurl before restarting the collector."))
+
     for value, label in ((args.interval, "interval"), (args.timeout, "timeout"), (args.max_age, "max-age")):
         _positive(value, label)
     names = _node_names(args.node_map)
@@ -201,6 +213,11 @@ def collect_bgpls(args: argparse.Namespace) -> int:
 
 async def _serve_pcep(args: argparse.Namespace) -> int:
     from .pcep import PcepServer, PcepServerConfig
+
+    if getattr(args, "managed_startup", False):
+        from .startup import require_available_listener
+
+        require_available_listener(args.listen_host, args.port, component="pcep")
 
     computation_args = [args.compute_bgpls_raw, args.compute_bgpls_status, args.compute_topology,
                         args.compute_bgpls_peer]

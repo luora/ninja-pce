@@ -448,6 +448,7 @@ class PcepServer:
         self._compute_slots = asyncio.Semaphore(config.max_computations)
         self._workers: set[asyncio.Task[Any]] = set()
         self._server: asyncio.Server | None = None
+        self._capture_owned = False
         self._serving_task: asyncio.Task[None] | None = None
         self._failover_task: asyncio.Task[None] | None = None
         self._connections: dict[str, _Connection] = {}
@@ -565,8 +566,17 @@ class PcepServer:
         if self._server is not None:
             raise RuntimeError("PCEP server already started")
         self._closing = False
-        self._server = await asyncio.start_server(self._accept, self.config.listen_host, self.config.port,
-                                                 limit=self.config.max_message_bytes + 4, backlog=32)
+        try:
+            self._server = await asyncio.start_server(self._accept, self.config.listen_host, self.config.port,
+                                                     limit=self.config.max_message_bytes + 4, backlog=32)
+        except OSError as exc:
+            from .startup import listener_startup_error, permanent_os_error
+
+            if permanent_os_error(exc):
+                raise listener_startup_error(exc, self.config.listen_host, self.config.port,
+                                             component="pcep") from exc
+            raise
+        self._capture_owned = True
         try:
             self._persist()
             if self.creation is not None:
@@ -619,7 +629,9 @@ class PcepServer:
         if self._serving_task is not None:
             await asyncio.gather(self._serving_task, return_exceptions=True)
             self._serving_task = None
-        self._persist()
+        if self._capture_owned:
+            self._persist()
+            self._capture_owned = False
 
     async def _send(self, peer: str, connection: _Connection, raw: bytes, *,
                     guard: Callable[[], bool] | None = None,

@@ -77,7 +77,7 @@ def test_legacy_pcep_fault_stops_protocol_group_and_preserves_management(config_
                 assert records["pcep"]["returncode"] == 7
                 assert "exited unexpectedly" in records["pcep"]["error"]
             else:
-                assert records["pcep"].get("returncode") is None
+                assert records["pcep"].get("returncode") == 78
                 assert "startup failed" in records["pcep"]["error"]
                 assert "missing-pcep-executable" in records["pcep"]["error"]
             before_shutdown.update(records)

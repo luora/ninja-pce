@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from ninja_pce import pcep
+from ninja_pce import pcep, startup
 from ninja_pce.cli import main
 from ninja_pce.pcep_compute import PcepPathComputer
 from ninja_pce.pcep_delegation import DelegatedPathComputer
@@ -41,6 +41,7 @@ def offline_server(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             observed["closed"] = True
 
     monkeypatch.setattr(pcep, "PcepServer", Server)
+    monkeypatch.setattr(startup, "require_available_listener", lambda *args, **kwargs: None)
     return observed
 
 

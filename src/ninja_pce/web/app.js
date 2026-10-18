@@ -361,7 +361,8 @@
     const readinessLabel = state.error ? "Readiness unavailable" : state.paused ? "Readiness paused" : titleCase(readiness?.state);
     $("readiness-banner").hidden = !readiness || data?.mode === "demo";
     $("readiness-state").textContent = readinessLabel;
-    $("readiness-message").textContent = state.error || state.paused ? "The retained snapshot does not confirm current readiness." : string(readiness?.message, "No readiness details reported.");
+    const startupFindings = list(readiness?.startup_findings).map((finding) => `${string(finding.code)}: ${string(finding.message)} ${string(finding.remediation)}`).join(" ");
+    $("readiness-message").textContent = state.error || state.paused ? "The retained snapshot does not confirm current readiness." : `${string(readiness?.message, "No readiness details reported.")}${startupFindings ? ` ${startupFindings}` : ""}`;
     $("readiness-dot").className = `dot ${state.error ? "off" : state.paused || !readiness?.ready ? "warn" : ""}`;
     $("operating-mode").textContent = mode || "Mode unknown";
     $("demo-banner").hidden = data?.mode !== "demo";

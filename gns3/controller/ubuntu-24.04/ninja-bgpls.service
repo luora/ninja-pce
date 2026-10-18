@@ -2,15 +2,18 @@
 Description=Ninja-PCE live BGP-LS RIB collector
 After=network-online.target gobgpd.service
 Wants=network-online.target gobgpd.service
+StartLimitIntervalSec=60
+StartLimitBurst=3
 
 [Service]
 Type=simple
 User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/ninja-pce
-ExecStart=/home/ubuntu/ninja-pce/.venv/bin/ninja-pce bgpls-collect --proto gns3/controller/gobgp/gobgp-readonly.proto --peer 172.16.100.102 --node-map gns3/controller/ubuntu-24.04/node-map.json --output build/live/topology.json --status build/live/bgpls-status.json --raw build/live/bgpls-raw.json
+ExecStart=/home/ubuntu/ninja-pce/.venv/bin/ninja-pce bgpls-collect --managed-startup --proto gns3/controller/gobgp/gobgp-readonly.proto --peer 172.16.100.102 --node-map gns3/controller/ubuntu-24.04/node-map.json --output build/live/topology.json --status build/live/bgpls-status.json --raw build/live/bgpls-raw.json
 Restart=on-failure
 RestartSec=3
+RestartPreventExitStatus=78
 NoNewPrivileges=true
 PrivateTmp=true
 

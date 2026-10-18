@@ -168,9 +168,8 @@ raise SystemExit(asyncio.run(_supervise(config, commands)))
             try:
                 with client.open(origin + "/api/controller", timeout=1) as response:
                     snapshot = json.load(response)
-                expected = "WAITING_FOR_BGPLS" if fault == "rpc" else "BGPLS_UNAVAILABLE"
-                fault_persisted = (fault == "rpc" or
-                                   load_state(controller._runtime_path(config, "bgpls"))["state"] == "failed")
+                expected = "BGPLS_UNAVAILABLE"
+                fault_persisted = load_state(controller._runtime_path(config, "bgpls"))["state"] == "failed"
                 if snapshot["readiness"]["state"] == expected and fault_persisted:
                     break
             except (OSError, urllib.error.URLError):

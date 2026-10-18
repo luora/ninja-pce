@@ -152,8 +152,10 @@ review; this fresh-install path does not overwrite them.
 
 No service is enabled or started by installation. Activation remains an
 explicit operational step after reviewing ports, addressing and control
-network policy. The GoBGP unit has bounded restart attempts and binds its API
-only to loopback. Profiling/metrics listeners are disabled, including during
+network policy. The GoBGP unit uses the [managed launcher](runtime_startup.md)
+to check listener availability, validate native configuration and report
+permanent startup errors without retries. Other failures have bounded restart
+attempts. It binds its API only to loopback. Profiling/metrics listeners are disabled, including during
 configuration validation. The controller reads GoBGP through the bundled
 grpcurl and packaged read-only protobuf schema.
 
@@ -171,7 +173,9 @@ python3 deploy/install.py \
 
 Custom TOML rendering requires Python 3.11 or later; the install target already
 requires 3.12. The managed source requires bgpls.endpoint to be
-127.0.0.1:50051. Additional domain/ABR mapping inputs still follow the existing
+127.0.0.1:50051. Enabled BGP requires an explicit numeric
+global.config.local-address-list and nonoverlapping listener endpoints for the
+managed launcher. Additional domain/ABR mapping inputs still follow the existing
 deployment rules. This path always renders observation component selection;
 it does not authorize PCEP or router writes.
 
@@ -190,6 +194,6 @@ created by this change.
 
 Fresh configs now explicitly use [observation mode](observation_mode.md), with
 mode-aware readiness and management availability after protocol failures.
-An authenticated setup GUI, live process ownership diagnostics and provisioning
+An authenticated setup GUI and provisioning
 integration remain subsequent work. This packaging change makes no claim that
 the full v0.8.0 acceptance checklist is complete.
